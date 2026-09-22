@@ -210,6 +210,29 @@ a:hover {
   color: var(--muted);
 }
 
+.account-switcher-wrap {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.account-switcher-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.account-switcher {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  background: var(--surface);
+}
+
 .sidebar-nav {
   display: flex;
   flex-direction: column;

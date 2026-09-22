@@ -4,6 +4,8 @@ const callRows = document.getElementById("call-rows");
 const sessionBar = document.getElementById("session-bar");
 const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
+const accountSwitcherWrap = document.getElementById("account-switcher-wrap");
+const accountSwitcher = document.getElementById("account-switcher");
 const directionSelect = document.getElementById("direction-select");
 const dispositionSelect = document.getElementById("disposition-select");
 const statGrid = document.getElementById("stat-grid");
@@ -21,6 +23,13 @@ const nextPageBtn = document.getElementById("next-page-btn");
 let viewAs = "";
 let transcriptionEnabled = false;
 let csrfToken = "";
+// Picked up from ?accountId= on initial load (set by the switcher itself
+// navigating here -- see loadSession below) and threaded onto every API
+// call afterward. This is the multi-tenant boundary on the client side --
+// exactly one connected GHL account's data is ever requested at a time,
+// matching the server's requireAccount middleware, which is what actually
+// enforces it.
+let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
 
 // Default view: this week, all contacts -- never an empty screen on load,
 // never pulling too much data unasked either.
@@ -84,12 +93,32 @@ function applyDateRange(from, to, preset = null) {
 }
 
 async function loadSession() {
-  const res = await fetch("/api/me");
+  const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
   transcriptionEnabled = !!me.transcriptionEnabled;
   csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
+
+  // currentAccountId comes from the server's own resolution (the user's
+  // first/default account) whenever the page didn't already pin one via
+  // ?accountId= -- keeps every fetch below scoped correctly even on a
+  // plain page load with no account picked yet.
+  currentAccountId = me.currentAccountId || "";
+  if (me.accounts && me.accounts.length > 1) {
+    accountSwitcherWrap.hidden = false;
+    accountSwitcher.innerHTML = me.accounts
+      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.ghlLocationId)}</option>`)
+      .join("");
+    accountSwitcher.value = currentAccountId;
+    accountSwitcher.addEventListener("change", () => {
+      // A full navigation, not a live re-fetch -- switching accounts is a
+      // hard boundary (different contacts, different calls, different
+      // everything on this page), so reloading fresh from a clean state
+      // avoids any stale data from the previous account lingering.
+      location.href = `${location.pathname}?accountId=${encodeURIComponent(accountSwitcher.value)}`;
+    });
+  }
 
   if (me.role === "admin") {
     adminNav.hidden = false;
@@ -117,6 +146,7 @@ async function loadViewAsOptions() {
 async function loadDispositions() {
   const params = new URLSearchParams();
   if (viewAs) params.set("viewAs", viewAs);
+  if (currentAccountId) params.set("accountId", currentAccountId);
   const query = params.toString();
   const res = await fetch(`/api/dispositions${query ? `?${query}` : ""}`);
   const dispositions = await res.json();
@@ -134,6 +164,7 @@ async function loadSearchResults(search) {
   }
   const params = new URLSearchParams({ search });
   if (viewAs) params.set("viewAs", viewAs);
+  if (currentAccountId) params.set("accountId", currentAccountId);
   const res = await fetch(`/api/contacts?${params.toString()}`);
   const contacts = await res.json();
   renderSearchResults(contacts);
@@ -239,6 +270,7 @@ function callParams() {
   if (state.dateFrom) params.set("dateFrom", state.dateFrom);
   if (state.dateTo) params.set("dateTo", state.dateTo);
   if (viewAs) params.set("viewAs", viewAs);
+  if (currentAccountId) params.set("accountId", currentAccountId);
   return params;
 }
 

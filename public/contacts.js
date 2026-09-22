@@ -5,8 +5,12 @@ const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
 const azStrip = document.getElementById("az-strip");
 const contactGroups = document.getElementById("contact-groups");
+const accountSwitcherWrap = document.getElementById("account-switcher-wrap");
+const accountSwitcher = document.getElementById("account-switcher");
 
 let viewAs = "";
+// See app.js for why this is a plain page-navigation, not a live re-fetch.
+let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
@@ -38,11 +42,23 @@ function initials(name) {
 }
 
 async function loadSession() {
-  const res = await fetch("/api/me");
+  const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
   const csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
+
+  currentAccountId = me.currentAccountId || "";
+  if (me.accounts && me.accounts.length > 1) {
+    accountSwitcherWrap.hidden = false;
+    accountSwitcher.innerHTML = me.accounts
+      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.ghlLocationId)}</option>`)
+      .join("");
+    accountSwitcher.value = currentAccountId;
+    accountSwitcher.addEventListener("change", () => {
+      location.href = `${location.pathname}?accountId=${encodeURIComponent(accountSwitcher.value)}`;
+    });
+  }
 
   if (me.role === "admin") {
     adminNav.hidden = false;
@@ -73,6 +89,7 @@ async function loadSearchResults(search) {
   }
   const params = new URLSearchParams({ search });
   if (viewAs) params.set("viewAs", viewAs);
+  if (currentAccountId) params.set("accountId", currentAccountId);
   const res = await fetch(`/api/contacts?${params.toString()}`);
   const contacts = await res.json();
   renderSearchResults(contacts);
@@ -107,6 +124,7 @@ function formatLastCall(iso) {
 async function loadContacts() {
   const params = new URLSearchParams({ all: "1" });
   if (viewAs) params.set("viewAs", viewAs);
+  if (currentAccountId) params.set("accountId", currentAccountId);
   const res = await fetch(`/api/contacts?${params.toString()}`);
   const contacts = await res.json();
 
