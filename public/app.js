@@ -333,7 +333,12 @@ function renderCalls(data) {
       disposition && call.disposition !== "completed" ? disposition : "No recording found";
     const recordingCell = call.hasRecording
       ? `<div class="recording-cell">
-           <audio controls src="/api/calls/${call.id}/recording"></audio>
+           <button type="button" class="play-btn" aria-label="Play recording" data-static-duration="${formatDuration(call.durationSeconds)}">
+             <svg class="play-icon" width="10" height="10" viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"></polygon></svg>
+             <svg class="pause-icon" width="10" height="10" viewBox="0 0 24 24" hidden><rect x="5" y="4" width="5" height="16"></rect><rect x="14" y="4" width="5" height="16"></rect></svg>
+             <span class="play-time">${formatDuration(call.durationSeconds)}</span>
+           </button>
+           <audio class="recording-audio" preload="none" src="/api/calls/${call.id}/recording"></audio>
            <a class="download-link" href="/api/calls/${call.id}/recording?download" download>Download</a>
          </div>`
       : `<span>${escapeHtml(noRecordingReason)}</span>`;
@@ -393,6 +398,54 @@ callRows.addEventListener("click", async (e) => {
     btn.textContent = "Transcribe";
   }
 });
+
+// Minimal play/pause pill instead of the full native <audio controls>
+// widget, matching the artifact's compact design. Only one recording
+// plays at a time.
+function mmss(seconds) {
+  const total = Math.max(0, Math.round(seconds || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function updatePlayBtn(audio) {
+  const btn = audio.closest(".recording-cell").querySelector(".play-btn");
+  const playing = !audio.paused && !audio.ended;
+  btn.querySelector(".play-icon").hidden = playing;
+  btn.querySelector(".pause-icon").hidden = !playing;
+  btn.querySelector(".play-time").textContent = playing
+    ? `${mmss(audio.currentTime)} / ${mmss(audio.duration)}`
+    : btn.dataset.staticDuration;
+}
+
+callRows.addEventListener("click", (e) => {
+  const btn = e.target.closest(".play-btn");
+  if (!btn) return;
+  const audio = btn.closest(".recording-cell").querySelector(".recording-audio");
+  if (audio.paused) {
+    callRows.querySelectorAll(".recording-audio").forEach((a) => {
+      if (a !== audio && !a.paused) a.pause();
+    });
+    audio.play();
+  } else {
+    audio.pause();
+  }
+});
+
+// Media events don't bubble, so these need the capture phase -- same
+// reasoning as the "toggle" listener above for transcript details.
+for (const evt of ["play", "pause", "timeupdate", "ended"]) {
+  callRows.addEventListener(
+    evt,
+    (e) => {
+      if (!e.target.classList || !e.target.classList.contains("recording-audio")) return;
+      if (evt === "ended") e.target.currentTime = 0;
+      updatePlayBtn(e.target);
+    },
+    true
+  );
+}
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({

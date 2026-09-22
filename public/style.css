@@ -342,7 +342,7 @@ a:hover {
 }
 
 .preset-btn {
-  padding: 6px 11px;
+  padding: 6px 9px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: none;
@@ -426,13 +426,24 @@ a:hover {
   gap: 6px;
   font-size: 0.85rem;
   color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
 }
 
 .filter-select-label select {
-  padding: 5px 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: none;
+  background: none;
+  padding: 0;
   font-size: 0.85rem;
+  font-weight: 500;
+  color: inherit;
+}
+
+.filter-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
 }
 
 .page-size-label select {
@@ -505,15 +516,46 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 
-audio {
-  height: 32px;
-  max-width: 260px;
+.recording-audio {
+  display: none;
 }
 
 .recording-cell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
+}
+
+.play-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  padding: 5px 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.play-btn:hover {
+  border-color: var(--muted);
+}
+
+.play-icon,
+.pause-icon {
+  fill: var(--accent);
+  flex-shrink: 0;
+}
+
+/* The `hidden` attribute doesn't reliably suppress rendering on inline
+   <svg> in every browser (its default UA stylesheet doesn't always carry
+   the [hidden] { display: none } rule HTML elements get), so force it. */
+.play-icon[hidden],
+.pause-icon[hidden] {
+  display: none;
 }
 
 .download-link {
