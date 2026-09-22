@@ -376,6 +376,18 @@ runs is unrecoverable.
   used to be under Amazon Pinpoint; Pinpoint itself is being retired
   October 30, 2026, but its SMS/voice/OTP APIs continue under this new
   name, unaffected. OTP is a named, supported use case for that service.
+- Billing (Stripe, no webhooks): since this is one deployment per
+  sub-account rather than multi-tenant, billing gates the whole app on a
+  single subscription rather than per-user. `app_settings` gains
+  `stripe_customer_id` / `subscription_status` / `subscription_checked_at`;
+  a new `src/billing.js` creates Checkout Sessions and Customer Portal
+  links and refreshes subscription status by polling
+  `stripe.subscriptions.list()` (piggybacked on `src/poller.js`'s existing
+  interval loop, capped at once an hour) instead of a webhook endpoint.
+  A middleware reads the cached status from `app_settings` and returns 402
+  for non-billing routes when the subscription isn't active/trialing.
+  Tradeoff: a cancellation takes up to an hour to lock the app out, since
+  status is polled rather than pushed.
 
 ## Moving to AWS
 
