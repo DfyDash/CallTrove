@@ -523,6 +523,49 @@ audio {
   cursor: default;
 }
 
+/* Team members table row actions (link-ghl-btn = "Save", reset-btn =
+   "Reset password", delete-btn = "Delete") had no matching rules at all,
+   so they fell back to raw browser default button chrome -- the one spot
+   left looking unstyled next to everything else on the page. */
+.ghl-link-select {
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  max-width: 220px;
+}
+
+.link-ghl-btn,
+.reset-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.link-ghl-btn:hover,
+.reset-btn:hover {
+  border-color: var(--muted);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.delete-btn {
+  padding: 5px 10px;
+  border: 1px solid rgba(208, 59, 59, 0.3);
+  border-radius: 6px;
+  background: rgba(208, 59, 59, 0.06);
+  color: #a52e2e;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.delete-btn:hover {
+  background: rgba(208, 59, 59, 0.12);
+}
+
 .transcript-text {
   margin: 6px 0 0;
   font-size: 0.85rem;
