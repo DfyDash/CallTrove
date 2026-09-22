@@ -412,8 +412,16 @@ function mmss(seconds) {
 function updatePlayBtn(audio) {
   const btn = audio.closest(".recording-cell").querySelector(".play-btn");
   const playing = !audio.paused && !audio.ended;
-  btn.querySelector(".play-icon").hidden = playing;
-  btn.querySelector(".pause-icon").hidden = !playing;
+  const playIcon = btn.querySelector(".play-icon");
+  const pauseIcon = btn.querySelector(".pause-icon");
+  // .hidden as a JS property only reflects to the attribute on HTMLElement
+  // -- <svg> is an SVGElement, not an HTMLElement, so assigning .hidden
+  // here silently does nothing and the icon never actually toggles.
+  // setAttribute/removeAttribute works on any element type.
+  if (playing) playIcon.setAttribute("hidden", "");
+  else playIcon.removeAttribute("hidden");
+  if (playing) pauseIcon.removeAttribute("hidden");
+  else pauseIcon.setAttribute("hidden", "");
   btn.querySelector(".play-time").textContent = playing
     ? `${mmss(audio.currentTime)} / ${mmss(audio.duration)}`
     : btn.dataset.staticDuration;
