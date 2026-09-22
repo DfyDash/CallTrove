@@ -37,16 +37,26 @@ function formatDuration(seconds) {
 
 // --- shared sidebar chrome (session bar, admin "viewing calls for", quick search) ---
 
+let isAdmin = false;
+
 async function loadSession() {
   const res = await fetch("/api/me");
   const me = await res.json();
-  if (me.role !== "admin") {
-    location.href = "/";
+  isAdmin = me.role === "admin";
+  csrfToken = me.csrfToken || "";
+  sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
+    <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
+  document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
+
+  if (!isAdmin) {
+    for (const name of TAB_NAMES) {
+      if (name === "account") continue;
+      const link = document.querySelector(`#settings-tabs [data-tab="${name}"]`);
+      if (link) link.hidden = true;
+    }
+    activateTab(location.hash.replace("#", ""));
     return;
   }
-  csrfToken = me.csrfToken || "";
-  sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)}) · <a href="/account.html">Change password</a></span>
-    <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
 
   adminNav.hidden = false;
   await loadViewAsOptions();
@@ -54,6 +64,7 @@ async function loadSession() {
   if (me.transcriptionEnabled) await loadTranscriptionSettings();
 
   loadTeam();
+  activateTab(location.hash.replace("#", ""));
 }
 
 async function loadViewAsOptions() {
@@ -102,16 +113,23 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["team", "report", "coverage", "transcription", "backfill", "activity", "access"];
+const TAB_NAMES = ["account", "team", "report", "coverage", "transcription", "backfill", "activity", "access"];
 const tabLoaded = {};
 
 function activateTab(tab) {
-  if (!TAB_NAMES.includes(tab)) tab = "team";
+  if (!isAdmin) {
+    tab = "account";
+  } else if (!TAB_NAMES.includes(tab)) {
+    tab = "team";
+  }
   for (const name of TAB_NAMES) {
     document.getElementById(`tab-${name}`).hidden = name !== tab;
-    document.querySelector(`#settings-tabs [data-tab="${name}"]`).classList.toggle("active", name === tab);
+    const link = document.querySelector(`#settings-tabs [data-tab="${name}"]`);
+    if (link) link.classList.toggle("active", name === tab);
   }
   history.replaceState(null, "", `#${tab}`);
+
+  if (!isAdmin) return;
 
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
@@ -874,4 +892,3 @@ accessNextBtn.addEventListener("click", () => {
 // --- init ---
 
 loadSession();
-activateTab(location.hash.replace("#", ""));

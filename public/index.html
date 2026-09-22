@@ -20,13 +20,11 @@
       <nav class="sidebar-nav">
         <a href="/" class="nav-link active">Dashboard</a>
         <a href="/contacts.html" class="nav-link">Contacts</a>
+        <a href="/settings.html" class="nav-link">Settings</a>
       </nav>
       <div id="admin-nav" class="admin-nav" hidden>
         <span class="view-as-label">Viewing calls for</span>
         <select id="view-as" class="view-as"></select>
-        <nav class="sidebar-nav">
-          <a href="/settings.html" class="nav-link">Settings</a>
-        </nav>
       </div>
     </aside>
     <main class="content">
@@ -51,26 +49,23 @@
           <label>From <input type="date" id="date-from" /></label>
           <label>To <input type="date" id="date-to" /></label>
         </div>
-        <label class="page-size-label">Per page
-          <select id="page-size-select">
-            <option value="20">20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-        </label>
-      </div>
-
-      <div class="filter-bar">
-        <label class="page-size-label">Direction
+        <label class="filter-select-label">Direction
           <select id="direction-select">
             <option value="">All</option>
             <option value="inbound">Inbound</option>
             <option value="outbound">Outbound</option>
           </select>
         </label>
-        <label class="page-size-label">Outcome
+        <label class="filter-select-label">Outcome
           <select id="disposition-select">
             <option value="">All</option>
+          </select>
+        </label>
+        <label class="page-size-label">Per page
+          <select id="page-size-select">
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
           </select>
         </label>
       </div>

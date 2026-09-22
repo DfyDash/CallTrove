@@ -20,13 +20,11 @@
       <nav class="sidebar-nav">
         <a href="/" class="nav-link">Dashboard</a>
         <a href="/contacts.html" class="nav-link">Contacts</a>
+        <a href="/settings.html" class="nav-link active">Settings</a>
       </nav>
       <div id="admin-nav" class="admin-nav" hidden>
         <span class="view-as-label">Viewing calls for</span>
         <select id="view-as" class="view-as"></select>
-        <nav class="sidebar-nav">
-          <a href="/settings.html" class="nav-link active">Settings</a>
-        </nav>
       </div>
     </aside>
 
@@ -34,7 +32,8 @@
       <div class="settings-tabs-col">
         <h1>Settings</h1>
         <nav class="sidebar-nav" id="settings-tabs">
-          <a href="#team" class="nav-link active" data-tab="team">Team members</a>
+          <a href="#account" class="nav-link active" data-tab="account">My account</a>
+          <a href="#team" class="nav-link" data-tab="team">Team members</a>
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
@@ -49,8 +48,15 @@
           <div id="session-bar" class="session-bar"></div>
         </div>
 
+        <!-- My account -->
+        <section id="tab-account" class="settings-tab-panel">
+          <h1>My account</h1>
+          <p class="settings-note" id="account-summary"></p>
+          <p><a href="/account.html" class="button-link">Change password &rarr;</a></p>
+        </section>
+
         <!-- Team members -->
-        <section id="tab-team" class="settings-tab-panel">
+        <section id="tab-team" class="settings-tab-panel" hidden>
           <h1>Team members</h1>
           <p class="settings-note">Who can log in, their role, and which GHL user their calls are linked to.</p>
           <table>

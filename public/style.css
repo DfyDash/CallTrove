@@ -156,7 +156,11 @@ a:hover {
   background: rgba(127, 127, 127, 0.15);
 }
 
-.contact-list .contact-phone {
+/* Unscoped so every contact-name-plus-phone pairing stacks the same way,
+   including the dashboard table's contact cell, which used to have no
+   matching rule at all (bare class, only scoped selectors existed) and so
+   ran the name and phone together with no separation. */
+.contact-phone {
   display: block;
   font-size: 0.8rem;
   color: var(--muted);
@@ -385,6 +389,25 @@ a:hover {
   gap: 6px;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+/* Direction/Outcome selects: same look as .page-size-label but WITHOUT its
+   margin-left: auto -- two auto-margin siblings in one flex row split the
+   row's leftover space between them, which is what pushed these two apart
+   with a huge gap instead of sitting together. */
+.filter-select-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.filter-select-label select {
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
 }
 
 .page-size-label select {
