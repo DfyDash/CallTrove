@@ -362,8 +362,23 @@ runs is unrecoverable.
   coaching scores).
 - True multi-tenancy (one deployment serving multiple GHL sub-accounts with
   isolated data) — this prototype is one deployment per sub-account.
-- Formal GHL Marketplace app packaging / OAuth (needed if this is ever sold
-  as an installable marketplace app instead of deployed per-customer).
+  **In progress**: `tenants`/`ghl_accounts`/`user_account_access` tables,
+  the `requireAccount` permission boundary, and the account-switcher UI
+  are built (see `src/db/schema.sql`, `src/auth.js`, `src/routes/api.js`,
+  the sidebar dropdown in `public/app.js`/`public/contacts.js`). Not yet
+  done: `src/poller.js` still only pulls from the one
+  `GHL_API_TOKEN`-configured account, and there's no admin UI yet for
+  granting/revoking a specific team member's access to a specific
+  connected account (the `user_account_access` table itself works, just
+  has no screen to manage it from).
+- Formal GHL Marketplace app packaging / OAuth. **In progress**: the
+  connect flow itself is built (`src/ghlOAuth.js`, the
+  `/api/admin/ghl-oauth/*` routes, the Settings > "GHL accounts" tab) but
+  can't actually be used yet — it requires registering CallTrove as an
+  app in GHL's Marketplace developer portal first, to get real
+  `GHL_OAUTH_CLIENT_ID` / `GHL_OAUTH_CLIENT_SECRET` / `GHL_OAUTH_REDIRECT_URI`
+  values. Until those are set, the Settings tab shows "not set up yet"
+  instead of a broken Connect button.
 - Email-based "forgot password" flow (needs AWS SES set up first). Today,
   users change their own password from `/account.html`, and admins reset
   anyone's from `/settings.html` -- `login.html` just points locked-out users
