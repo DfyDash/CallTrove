@@ -7,8 +7,9 @@ const viewAsSelect = document.getElementById("view-as");
 const directionSelect = document.getElementById("direction-select");
 const dispositionSelect = document.getElementById("disposition-select");
 const statGrid = document.getElementById("stat-grid");
-const contactFilterLabel = document.getElementById("contact-filter-label");
-const clearContactBtn = document.getElementById("clear-contact-btn");
+const contactContext = document.getElementById("contact-context");
+const contactContextName = document.getElementById("contact-context-name");
+const backToContactsBtn = document.getElementById("back-to-contacts-btn");
 const dateFromInput = document.getElementById("date-from");
 const dateToInput = document.getElementById("date-to");
 const pageSizeSelect = document.getElementById("page-size-select");
@@ -169,7 +170,7 @@ function selectContact(contact) {
   state.contactId = contact.id;
   state.contactLabel = contact.name || contact.phone || contact.id;
   state.page = 1;
-  updateContactFilterUi();
+  updateContactContextUi();
   loadCalls();
   searchInput.value = "";
   searchResults.hidden = true;
@@ -185,19 +186,28 @@ function clearContactFilter() {
   state.page = 1;
   dispositionSelect.value = "";
   directionSelect.value = "";
-  updateContactFilterUi();
+  updateContactContextUi();
   loadCalls();
 }
 
-function updateContactFilterUi() {
-  const parts = [];
-  parts.push(state.contactId ? `Contact: ${state.contactLabel}` : "All contacts");
-  if (state.disposition) parts.push(`Outcome: ${dispositionLabel(state.disposition)}`);
-  if (state.direction) parts.push(`Direction: ${state.direction}`);
-  if (state.hasRecording === true) parts.push("Has recording");
-  if (state.hasRecording === false) parts.push("No recording");
-  contactFilterLabel.textContent = parts.join(" · ");
-  clearContactBtn.hidden = !state.contactId && !state.disposition && !state.direction && state.hasRecording === null;
+// Direction/Outcome already show their own state via their dropdowns, so
+// this bar only needs to appear for the two filters with no visible
+// control of their own: a specific contact (from search or the Contacts
+// page), or a recording-status deep link from the Coverage report.
+function updateContactContextUi() {
+  if (state.contactId) {
+    backToContactsBtn.textContent = "← Back to all contacts";
+    contactContextName.textContent = `Viewing: ${state.contactLabel}`;
+    contactContext.hidden = false;
+  } else if (state.hasRecording !== null) {
+    backToContactsBtn.textContent = "← Clear filter";
+    contactContextName.textContent = state.hasRecording
+      ? "Showing calls with a recording"
+      : "Showing calls with no recording found";
+    contactContext.hidden = false;
+  } else {
+    contactContext.hidden = true;
+  }
 }
 
 function transcriptCell(call) {
@@ -261,7 +271,7 @@ async function loadCalls() {
   if (state.contactId && state.contactLabel === "…" && data.calls.length > 0) {
     const call = data.calls[0];
     state.contactLabel = call.contactName || call.contactPhone || state.contactId;
-    updateContactFilterUi();
+    updateContactContextUi();
   }
 }
 
@@ -400,7 +410,7 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".search-wrap")) searchResults.hidden = true;
 });
 
-clearContactBtn.addEventListener("click", clearContactFilter);
+backToContactsBtn.addEventListener("click", clearContactFilter);
 
 document.querySelectorAll(".preset-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -415,14 +425,14 @@ dateToInput.addEventListener("change", () => applyDateRange(state.dateFrom, date
 directionSelect.addEventListener("change", () => {
   state.direction = directionSelect.value || null;
   state.page = 1;
-  updateContactFilterUi();
+  updateContactContextUi();
   loadCalls();
 });
 
 dispositionSelect.addEventListener("change", () => {
   state.disposition = dispositionSelect.value || null;
   state.page = 1;
-  updateContactFilterUi();
+  updateContactContextUi();
   loadCalls();
 });
 
@@ -473,7 +483,7 @@ if (deepLinkContactId || deepLinkDisposition || deepLinkHasRecording !== null ||
 dateFromInput.value = state.dateFrom;
 dateToInput.value = state.dateTo;
 updatePresetButtonsUi();
-updateContactFilterUi();
+updateContactContextUi();
 
 loadSession();
 loadDispositions().then(() => {
