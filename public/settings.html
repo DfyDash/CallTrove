@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Settings — CallTrove</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark">C</div>
+        <div class="brand-name">CallTrove</div>
+      </div>
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search contacts by name or phone..." autocomplete="off" />
+        <ul id="search-results" class="search-results" hidden></ul>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/contacts.html" class="nav-link">Contacts</a>
+      </nav>
+      <div id="admin-nav" class="admin-nav" hidden>
+        <span class="view-as-label">Viewing calls for</span>
+        <select id="view-as" class="view-as"></select>
+        <nav class="sidebar-nav">
+          <a href="/settings.html" class="nav-link active">Settings</a>
+        </nav>
+      </div>
+    </aside>
+
+    <div class="settings-layout">
+      <div class="settings-tabs-col">
+        <h1>Settings</h1>
+        <nav class="sidebar-nav" id="settings-tabs">
+          <a href="#team" class="nav-link active" data-tab="team">Team members</a>
+          <a href="#report" class="nav-link" data-tab="report">Call report</a>
+          <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
+          <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
+          <a href="#backfill" class="nav-link" data-tab="backfill">Historical backfill &amp; export</a>
+          <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
+          <a href="#access" class="nav-link" data-tab="access">Access log</a>
+        </nav>
+      </div>
+
+      <div class="settings-content">
+        <div id="session-bar" class="session-bar"></div>
+
+        <!-- Team members -->
+        <section id="tab-team" class="settings-tab-panel">
+          <h1>Team members</h1>
+          <p class="settings-note">Who can log in, their role, and which GHL user their calls are linked to.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>GHL user</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="user-rows"></tbody>
+          </table>
+
+          <h2>Add user</h2>
+          <form id="add-user-form" class="admin-form">
+            <label>Username <input type="text" name="username" required /></label>
+            <label>Password <input type="password" name="password" required /></label>
+            <label>Role
+              <select name="role">
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+            <label>GHL user
+              <select name="ghlUser" id="ghl-user-select">
+                <option value="">(none)</option>
+              </select>
+            </label>
+            <button type="submit">Add user</button>
+            <span id="add-user-error" class="login-error" hidden></span>
+          </form>
+        </section>
+
+        <!-- Call report -->
+        <section id="tab-report" class="settings-tab-panel" hidden>
+          <div id="report-leaderboard">
+            <h1>Call report</h1>
+            <p class="settings-note">Volume and quality of calls across the whole team. Click a rep to see their individual breakdown.</p>
+
+            <div class="preset-group" id="report-presets" style="width: fit-content; margin-bottom: 16px;">
+              <button type="button" class="preset-btn" data-preset="today">Today</button>
+              <button type="button" class="preset-btn" data-preset="week">This week</button>
+              <button type="button" class="preset-btn active" data-preset="month">This month</button>
+              <button type="button" class="preset-btn" data-preset="year">This year</button>
+              <button type="button" class="preset-btn" data-preset="all">All time</button>
+            </div>
+
+            <div class="rep-bars-card">
+              <h3>Calls by rep</h3>
+              <div id="rep-bars"></div>
+            </div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th>Rep</th>
+                  <th>Total calls</th>
+                  <th>Completion rate</th>
+                  <th>Avg. duration</th>
+                  <th>Inbound / outbound</th>
+                </tr>
+              </thead>
+              <tbody id="rep-rows"></tbody>
+            </table>
+          </div>
+
+          <div id="report-detail" hidden>
+            <span class="rep-back-link" id="back-to-leaderboard">&larr; All users</span>
+            <h1 id="rep-detail-name"></h1>
+
+            <div class="rep-chips" id="rep-chips"></div>
+
+            <div class="stat-grid">
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-total"></div><div class="stat-label">Total calls</div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-completion"></div><div class="stat-label">Completion rate</div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-duration"></div><div class="stat-label">Avg. duration</div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-mix"></div><div class="stat-label">Inbound / outbound</div></div>
+            </div>
+
+            <div class="rep-bars-card">
+              <h3>Calls per day (last 7 days)</h3>
+              <div class="trend-chart" id="rep-trend"></div>
+            </div>
+
+            <div class="rep-bars-card" style="max-width: 620px;">
+              <h3>Inbound vs. outbound mix</h3>
+              <div class="mix-bar" id="rep-mix-bar"></div>
+              <div class="chart-legend" style="margin-top: 10px;">
+                <span class="legend-item"><span class="legend-swatch" style="background:#2563eb"></span>Inbound</span>
+                <span class="legend-item"><span class="legend-swatch" style="background:#eda100"></span>Outbound</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Call recording coverage -->
+        <section id="tab-coverage" class="settings-tab-panel viz-root" hidden>
+          <h1>Call recording coverage</h1>
+          <p class="settings-note">
+            How much of your call history actually has a recording captured, and
+            where the real gaps are. A call GHL disposed as anything other than
+            "Completed" (no answer, busy, voicemail...) was never going to have a
+            recording to begin with, so those aren't counted as gaps below.
+          </p>
+
+          <div class="stat-grid" id="stat-grid"></div>
+
+          <div class="chart-card" data-palette="#0ca30c,#d03b3b">
+            <h2>Completed calls, by month</h2>
+            <p class="settings-note">
+              Stored recordings vs. completed calls with none -- a sustained stretch
+              of red rather than scattered misses usually means something broke on
+              GHL's side, not individual missed captures.
+            </p>
+            <div class="chart-wrap">
+              <svg id="month-chart" class="month-chart" role="img" aria-label="Completed calls per month, stored vs no recording found"></svg>
+              <div id="chart-tooltip" class="chart-tooltip" hidden></div>
+            </div>
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-swatch" style="background:var(--status-good)"></span>Stored</span>
+              <span class="legend-item"><span class="legend-swatch" style="background:var(--status-critical)"></span>No recording found</span>
+            </div>
+          </div>
+
+          <h2>By outcome</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Outcome</th>
+                <th>Calls</th>
+                <th>Recorded</th>
+              </tr>
+            </thead>
+            <tbody id="disposition-rows"></tbody>
+          </table>
+
+          <h2>Completed calls missing a recording</h2>
+          <p class="settings-note">
+            These are the real gaps -- GHL marked the call as completed, but no
+            recording was ever captured for it.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Contact</th>
+                <th>Date/Time</th>
+                <th>Direction</th>
+                <th>Handled by</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="gap-rows"></tbody>
+          </table>
+          <div class="pagination">
+            <button type="button" id="gap-prev-btn">&larr; Prev</button>
+            <span id="gap-page-indicator"></span>
+            <button type="button" id="gap-next-btn">Next &rarr;</button>
+          </div>
+        </section>
+
+        <!-- Transcription -->
+        <section id="tab-transcription" class="settings-tab-panel" hidden>
+          <h1>Transcription</h1>
+          <div class="settings-section">
+            <label class="toggle-row">
+              <input type="checkbox" id="auto-transcribe-toggle" />
+              Automatically transcribe new calls going forward
+            </label>
+            <p class="settings-note">
+              Only affects calls picked up from now on -- turning this on never
+              transcribes existing recordings. Anyone can still transcribe an
+              individual past call on demand from the dashboard.
+            </p>
+          </div>
+        </section>
+
+        <!-- Historical backfill & export -->
+        <section id="tab-backfill" class="settings-tab-panel" hidden>
+          <h1>Historical backfill &amp; export</h1>
+          <div class="settings-section">
+            <h2>Run historical backfill</h2>
+            <p class="settings-note">
+              Walks the account's entire call history and captures anything not
+              already here. Useful after a gap, or before turning on GHL's
+              auto-delete for call recordings -- run this first so nothing is
+              lost. Can take anywhere from under a minute to over an hour
+              depending on call volume; runs in the background, so it's safe to
+              navigate away.
+            </p>
+            <button type="button" id="run-backfill-btn" class="button-link">Run historical backfill</button>
+            <p class="settings-note" id="backfill-status"></p>
+          </div>
+
+          <div class="settings-section">
+            <h2>Export</h2>
+            <p class="settings-note">
+              Download every stored recording as one ZIP file, organized by
+              contact. Can take a while for a large amount of history -- the
+              download starts as soon as it's ready and streams as it goes.
+            </p>
+            <a id="download-all-link" class="button-link" href="/api/admin/download-all">
+              Download all recordings (ZIP)
+            </a>
+          </div>
+        </section>
+
+        <!-- Activity log -->
+        <section id="tab-activity" class="settings-tab-panel" hidden>
+          <h1>Activity log</h1>
+          <p class="settings-note">Who changed what admin setting or account, and when.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Admin</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="audit-rows"></tbody>
+          </table>
+          <div class="pagination">
+            <button type="button" id="audit-prev-btn">&larr; Prev</button>
+            <span id="audit-page-indicator"></span>
+            <button type="button" id="audit-next-btn">Next &rarr;</button>
+          </div>
+        </section>
+
+        <!-- Access log -->
+        <section id="tab-access" class="settings-tab-panel" hidden>
+          <h1>Access log</h1>
+          <p class="settings-note">
+            Who accessed which call's recording or transcript, when, from where,
+            and whether it was allowed. Includes denied attempts. Kept
+            append-only for at least 6 years.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Call</th>
+                <th>Result</th>
+                <th>IP address</th>
+              </tr>
+            </thead>
+            <tbody id="access-rows"></tbody>
+          </table>
+          <div class="pagination">
+            <button type="button" id="access-prev-btn">&larr; Prev</button>
+            <span id="access-page-indicator"></span>
+            <button type="button" id="access-next-btn">Next &rarr;</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+  <script src="settings.js"></script>
+</body>
+</html>

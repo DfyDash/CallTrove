@@ -24,7 +24,7 @@ async function loadSession() {
   const me = await res.json();
   const csrfToken = me.csrfToken || "";
   document.getElementById("csrf-token-input").value = csrfToken;
-  const adminLink = me.role === "admin" ? ` · <a href="/admin.html">Manage users</a>` : "";
+  const adminLink = me.role === "admin" ? ` · <a href="/settings.html">Settings</a>` : "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})${adminLink}</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
 }

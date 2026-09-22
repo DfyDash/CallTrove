@@ -173,16 +173,37 @@ async function listContacts(search, ghlUserId) {
   return rows;
 }
 
+// Unpaginated, full A-Z directory listing for the dedicated Contacts page
+// -- unlike listContacts() (capped at 50, used for the sidebar's quick-jump
+// search), this returns every matching contact since the page itself does
+// the grouping/scrolling. Includes each contact's most recent call time so
+// the page can show it without a second round trip per contact.
+async function listAllContacts(ghlUserId) {
+  const conditions = [];
+  const params = [];
+  if (ghlUserId) {
+    params.push(ghlUserId);
+    conditions.push(`EXISTS (SELECT 1 FROM calls c WHERE c.ghl_contact_id = contacts.ghl_contact_id AND c.handled_by_id = $${params.length})`);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id AS id, name, phone,
+            (SELECT MAX(occurred_at) FROM calls c WHERE c.ghl_contact_id = contacts.ghl_contact_id) AS "lastCallAt"
+     FROM contacts
+     ${where}
+     ORDER BY name NULLS LAST`,
+    params
+  );
+  return rows;
+}
+
 const PAGE_SIZES = [20, 50, 100];
 
 // The main call-search query: contactId is optional (omitted = all
 // contacts), dateFrom/dateTo are 'YYYY-MM-DD' strings and inclusive of the
 // whole day on both ends. ghlUserId is the same RBAC scoping used
 // everywhere else (a specific user's calls, or unrestricted for admins).
-async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, hasRecording, page = 1, pageSize = 20 } = {}) {
-  const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 20;
-  const pageNum = Math.max(1, Number(page) || 1);
-
+function callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording }) {
   const conditions = [];
   const params = [];
   if (contactId) {
@@ -205,11 +226,23 @@ async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, 
     params.push(disposition);
     conditions.push(`c.disposition = $${params.length}`);
   }
+  if (direction) {
+    params.push(direction);
+    conditions.push(`c.direction = $${params.length}`);
+  }
   if (hasRecording === true) {
     conditions.push(`c.storage_key IS NOT NULL`);
   } else if (hasRecording === false) {
     conditions.push(`c.storage_key IS NULL`);
   }
+  return { conditions, params };
+}
+
+async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording, page = 1, pageSize = 20 } = {}) {
+  const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 20;
+  const pageNum = Math.max(1, Number(page) || 1);
+
+  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording });
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM calls c ${where}`, params);
@@ -231,6 +264,89 @@ async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, 
     limitParams
   );
   return { calls: rows, total, page: pageNum, pageSize: size };
+}
+
+// Summary counts behind the dashboard's stat tiles -- same filters as
+// listCalls() (so the tiles always match whatever's actually in the table
+// below them), just aggregated instead of paginated.
+async function getCallStats({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording } = {}) {
+  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording });
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE c.direction = 'inbound')::int AS inbound,
+            count(*) FILTER (WHERE c.direction = 'outbound')::int AS outbound,
+            count(*) FILTER (WHERE c.disposition IS DISTINCT FROM 'completed')::int AS missed
+     FROM calls c
+     ${where}`,
+    params
+  );
+  return rows[0];
+}
+
+// Distinct disposition values actually seen (scoped the same way as every
+// other list view), for populating the Outcome filter dropdown -- GHL's
+// disposition column isn't a fixed enum, so this beats hardcoding a list
+// that might drift out of date.
+async function listDistinctDispositions(ghlUserId) {
+  const conditions = ["disposition IS NOT NULL"];
+  const params = [];
+  if (ghlUserId) {
+    params.push(ghlUserId);
+    conditions.push(`handled_by_id = $${params.length}`);
+  }
+  const { rows } = await pool.query(
+    `SELECT DISTINCT disposition FROM calls WHERE ${conditions.join(" AND ")} ORDER BY disposition`,
+    params
+  );
+  return rows.map((r) => r.disposition);
+}
+
+// Per-rep call-volume/quality aggregates for the admin "Call report" tab.
+// dateFrom/dateTo scope the totals to whatever preset is selected there;
+// the trailing-7-day trend (below) is intentionally on its own fixed
+// window instead.
+async function getCallReportByRep({ dateFrom, dateTo } = {}) {
+  const conditions = ["handled_by_id IS NOT NULL"];
+  const params = [];
+  if (dateFrom) {
+    params.push(dateFrom);
+    conditions.push(`occurred_at >= $${params.length}::date`);
+  }
+  if (dateTo) {
+    params.push(dateTo);
+    conditions.push(`occurred_at < ($${params.length}::date + interval '1 day')`);
+  }
+  const { rows } = await pool.query(
+    `SELECT handled_by_id AS id, handled_by_name AS name,
+            count(*)::int AS total,
+            CASE WHEN count(*) > 0
+              THEN round(100.0 * count(*) FILTER (WHERE disposition = 'completed') / count(*))::int
+              ELSE 0 END AS "completionPct",
+            COALESCE(round(avg(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            count(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
+            count(*) FILTER (WHERE direction = 'outbound')::int AS outbound
+     FROM calls
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY handled_by_id, handled_by_name
+     ORDER BY total DESC`,
+    params
+  );
+  return rows;
+}
+
+// Always the trailing 7 calendar days, independent of the report's own
+// date-range preset -- a fixed short-term pulse check per rep.
+async function getCallReportTrend() {
+  const { rows } = await pool.query(
+    `SELECT handled_by_id AS id, to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD') AS day,
+            count(*)::int AS count
+     FROM calls
+     WHERE handled_by_id IS NOT NULL
+       AND occurred_at >= (current_date - interval '6 days')
+     GROUP BY handled_by_id, day`
+  );
+  return rows;
 }
 
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
@@ -515,7 +631,12 @@ module.exports = {
   listPendingTranscriptions,
   updateCallHandler,
   listContacts,
+  listAllContacts,
   listCalls,
+  getCallStats,
+  listDistinctDispositions,
+  getCallReportByRep,
+  getCallReportTrend,
   listAllCallsWithRecordings,
   getCoverageSummary,
   getCoverageByDisposition,

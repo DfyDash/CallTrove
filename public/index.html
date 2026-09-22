@@ -9,24 +9,45 @@
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div id="session-bar" class="session-bar"></div>
-      <h1>CallTrove</h1>
-      <select id="view-as" class="view-as" hidden></select>
-      <input id="search" type="search" placeholder="Search contacts by name or phone..." />
-      <ul id="contact-list" class="contact-list"></ul>
+      <div class="sidebar-brand">
+        <div class="brand-mark">C</div>
+        <div class="brand-name">CallTrove</div>
+      </div>
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search contacts by name or phone..." autocomplete="off" />
+        <ul id="search-results" class="search-results" hidden></ul>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="/" class="nav-link active">Dashboard</a>
+        <a href="/contacts.html" class="nav-link">Contacts</a>
+      </nav>
+      <div id="admin-nav" class="admin-nav" hidden>
+        <span class="view-as-label">Viewing calls for</span>
+        <select id="view-as" class="view-as"></select>
+        <nav class="sidebar-nav">
+          <a href="/settings.html" class="nav-link">Settings</a>
+        </nav>
+      </div>
     </aside>
     <main class="content">
+      <div class="content-header">
+        <span class="page-title">Dashboard</span>
+        <div id="session-bar" class="session-bar"></div>
+      </div>
+
       <div class="filter-bar">
         <div class="filter-contact">
           <span id="contact-filter-label">All contacts</span>
           <button id="clear-contact-btn" class="clear-contact-btn" hidden>&times; Clear</button>
         </div>
         <div class="filter-dates">
-          <button type="button" class="preset-btn" data-preset="today">Today</button>
-          <button type="button" class="preset-btn" data-preset="week">This week</button>
-          <button type="button" class="preset-btn" data-preset="month">This month</button>
-          <button type="button" class="preset-btn" data-preset="year">This year</button>
-          <button type="button" class="preset-btn" data-preset="all">All time</button>
+          <div class="preset-group">
+            <button type="button" class="preset-btn" data-preset="today">Today</button>
+            <button type="button" class="preset-btn" data-preset="week">This week</button>
+            <button type="button" class="preset-btn" data-preset="month">This month</button>
+            <button type="button" class="preset-btn" data-preset="year">This year</button>
+            <button type="button" class="preset-btn" data-preset="all">All time</button>
+          </div>
           <label>From <input type="date" id="date-from" /></label>
           <label>To <input type="date" id="date-to" /></label>
         </div>
@@ -38,6 +59,23 @@
           </select>
         </label>
       </div>
+
+      <div class="filter-bar">
+        <label class="page-size-label">Direction
+          <select id="direction-select">
+            <option value="">All</option>
+            <option value="inbound">Inbound</option>
+            <option value="outbound">Outbound</option>
+          </select>
+        </label>
+        <label class="page-size-label">Outcome
+          <select id="disposition-select">
+            <option value="">All</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="stat-grid" id="stat-grid"></div>
 
       <div id="results-summary" class="results-summary"></div>
 
