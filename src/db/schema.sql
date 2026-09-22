@@ -129,6 +129,74 @@ CREATE INDEX IF NOT EXISTS phi_access_log_created_at_idx ON phi_access_log (crea
 CREATE INDEX IF NOT EXISTS phi_access_log_call_id_idx ON phi_access_log (call_id);
 CREATE INDEX IF NOT EXISTS phi_access_log_user_id_idx ON phi_access_log (user_id);
 
+-- Multi-tenant foundation: one CallTrove customer (tenant) will eventually
+-- be able to connect multiple GHL sub-accounts (ghl_accounts) and grant
+-- individual team members access to specific ones (user_account_access,
+-- the per-user "checklist"). This adds the tables/columns and backfills a
+-- single default tenant + account so today's single-account deployment
+-- keeps working unchanged. It deliberately does NOT yet make
+-- contacts.ghl_contact_id / calls.ghl_call_id account-scoped (they stay
+-- globally unique) -- that's real surgery on live tables (changing a
+-- primary key and its foreign keys), not worth the risk until a second
+-- GHL account is actually being connected somewhere. ghl_account_id here
+-- is enough to build and test the permission-checking layer now.
+CREATE TABLE IF NOT EXISTS tenants (
+  id          UUID PRIMARY KEY,
+  name        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ghl_accounts (
+  id                UUID PRIMARY KEY,
+  tenant_id         UUID NOT NULL REFERENCES tenants(id),
+  ghl_location_id   TEXT NOT NULL UNIQUE,
+  name              TEXT,
+  access_token      TEXT,
+  refresh_token     TEXT,
+  token_expires_at  TIMESTAMPTZ,
+  installed_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uninstalled_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ghl_accounts_tenant_idx ON ghl_accounts (tenant_id);
+
+-- Per-user grant to one connected account. Admins bypass this table
+-- entirely and see every account their tenant owns (see
+-- listAccessibleAccountIds in src/db/index.js) -- it only restricts
+-- non-admin users, same as the existing ghl_user_id call-scoping.
+CREATE TABLE IF NOT EXISTS user_account_access (
+  user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ghl_account_id  UUID NOT NULL REFERENCES ghl_accounts(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, ghl_account_id)
+);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS ghl_account_id UUID REFERENCES ghl_accounts(id);
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ghl_account_id UUID REFERENCES ghl_accounts(id);
+CREATE INDEX IF NOT EXISTS contacts_ghl_account_idx ON contacts (ghl_account_id);
+CREATE INDEX IF NOT EXISTS calls_ghl_account_idx ON calls (ghl_account_id);
+
+-- Fixed, well-known IDs (rather than gen_random_uuid()) so this backfill
+-- is idempotent across re-runs and so src/db/index.js can reference the
+-- same default account as a fallback for ingestion code (src/poller.js,
+-- src/backfill.js) that isn't multi-account-aware yet.
+INSERT INTO tenants (id, name)
+  SELECT '00000000-0000-0000-0000-000000000001', 'Default tenant'
+  WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = '00000000-0000-0000-0000-000000000001');
+
+INSERT INTO ghl_accounts (id, tenant_id, ghl_location_id, name)
+  SELECT '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'default', 'Default account'
+  WHERE NOT EXISTS (SELECT 1 FROM ghl_accounts WHERE id = '00000000-0000-0000-0000-000000000001');
+
+UPDATE users SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
+UPDATE contacts SET ghl_account_id = '00000000-0000-0000-0000-000000000001' WHERE ghl_account_id IS NULL;
+UPDATE calls SET ghl_account_id = '00000000-0000-0000-0000-000000000001' WHERE ghl_account_id IS NULL;
+
+-- Every existing user gets access to the default account, so post-migration
+-- everyone sees exactly what they saw before this ran.
+INSERT INTO user_account_access (user_id, ghl_account_id)
+  SELECT id, '00000000-0000-0000-0000-000000000001' FROM users
+  ON CONFLICT DO NOTHING;
+
 -- Append-only enforcement for both log tables above: HIPAA's audit-controls
 -- guidance expects tamper-evident logs, not just "the app has no edit
 -- button". This rejects UPDATE/DELETE at the database engine level

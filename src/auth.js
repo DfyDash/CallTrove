@@ -16,8 +16,12 @@ function verifyPassword(password, hash, salt) {
 
 // Session payload is the full set of fields access-control checks need, so
 // routes never have to hit the DB just to find out who's asking.
+// accountIds is filled in separately by the login handler (routes/auth.js)
+// since it needs an async DB lookup (db.listAccessibleAccounts) this
+// function can't do on its own -- see requireAccount below for how it's
+// enforced.
 function sessionUser(user) {
-  return { id: user.id, username: user.username, role: user.role, ghlUserId: user.ghlUserId };
+  return { id: user.id, username: user.username, role: user.role, ghlUserId: user.ghlUserId, tenantId: user.tenantId, accountIds: [] };
 }
 
 function requireAuth(req, res, next) {
@@ -35,6 +39,27 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// The multi-tenant isolation boundary: every data route resolves to
+// exactly one connected GHL account per request (req.ghlAccountId), never
+// "all accounts the user can see" -- that's what keeps different
+// locations' recordings from ever appearing mixed together in one
+// response. ?accountId= picks which one; omitted defaults to the first
+// account on the user's list (accountIds is populated at login -- see
+// routes/auth.js) rather than silently querying across every account.
+function requireAccount(req, res, next) {
+  const user = req.session && req.session.user;
+  const allowed = (user && user.accountIds) || [];
+  if (!allowed.length) {
+    return res.status(403).json({ error: "no GHL account access" });
+  }
+  const requested = req.query.accountId;
+  if (requested && !allowed.includes(requested)) {
+    return res.status(403).json({ error: "no access to that account" });
+  }
+  req.ghlAccountId = requested || allowed[0];
+  next();
+}
+
 // Session-bound CSRF token, issued on login (routes/auth.js) and handed to
 // the client via GET /api/me. For the JSON/fetch-based API routes here --
 // the two classic HTML-form POSTs (logout, change-password) check a hidden
@@ -48,4 +73,4 @@ function requireCsrf(req, res, next) {
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireCsrf };
+module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireCsrf };

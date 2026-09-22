@@ -6,15 +6,23 @@ const pool = new Pool({
   ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined,
 });
 
-async function upsertContact({ contactId, name, phone }) {
+// Well-known IDs backfilled by schema.sql's multi-tenant migration --
+// today's single deployment's one tenant/GHL account. Ingestion code
+// (src/poller.js, src/backfill.js) isn't multi-account-aware yet, so
+// insertCall/upsertContact fall back to this when no ghlAccountId is given,
+// keeping new rows tagged consistently with the existing backfilled ones.
+const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
+const DEFAULT_GHL_ACCOUNT_ID = "00000000-0000-0000-0000-000000000001";
+
+async function upsertContact({ contactId, name, phone, ghlAccountId }) {
   await pool.query(
-    `INSERT INTO contacts (ghl_contact_id, name, phone)
-     VALUES ($1, $2, $3)
+    `INSERT INTO contacts (ghl_contact_id, name, phone, ghl_account_id)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (ghl_contact_id) DO UPDATE SET
        name = COALESCE(EXCLUDED.name, contacts.name),
        phone = COALESCE(EXCLUDED.phone, contacts.phone),
        updated_at = now()`,
-    [contactId, name || null, phone || null]
+    [contactId, name || null, phone || null, ghlAccountId || DEFAULT_GHL_ACCOUNT_ID]
   );
 }
 
@@ -30,14 +38,15 @@ async function insertCall({
   handledById,
   handledByName,
   disposition,
+  ghlAccountId,
 }) {
   const result = await pool.query(
     `INSERT INTO calls (
        id, ghl_call_id, ghl_contact_id, direction, duration_seconds,
        occurred_at, source_recording_url, recording_status, raw_payload,
-       handled_by_id, handled_by_name, disposition
+       handled_by_id, handled_by_name, disposition, ghl_account_id
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12)
      ON CONFLICT (ghl_call_id) DO NOTHING
      RETURNING id`,
     [
@@ -52,6 +61,7 @@ async function insertCall({
       handledById || null,
       handledByName || null,
       disposition || null,
+      ghlAccountId || DEFAULT_GHL_ACCOUNT_ID,
     ]
   );
   return result.rows[0] || null;
@@ -149,10 +159,16 @@ async function updateCallHandler(callId, handledById, handledByName) {
 // ghlUserId, when given, scopes results to contacts/calls that user
 // actually handled -- the enforcement point for "users see only their own
 // calls, admins see everything" (ghlUserId omitted/null means admin/no
-// restriction).
-async function listContacts(search, ghlUserId) {
+// restriction). ghlAccountId scopes to one connected GHL account -- the
+// multi-tenant boundary, checked against the requesting user's accessible
+// accounts by the route before this is ever called (see routes/api.js).
+async function listContacts(search, ghlUserId, ghlAccountId) {
   const conditions = [];
   const params = [];
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    conditions.push(`ghl_account_id = $${params.length}`);
+  }
   if (ghlUserId) {
     params.push(ghlUserId);
     conditions.push(`EXISTS (SELECT 1 FROM calls c WHERE c.ghl_contact_id = contacts.ghl_contact_id AND c.handled_by_id = $${params.length})`);
@@ -178,9 +194,13 @@ async function listContacts(search, ghlUserId) {
 // search), this returns every matching contact since the page itself does
 // the grouping/scrolling. Includes each contact's most recent call time so
 // the page can show it without a second round trip per contact.
-async function listAllContacts(ghlUserId) {
+async function listAllContacts(ghlUserId, ghlAccountId) {
   const conditions = [];
   const params = [];
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    conditions.push(`ghl_account_id = $${params.length}`);
+  }
   if (ghlUserId) {
     params.push(ghlUserId);
     conditions.push(`EXISTS (SELECT 1 FROM calls c WHERE c.ghl_contact_id = contacts.ghl_contact_id AND c.handled_by_id = $${params.length})`);
@@ -203,9 +223,13 @@ const PAGE_SIZES = [20, 50, 100];
 // contacts), dateFrom/dateTo are 'YYYY-MM-DD' strings and inclusive of the
 // whole day on both ends. ghlUserId is the same RBAC scoping used
 // everywhere else (a specific user's calls, or unrestricted for admins).
-function callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording }) {
+function callFilterConditions({ contactId, ghlUserId, ghlAccountId, dateFrom, dateTo, disposition, direction, hasRecording }) {
   const conditions = [];
   const params = [];
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    conditions.push(`c.ghl_account_id = $${params.length}`);
+  }
   if (contactId) {
     params.push(contactId);
     conditions.push(`c.ghl_contact_id = $${params.length}`);
@@ -238,11 +262,11 @@ function callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposit
   return { conditions, params };
 }
 
-async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording, page = 1, pageSize = 20 } = {}) {
+async function listCalls({ contactId, ghlUserId, ghlAccountId, dateFrom, dateTo, disposition, direction, hasRecording, page = 1, pageSize = 20 } = {}) {
   const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 20;
   const pageNum = Math.max(1, Number(page) || 1);
 
-  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording });
+  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, ghlAccountId, dateFrom, dateTo, disposition, direction, hasRecording });
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
   const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM calls c ${where}`, params);
@@ -269,8 +293,8 @@ async function listCalls({ contactId, ghlUserId, dateFrom, dateTo, disposition, 
 // Summary counts behind the dashboard's stat tiles -- same filters as
 // listCalls() (so the tiles always match whatever's actually in the table
 // below them), just aggregated instead of paginated.
-async function getCallStats({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording } = {}) {
-  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, dateFrom, dateTo, disposition, direction, hasRecording });
+async function getCallStats({ contactId, ghlUserId, ghlAccountId, dateFrom, dateTo, disposition, direction, hasRecording } = {}) {
+  const { conditions, params } = callFilterConditions({ contactId, ghlUserId, ghlAccountId, dateFrom, dateTo, disposition, direction, hasRecording });
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const { rows } = await pool.query(
     `SELECT count(*)::int AS total,
@@ -288,9 +312,13 @@ async function getCallStats({ contactId, ghlUserId, dateFrom, dateTo, dispositio
 // other list view), for populating the Outcome filter dropdown -- GHL's
 // disposition column isn't a fixed enum, so this beats hardcoding a list
 // that might drift out of date.
-async function listDistinctDispositions(ghlUserId) {
+async function listDistinctDispositions(ghlUserId, ghlAccountId) {
   const conditions = ["disposition IS NOT NULL"];
   const params = [];
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    conditions.push(`ghl_account_id = $${params.length}`);
+  }
   if (ghlUserId) {
     params.push(ghlUserId);
     conditions.push(`handled_by_id = $${params.length}`);
@@ -451,7 +479,7 @@ async function getCall(callId) {
     `SELECT c.id, c.storage_key AS "storageKey", c.recording_status AS "recordingStatus",
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
             c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
-            c.transcript, ct.name, ct.phone
+            c.transcript, c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
      WHERE c.id = $1`,
@@ -462,18 +490,18 @@ async function getCall(callId) {
 
 // --- users (dashboard login accounts) ---
 
-async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName }) {
+async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName, tenantId }) {
   await pool.query(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null]
+    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name, tenant_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID]
   );
 }
 
 async function getUserByUsername(username) {
   const { rows } = await pool.query(
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
-            role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName"
+            role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -482,7 +510,7 @@ async function getUserByUsername(username) {
 
 async function getUserById(id) {
   const { rows } = await pool.query(
-    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName"
+    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId"
      FROM users WHERE id = $1`,
     [id]
   );
@@ -516,6 +544,61 @@ async function updateUser(id, { role, ghlUserId, ghlUserName, passwordHash, pass
 
 async function deleteUser(id) {
   await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+}
+
+// --- tenants / ghl_accounts / user_account_access (multi-tenant) ---
+
+async function createTenant({ id, name }) {
+  await pool.query(`INSERT INTO tenants (id, name) VALUES ($1, $2)`, [id, name]);
+}
+
+async function createGhlAccount({ id, tenantId, ghlLocationId, name }) {
+  await pool.query(
+    `INSERT INTO ghl_accounts (id, tenant_id, ghl_location_id, name) VALUES ($1, $2, $3, $4)`,
+    [id, tenantId, ghlLocationId, name || null]
+  );
+}
+
+async function listGhlAccountsForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT id, ghl_location_id AS "ghlLocationId", name
+     FROM ghl_accounts WHERE tenant_id = $1 AND uninstalled_at IS NULL
+     ORDER BY installed_at ASC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+// The permission-checking core: what accounts can this user actually pick
+// from? Admins see every account their own tenant owns (never another
+// tenant's -- the WHERE tenant_id = $1 below is the isolation boundary for
+// admins). Regular users are further narrowed to whatever's explicitly
+// granted in user_account_access, same relationship the existing
+// ghl_user_id call-scoping has to admin vs. user.
+async function listAccessibleAccounts(userId, role, tenantId) {
+  if (role === "admin") {
+    return listGhlAccountsForTenant(tenantId);
+  }
+  const { rows } = await pool.query(
+    `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name
+     FROM ghl_accounts g
+     JOIN user_account_access a ON a.ghl_account_id = g.id
+     WHERE a.user_id = $1 AND g.tenant_id = $2 AND g.uninstalled_at IS NULL
+     ORDER BY g.installed_at ASC`,
+    [userId, tenantId]
+  );
+  return rows;
+}
+
+async function grantUserAccountAccess(userId, ghlAccountId) {
+  await pool.query(
+    `INSERT INTO user_account_access (user_id, ghl_account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [userId, ghlAccountId]
+  );
+}
+
+async function revokeUserAccountAccess(userId, ghlAccountId) {
+  await pool.query(`DELETE FROM user_account_access WHERE user_id = $1 AND ghl_account_id = $2`, [userId, ghlAccountId]);
 }
 
 // --- sync_state (poller checkpoint) ---
@@ -618,6 +701,14 @@ async function listPhiAccessLog({ page = 1, pageSize = 50 } = {}) {
 
 module.exports = {
   pool,
+  DEFAULT_TENANT_ID,
+  DEFAULT_GHL_ACCOUNT_ID,
+  createTenant,
+  createGhlAccount,
+  listGhlAccountsForTenant,
+  listAccessibleAccounts,
+  grantUserAccountAccess,
+  revokeUserAccountAccess,
   upsertContact,
   insertCall,
   getCallByGhlId,

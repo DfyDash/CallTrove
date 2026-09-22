@@ -2,7 +2,7 @@ const express = require("express");
 const db = require("../db");
 const { getPlayback, getBuffer } = require("../storage");
 const transcription = require("../transcription");
-const { requireCsrf } = require("../auth");
+const { requireCsrf, requireAccount } = require("../auth");
 
 const router = express.Router();
 
@@ -35,41 +35,51 @@ function logAccess(req, { action, callId, success, denialReason }) {
   });
 }
 
-router.get("/me", (req, res) => {
-  const { username, role, ghlUserId } = req.session.user;
+router.get("/me", async (req, res) => {
+  const { username, role, ghlUserId, tenantId, accountIds } = req.session.user;
+  // The switcher's own data: every account this login can pick between,
+  // with names (accountIds on the session is just the id list used for
+  // fast per-request validation in requireAccount).
+  const accounts = await db.listAccessibleAccounts(req.session.user.id, role, tenantId);
   res.json({
     username,
     role,
     ghlUserId,
+    accounts,
+    currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
     transcriptionEnabled: transcription.isEnabled(),
     csrfToken: req.session.csrfToken,
   });
 });
 
-router.get("/contacts", async (req, res) => {
+router.get("/contacts", requireAccount, async (req, res) => {
   // ?all=1 -- the dedicated Contacts (A-Z) page's full directory, as
   // opposed to the sidebar's capped, search-only quick-jump list.
   if (req.query.all !== undefined) {
-    const contacts = await db.listAllContacts(listFilter(req));
+    const contacts = await db.listAllContacts(listFilter(req), req.ghlAccountId);
     return res.json(contacts);
   }
-  const contacts = await db.listContacts(req.query.search, listFilter(req));
+  const contacts = await db.listContacts(req.query.search, listFilter(req), req.ghlAccountId);
   res.json(contacts);
 });
 
-router.get("/dispositions", async (req, res) => {
-  const dispositions = await db.listDistinctDispositions(listFilter(req));
+router.get("/dispositions", requireAccount, async (req, res) => {
+  const dispositions = await db.listDistinctDispositions(listFilter(req), req.ghlAccountId);
   res.json(dispositions);
 });
 
 // The unified call-search endpoint -- contactId is optional ("all
 // contacts"), dateFrom/dateTo are optional 'YYYY-MM-DD' strings, page/
 // pageSize drive pagination (20/50/100, validated in db.listCalls).
-router.get("/calls", async (req, res) => {
+// requireAccount pins every result to exactly one connected GHL account
+// (req.ghlAccountId) -- never a blend of everything the user can see --
+// so switching accounts is a real data boundary, not just a UI filter.
+router.get("/calls", requireAccount, async (req, res) => {
   const { contactId, dateFrom, dateTo, disposition, direction, hasRecording, page, pageSize } = req.query;
   const result = await db.listCalls({
     contactId: contactId || undefined,
     ghlUserId: listFilter(req),
+    ghlAccountId: req.ghlAccountId,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     disposition: disposition || undefined,
@@ -83,11 +93,12 @@ router.get("/calls", async (req, res) => {
 
 // Stat-tile summary behind the dashboard header -- same filters as
 // /calls, aggregated instead of paginated.
-router.get("/calls/stats", async (req, res) => {
+router.get("/calls/stats", requireAccount, async (req, res) => {
   const { contactId, dateFrom, dateTo, disposition, direction, hasRecording } = req.query;
   const stats = await db.getCallStats({
     contactId: contactId || undefined,
     ghlUserId: listFilter(req),
+    ghlAccountId: req.ghlAccountId,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     disposition: disposition || undefined,
@@ -112,8 +123,20 @@ router.get("/calls/:id/recording", async (req, res) => {
 
   // Enforced here too, not just in the list views -- a user must not be
   // able to fetch another user's recording just by knowing/guessing its URL.
-  // Admins always have access regardless of any ?viewAs= list filter.
+  // Admins always have access regardless of any ?viewAs= list filter, but
+  // the account check below still applies to everyone, admins included --
+  // it's the multi-tenant boundary (which GHL account this call belongs
+  // to), not the within-account ghlUserId one.
   const download = req.query.download !== undefined;
+  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+    await logAccess(req, {
+      action: download ? "recording_downloaded" : "recording_played",
+      callId: call.id,
+      success: false,
+      denialReason: "not_your_account",
+    });
+    return res.status(403).json({ error: "not your account" });
+  }
   if (req.session.user.role !== "admin" && call.handledById !== req.session.user.ghlUserId) {
     await logAccess(req, {
       action: download ? "recording_downloaded" : "recording_played",
@@ -148,7 +171,11 @@ router.get("/calls/:id/transcript", async (req, res) => {
   const call = await db.getCall(req.params.id);
   if (!call) return res.status(404).json({ error: "call not found" });
 
-  // Same access boundary as the recording itself.
+  // Same access boundaries as the recording itself.
+  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+    await logAccess(req, { action: "transcript_viewed", callId: call.id, success: false, denialReason: "not_your_account" });
+    return res.status(403).json({ error: "not your account" });
+  }
   if (req.session.user.role !== "admin" && call.handledById !== req.session.user.ghlUserId) {
     await logAccess(req, { action: "transcript_viewed", callId: call.id, success: false, denialReason: "not_your_call" });
     return res.status(403).json({ error: "not your call" });
@@ -169,6 +196,10 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   const call = await db.getCall(req.params.id);
   if (!call || !call.storageKey) {
     return res.status(404).json({ error: "recording not found" });
+  }
+  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+    await logAccess(req, { action: "transcription_requested", callId: call.id, success: false, denialReason: "not_your_account" });
+    return res.status(403).json({ error: "not your account" });
   }
   if (req.session.user.role !== "admin" && call.handledById !== req.session.user.ghlUserId) {
     await logAccess(req, { action: "transcription_requested", callId: call.id, success: false, denialReason: "not_your_call" });
