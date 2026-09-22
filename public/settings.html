@@ -45,7 +45,7 @@
       </div>
 
       <div class="settings-content">
-        <div class="content-header" style="justify-content: flex-end;">
+        <div class="content-header content-header-end">
           <div id="session-bar" class="session-bar"></div>
         </div>
 
@@ -91,7 +91,7 @@
             <h1>Call report</h1>
             <p class="settings-note">Volume and quality of calls across the whole team. Click a rep to see their individual breakdown.</p>
 
-            <div class="preset-group" id="report-presets" style="width: fit-content; margin-bottom: 16px;">
+            <div class="preset-group" id="report-presets">
               <button type="button" class="preset-btn" data-preset="today">Today</button>
               <button type="button" class="preset-btn" data-preset="week">This week</button>
               <button type="button" class="preset-btn active" data-preset="month">This month</button>
@@ -136,12 +136,12 @@
               <div class="trend-chart" id="rep-trend"></div>
             </div>
 
-            <div class="rep-bars-card" style="max-width: 620px;">
+            <div class="rep-bars-card rep-bars-card-narrow">
               <h3>Inbound vs. outbound mix</h3>
               <div class="mix-bar" id="rep-mix-bar"></div>
-              <div class="chart-legend" style="margin-top: 10px;">
-                <span class="legend-item"><span class="legend-swatch" style="background:#2563eb"></span>Inbound</span>
-                <span class="legend-item"><span class="legend-swatch" style="background:#eda100"></span>Outbound</span>
+              <div class="chart-legend chart-legend-mt">
+                <span class="legend-item"><span class="legend-swatch legend-swatch-inbound"></span>Inbound</span>
+                <span class="legend-item"><span class="legend-swatch legend-swatch-outbound"></span>Outbound</span>
               </div>
             </div>
           </div>
@@ -171,8 +171,8 @@
               <div id="chart-tooltip" class="chart-tooltip" hidden></div>
             </div>
             <div class="chart-legend">
-              <span class="legend-item"><span class="legend-swatch" style="background:var(--status-good)"></span>Stored</span>
-              <span class="legend-item"><span class="legend-swatch" style="background:var(--status-critical)"></span>No recording found</span>
+              <span class="legend-item"><span class="legend-swatch legend-swatch-good"></span>Stored</span>
+              <span class="legend-item"><span class="legend-swatch legend-swatch-critical"></span>No recording found</span>
             </div>
           </div>
 

@@ -274,19 +274,22 @@ function dispositionLabel(disposition) {
   return disposition.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-const OUTCOME_STYLES = {
-  completed: { bg: "rgba(12,163,12,0.12)", color: "#0a6b0a" },
-  "no-answer": { bg: "rgba(137,135,129,0.18)", color: "#52514e" },
-  voicemail: { bg: "rgba(42,120,214,0.12)", color: "#1c5cab" },
-  busy: { bg: "rgba(250,178,25,0.20)", color: "#8a5a00" },
-  canceled: { bg: "rgba(208,59,59,0.12)", color: "#a52e2e" },
+// Per-disposition color as a fixed CSS class rather than an inline style:
+// the app's CSP has no 'unsafe-inline' for style-src, so a dynamically
+// computed style="" attribute is silently dropped by the browser.
+const OUTCOME_CLASSES = {
+  completed: "outcome-completed",
+  "no-answer": "outcome-no-answer",
+  voicemail: "outcome-voicemail",
+  busy: "outcome-busy",
+  canceled: "outcome-canceled",
 };
 
 function outcomeBadge(disposition) {
   const label = dispositionLabel(disposition);
   if (!label) return "-";
-  const style = OUTCOME_STYLES[disposition] || { bg: "rgba(137,135,129,0.18)", color: "#52514e" };
-  return `<span class="outcome-badge" style="background:${style.bg};color:${style.color}">${escapeHtml(label)}</span>`;
+  const cls = OUTCOME_CLASSES[disposition] || "outcome-default";
+  return `<span class="outcome-badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
 function renderCalls(data) {

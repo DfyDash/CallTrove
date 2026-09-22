@@ -130,7 +130,7 @@ async function loadContacts() {
 
   contactGroups.innerHTML = "";
   if (activeLetters.length === 0) {
-    contactGroups.innerHTML = `<p class="empty-state" style="padding: 18px;">No contacts yet.</p>`;
+    contactGroups.innerHTML = `<p class="empty-state empty-state-pad">No contacts yet.</p>`;
     return;
   }
 
