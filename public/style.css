@@ -336,6 +336,48 @@ a:hover {
   white-space: nowrap;
 }
 
+/* Per-outcome colors as fixed classes rather than inline styles: the CSP
+   here has no 'unsafe-inline' for style-src, so a dynamically computed
+   style="" attribute is silently dropped by the browser. */
+.outcome-completed { background: rgba(12, 163, 12, 0.12); color: #0a6b0a; }
+.outcome-no-answer { background: rgba(137, 135, 129, 0.18); color: #52514e; }
+.outcome-voicemail { background: rgba(42, 120, 214, 0.12); color: #1c5cab; }
+.outcome-busy { background: rgba(250, 178, 25, 0.2); color: #8a5a00; }
+.outcome-canceled { background: rgba(208, 59, 59, 0.12); color: #a52e2e; }
+.outcome-default { background: rgba(137, 135, 129, 0.18); color: #52514e; }
+
+/* Discrete width/height buckets for bars whose fill is computed from data
+   (rep leaderboard bars, trend chart, inbound/outbound mix). Same CSP
+   constraint as above rules out inline style="width:…" / "height:…", so
+   JS rounds each value to the nearest of these fixed steps instead. */
+.w-0 { width: 0%; }
+.w-10 { width: 10%; }
+.w-20 { width: 20%; }
+.w-30 { width: 30%; }
+.w-40 { width: 40%; }
+.w-50 { width: 50%; }
+.w-60 { width: 60%; }
+.w-70 { width: 70%; }
+.w-80 { width: 80%; }
+.w-90 { width: 90%; }
+.w-100 { width: 100%; }
+
+.trend-h-0 { height: 3px; }
+.trend-h-10 { height: 12px; }
+.trend-h-20 { height: 20px; }
+.trend-h-30 { height: 29px; }
+.trend-h-40 { height: 38px; }
+.trend-h-50 { height: 47px; }
+.trend-h-60 { height: 55px; }
+.trend-h-70 { height: 64px; }
+.trend-h-80 { height: 73px; }
+.trend-h-90 { height: 81px; }
+.trend-h-100 { height: 90px; }
+
+.empty-state-pad {
+  padding: 18px;
+}
+
 .page-size-label {
   margin-left: auto;
   display: flex;
@@ -608,6 +650,22 @@ audio {
   border-radius: 2px;
   display: inline-block;
 }
+
+/* Fixed swatch colors as classes instead of inline style="background:…":
+   same CSP constraint as the other rules above (no 'unsafe-inline' for
+   style-src). Also fixes the Inbound swatch, which was still the old
+   pre-redesign blue (#2563eb) instead of --accent. */
+.legend-swatch-inbound { background: var(--accent); }
+.legend-swatch-outbound { background: #eda100; }
+.legend-swatch-good { background: var(--status-good); }
+.legend-swatch-critical { background: var(--status-critical); }
+
+/* One-off layout tweaks that were inline style="" attributes, blocked by
+   the same CSP constraint. */
+.content-header-end { justify-content: flex-end; }
+#report-presets { width: fit-content; margin-bottom: 16px; }
+.rep-bars-card-narrow { max-width: 620px; }
+.chart-legend-mt { margin-top: 10px; }
 
 .chart-tooltip {
   position: absolute;

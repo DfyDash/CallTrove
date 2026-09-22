@@ -276,6 +276,15 @@ let reportPreset = "month";
 let reportData = null; // { reps, trend }
 let selectedRepId = null;
 
+// Bars below are filled by rounding to one of the .w-N / .trend-h-N
+// classes in style.css rather than an inline style="width:…"/"height:…":
+// the CSP here has no 'unsafe-inline' for style-src, so a computed
+// style="" attribute is silently dropped by the browser.
+function widthBucket(pct) {
+  const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+  return Math.round(clamped / 10) * 10;
+}
+
 function reportPresetRange(preset) {
   const now = new Date();
   const fmt = (d) => d.toISOString().slice(0, 10);
@@ -333,7 +342,7 @@ function renderReportLeaderboard() {
     const pct = Math.round((rep.total / maxTotal) * 100);
     barRow.innerHTML = `
       <span class="rep-bar-name">${escapeHtml(rep.name || "(unnamed)")}</span>
-      <div class="rep-bar-track"><div class="rep-bar-fill" style="width:${pct}%"></div></div>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
       <span class="rep-bar-total">${rep.total}</span>
     `;
     barRow.addEventListener("click", () => selectRep(rep.id));
@@ -405,12 +414,13 @@ function renderReportDetail() {
   } else {
     for (const point of trend) {
       const label = new Date(`${point.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
-      // A floor of 3px keeps a real (but non-zero-week) zero-count day
-      // visibly distinct from empty space, same reasoning as above.
-      const h = point.count === 0 ? 3 : Math.max(3, Math.round((point.count / maxCount) * 90));
+      // A floor bucket (trend-h-0, 3px) keeps a real (but non-zero-week)
+      // zero-count day visibly distinct from empty space, same reasoning
+      // as above.
+      const bucket = point.count === 0 ? 0 : Math.max(10, widthBucket((point.count / maxCount) * 100));
       const col = document.createElement("div");
       col.className = "trend-bar-col";
-      col.innerHTML = `<div class="trend-bar" style="height:${h}px" title="${point.count} calls"></div><span class="trend-bar-label">${escapeHtml(label)}</span>`;
+      col.innerHTML = `<div class="trend-bar trend-h-${bucket}" title="${point.count} calls"></div><span class="trend-bar-label">${escapeHtml(label)}</span>`;
       trendEl.appendChild(col);
     }
   }
@@ -418,7 +428,7 @@ function renderReportDetail() {
   const total = rep.inbound + rep.outbound;
   const inboundPct = total ? Math.round((rep.inbound / total) * 100) : 0;
   document.getElementById("rep-mix-bar").innerHTML =
-    `<div class="mix-bar-inbound" style="width:${inboundPct}%"></div><div class="mix-bar-outbound" style="width:${100 - inboundPct}%"></div>`;
+    `<div class="mix-bar-inbound w-${widthBucket(inboundPct)}"></div><div class="mix-bar-outbound w-${widthBucket(100 - inboundPct)}"></div>`;
 }
 
 // --- Call recording coverage (chart code unchanged from the standalone report) ---
