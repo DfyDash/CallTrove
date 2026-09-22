@@ -192,6 +192,34 @@ router.get("/coverage", async (req, res) => {
   res.json({ summary, byDisposition, byMonth });
 });
 
+// "Call report" -- per-rep volume/quality leaderboard. dateFrom/dateTo
+// scope the totals to the tab's selected preset; the per-rep trailing-7-day
+// trend is always the same fixed window regardless of that preset, so it's
+// filled in here rather than left to the client to recompute.
+router.get("/call-report", async (req, res) => {
+  const { dateFrom, dateTo } = req.query;
+  const [reps, trendRows] = await Promise.all([
+    db.getCallReportByRep({ dateFrom, dateTo }),
+    db.getCallReportTrend(),
+  ]);
+
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+  const trend = {};
+  for (const rep of reps) {
+    trend[rep.id] = days.map((day) => {
+      const match = trendRows.find((r) => r.id === rep.id && r.day === day);
+      return { day, count: match ? match.count : 0 };
+    });
+  }
+
+  res.json({ reps, trend });
+});
+
 router.get("/coverage/gaps", async (req, res) => {
   const result = await db.listCoverageGaps({ page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);

@@ -47,26 +47,54 @@ router.get("/me", (req, res) => {
 });
 
 router.get("/contacts", async (req, res) => {
+  // ?all=1 -- the dedicated Contacts (A-Z) page's full directory, as
+  // opposed to the sidebar's capped, search-only quick-jump list.
+  if (req.query.all !== undefined) {
+    const contacts = await db.listAllContacts(listFilter(req));
+    return res.json(contacts);
+  }
   const contacts = await db.listContacts(req.query.search, listFilter(req));
   res.json(contacts);
+});
+
+router.get("/dispositions", async (req, res) => {
+  const dispositions = await db.listDistinctDispositions(listFilter(req));
+  res.json(dispositions);
 });
 
 // The unified call-search endpoint -- contactId is optional ("all
 // contacts"), dateFrom/dateTo are optional 'YYYY-MM-DD' strings, page/
 // pageSize drive pagination (20/50/100, validated in db.listCalls).
 router.get("/calls", async (req, res) => {
-  const { contactId, dateFrom, dateTo, disposition, hasRecording, page, pageSize } = req.query;
+  const { contactId, dateFrom, dateTo, disposition, direction, hasRecording, page, pageSize } = req.query;
   const result = await db.listCalls({
     contactId: contactId || undefined,
     ghlUserId: listFilter(req),
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     disposition: disposition || undefined,
+    direction: direction || undefined,
     hasRecording: hasRecording === undefined ? undefined : hasRecording === "true",
     page,
     pageSize,
   });
   res.json(result);
+});
+
+// Stat-tile summary behind the dashboard header -- same filters as
+// /calls, aggregated instead of paginated.
+router.get("/calls/stats", async (req, res) => {
+  const { contactId, dateFrom, dateTo, disposition, direction, hasRecording } = req.query;
+  const stats = await db.getCallStats({
+    contactId: contactId || undefined,
+    ghlUserId: listFilter(req),
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+    disposition: disposition || undefined,
+    direction: direction || undefined,
+    hasRecording: hasRecording === undefined ? undefined : hasRecording === "true",
+  });
+  res.json(stats);
 });
 
 function buildDownloadFilename(call) {

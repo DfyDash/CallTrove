@@ -1,8 +1,12 @@
 const searchInput = document.getElementById("search");
-const contactList = document.getElementById("contact-list");
+const searchResults = document.getElementById("search-results");
 const callRows = document.getElementById("call-rows");
 const sessionBar = document.getElementById("session-bar");
+const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
+const directionSelect = document.getElementById("direction-select");
+const dispositionSelect = document.getElementById("disposition-select");
+const statGrid = document.getElementById("stat-grid");
 const contactFilterLabel = document.getElementById("contact-filter-label");
 const clearContactBtn = document.getElementById("clear-contact-btn");
 const dateFromInput = document.getElementById("date-from");
@@ -23,9 +27,11 @@ const state = {
   contactId: null,
   contactLabel: "All contacts",
   disposition: null,
+  direction: null,
   hasRecording: null,
   dateFrom: "",
   dateTo: "",
+  datePreset: "week",
   page: 1,
   pageSize: 20,
 };
@@ -59,12 +65,20 @@ function presetRange(preset) {
   return { from: "", to: "" };
 }
 
-function applyDateRange(from, to) {
+function updatePresetButtonsUi() {
+  document.querySelectorAll(".preset-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.preset === state.datePreset);
+  });
+}
+
+function applyDateRange(from, to, preset = null) {
   state.dateFrom = from;
   state.dateTo = to;
+  state.datePreset = preset;
   dateFromInput.value = from;
   dateToInput.value = to;
   state.page = 1;
+  updatePresetButtonsUi();
   loadCalls();
 }
 
@@ -73,11 +87,13 @@ async function loadSession() {
   const me = await res.json();
   transcriptionEnabled = !!me.transcriptionEnabled;
   csrfToken = me.csrfToken || "";
-  const adminLink = me.role === "admin" ? ` · <a href="/admin.html">Manage users</a> · <a href="/coverage.html">Recording coverage</a>` : "";
-  sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})${adminLink} · <a href="/account.html">Change password</a></span>
+  sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)}) · <a href="/account.html">Change password</a></span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
 
-  if (me.role === "admin") await loadViewAsOptions();
+  if (me.role === "admin") {
+    adminNav.hidden = false;
+    await loadViewAsOptions();
+  }
 }
 
 async function loadViewAsOptions() {
@@ -85,7 +101,7 @@ async function loadViewAsOptions() {
   const users = await res.json();
   const agents = users.filter((u) => u.ghlUserId);
 
-  viewAsSelect.innerHTML = `<option value="">All calls</option>` +
+  viewAsSelect.innerHTML = `<option value="">All users</option>` +
     agents.map((u) => `<option value="${escapeHtml(u.ghlUserId)}">${escapeHtml(u.ghlUserName || u.username)}</option>`).join("");
   viewAsSelect.hidden = agents.length === 0;
 
@@ -93,18 +109,33 @@ async function loadViewAsOptions() {
     viewAs = viewAsSelect.value;
     state.page = 1;
     loadCalls();
-    loadContacts(searchInput.value.trim());
+    loadDispositions();
   });
 }
 
-async function loadContacts(search) {
+async function loadDispositions() {
   const params = new URLSearchParams();
-  if (search) params.set("search", search);
   if (viewAs) params.set("viewAs", viewAs);
   const query = params.toString();
-  const res = await fetch(`/api/contacts${query ? `?${query}` : ""}`);
+  const res = await fetch(`/api/dispositions${query ? `?${query}` : ""}`);
+  const dispositions = await res.json();
+  const current = dispositionSelect.value;
+  dispositionSelect.innerHTML = `<option value="">All</option>` +
+    dispositions.map((d) => `<option value="${escapeHtml(d)}">${escapeHtml(dispositionLabel(d))}</option>`).join("");
+  dispositionSelect.value = state.disposition || current || "";
+}
+
+async function loadSearchResults(search) {
+  if (!search) {
+    searchResults.hidden = true;
+    searchResults.innerHTML = "";
+    return;
+  }
+  const params = new URLSearchParams({ search });
+  if (viewAs) params.set("viewAs", viewAs);
+  const res = await fetch(`/api/contacts?${params.toString()}`);
   const contacts = await res.json();
-  renderContacts(contacts);
+  renderSearchResults(contacts);
 }
 
 // GHL sometimes stores the contact's own phone number in the "name" field
@@ -117,16 +148,20 @@ function isNameJustThePhone(name, phone) {
   return !!nameDigits && nameDigits.slice(-10) === phoneDigits.slice(-10);
 }
 
-function renderContacts(contacts) {
-  contactList.innerHTML = "";
+function renderSearchResults(contacts) {
+  searchResults.innerHTML = "";
+  searchResults.hidden = false;
+  if (contacts.length === 0) {
+    searchResults.innerHTML = `<li class="search-empty">No matching contacts.</li>`;
+    return;
+  }
   for (const contact of contacts) {
     const li = document.createElement("li");
-    li.className = contact.id === state.contactId ? "active" : "";
-    li.dataset.contactId = contact.id;
+    li.className = "search-result-item";
     const displayName = isNameJustThePhone(contact.name, contact.phone) ? "(no name)" : contact.name || "(no name)";
     li.innerHTML = `${escapeHtml(displayName)}<span class="contact-phone">${escapeHtml(contact.phone || "")}</span>`;
     li.addEventListener("click", () => selectContact(contact));
-    contactList.appendChild(li);
+    searchResults.appendChild(li);
   }
 }
 
@@ -136,30 +171,33 @@ function selectContact(contact) {
   state.page = 1;
   updateContactFilterUi();
   loadCalls();
-  document.querySelectorAll(".contact-list li").forEach((li) => {
-    li.classList.toggle("active", li.dataset.contactId === contact.id);
-  });
+  searchInput.value = "";
+  searchResults.hidden = true;
+  searchResults.innerHTML = "";
 }
 
 function clearContactFilter() {
   state.contactId = null;
   state.contactLabel = "All contacts";
   state.disposition = null;
+  state.direction = null;
   state.hasRecording = null;
   state.page = 1;
+  dispositionSelect.value = "";
+  directionSelect.value = "";
   updateContactFilterUi();
   loadCalls();
-  document.querySelectorAll(".contact-list li").forEach((li) => li.classList.remove("active"));
 }
 
 function updateContactFilterUi() {
   const parts = [];
   parts.push(state.contactId ? `Contact: ${state.contactLabel}` : "All contacts");
   if (state.disposition) parts.push(`Outcome: ${dispositionLabel(state.disposition)}`);
+  if (state.direction) parts.push(`Direction: ${state.direction}`);
   if (state.hasRecording === true) parts.push("Has recording");
   if (state.hasRecording === false) parts.push("No recording");
   contactFilterLabel.textContent = parts.join(" · ");
-  clearContactBtn.hidden = !state.contactId && !state.disposition && state.hasRecording === null;
+  clearContactBtn.hidden = !state.contactId && !state.disposition && !state.direction && state.hasRecording === null;
 }
 
 function transcriptCell(call) {
@@ -182,20 +220,40 @@ function transcriptCell(call) {
   }
 }
 
-async function loadCalls() {
+function callParams() {
   const params = new URLSearchParams();
   if (state.contactId) params.set("contactId", state.contactId);
   if (state.disposition) params.set("disposition", state.disposition);
+  if (state.direction) params.set("direction", state.direction);
   if (state.hasRecording !== null) params.set("hasRecording", state.hasRecording);
   if (state.dateFrom) params.set("dateFrom", state.dateFrom);
   if (state.dateTo) params.set("dateTo", state.dateTo);
   if (viewAs) params.set("viewAs", viewAs);
+  return params;
+}
+
+function statTile(label, value) {
+  return `<div class="stat-tile"><div class="stat-value">${escapeHtml(String(value))}</div><div class="stat-label">${escapeHtml(label)}</div></div>`;
+}
+
+async function loadStats() {
+  const res = await fetch(`/api/calls/stats?${callParams().toString()}`);
+  const stats = await res.json();
+  statGrid.innerHTML =
+    statTile("Total calls", stats.total) +
+    statTile("Inbound / Outbound", `${stats.inbound} / ${stats.outbound}`) +
+    statTile("Missed calls", stats.missed);
+}
+
+async function loadCalls() {
+  const params = callParams();
   params.set("page", state.page);
   params.set("pageSize", state.pageSize);
 
   const res = await fetch(`/api/calls?${params.toString()}`);
   const data = await res.json();
   renderCalls(data);
+  loadStats();
 
   // Arriving here via a deep link (e.g. from the coverage report) sets
   // contactId before the contact's actual name/phone is known -- fill it
@@ -214,6 +272,21 @@ async function loadCalls() {
 function dispositionLabel(disposition) {
   if (!disposition) return null;
   return disposition.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const OUTCOME_STYLES = {
+  completed: { bg: "rgba(12,163,12,0.12)", color: "#0a6b0a" },
+  "no-answer": { bg: "rgba(137,135,129,0.18)", color: "#52514e" },
+  voicemail: { bg: "rgba(42,120,214,0.12)", color: "#1c5cab" },
+  busy: { bg: "rgba(250,178,25,0.20)", color: "#8a5a00" },
+  canceled: { bg: "rgba(208,59,59,0.12)", color: "#a52e2e" },
+};
+
+function outcomeBadge(disposition) {
+  const label = dispositionLabel(disposition);
+  if (!label) return "-";
+  const style = OUTCOME_STYLES[disposition] || { bg: "rgba(137,135,129,0.18)", color: "#52514e" };
+  return `<span class="outcome-badge" style="background:${style.bg};color:${style.color}">${escapeHtml(label)}</span>`;
 }
 
 function renderCalls(data) {
@@ -250,7 +323,7 @@ function renderCalls(data) {
       <td>${escapeHtml(call.direction || "-")}</td>
       <td>${duration}</td>
       <td>${escapeHtml(call.handledByName || "-")}</td>
-      <td>${escapeHtml(disposition || "-")}</td>
+      <td>${outcomeBadge(call.disposition)}</td>
       <td>${recordingCell}</td>
       <td>${transcriptCell(call)}</td>
     `;
@@ -313,7 +386,15 @@ function escapeHtml(str) {
 let searchTimer;
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => loadContacts(searchInput.value.trim()), 200);
+  searchTimer = setTimeout(() => loadSearchResults(searchInput.value.trim()), 200);
+});
+
+searchInput.addEventListener("focus", () => {
+  if (searchInput.value.trim() && searchResults.innerHTML) searchResults.hidden = false;
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search-wrap")) searchResults.hidden = true;
 });
 
 clearContactBtn.addEventListener("click", clearContactFilter);
@@ -321,12 +402,26 @@ clearContactBtn.addEventListener("click", clearContactFilter);
 document.querySelectorAll(".preset-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const { from, to } = presetRange(btn.dataset.preset);
-    applyDateRange(from, to);
+    applyDateRange(from, to, btn.dataset.preset);
   });
 });
 
-dateFromInput.addEventListener("change", () => applyDateRange(dateFromInput.value, state.dateTo));
-dateToInput.addEventListener("change", () => applyDateRange(state.dateFrom, dateToInput.value));
+dateFromInput.addEventListener("change", () => applyDateRange(dateFromInput.value, state.dateTo, null));
+dateToInput.addEventListener("change", () => applyDateRange(state.dateFrom, dateToInput.value, null));
+
+directionSelect.addEventListener("change", () => {
+  state.direction = directionSelect.value || null;
+  state.page = 1;
+  updateContactFilterUi();
+  loadCalls();
+});
+
+dispositionSelect.addEventListener("change", () => {
+  state.disposition = dispositionSelect.value || null;
+  state.page = 1;
+  updateContactFilterUi();
+  loadCalls();
+});
 
 pageSizeSelect.addEventListener("change", () => {
   state.pageSize = Number(pageSizeSelect.value);
@@ -365,6 +460,7 @@ if (deepLinkContactId || deepLinkDisposition || deepLinkHasRecording !== null ||
   if (deepLinkHasRecording !== null) state.hasRecording = deepLinkHasRecording === "true";
   state.dateFrom = "";
   state.dateTo = "";
+  state.datePreset = "all";
   history.replaceState(null, "", location.pathname);
 } else {
   const initialRange = presetRange("week");
@@ -373,8 +469,11 @@ if (deepLinkContactId || deepLinkDisposition || deepLinkHasRecording !== null ||
 }
 dateFromInput.value = state.dateFrom;
 dateToInput.value = state.dateTo;
+updatePresetButtonsUi();
 updateContactFilterUi();
 
 loadSession();
-loadContacts();
+loadDispositions().then(() => {
+  dispositionSelect.value = state.disposition || "";
+});
 loadCalls();

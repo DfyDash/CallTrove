@@ -208,7 +208,7 @@ volume, so it gets its own page rather than crowding this one).
 
 ## PHI-access log
 
-**/phi-access-log.html** (linked from Manage users): who accessed which
+**/settings.html#access** (the "Access log" tab): who accessed which
 call's recording or transcript, when, from where, how, and whether it was
 allowed. Built against the actual requirement, researched up front rather
 than guessed:
@@ -366,7 +366,7 @@ runs is unrecoverable.
   as an installable marketplace app instead of deployed per-customer).
 - Email-based "forgot password" flow (needs AWS SES set up first). Today,
   users change their own password from `/account.html`, and admins reset
-  anyone's from `/admin.html` -- `login.html` just points locked-out users
+  anyone's from `/settings.html` -- `login.html` just points locked-out users
   at their admin. Once SES is in, add a real "Forgot password?" link/flow
   on `login.html` itself (request → emailed reset link → new password),
   replacing that admin-only fallback.
