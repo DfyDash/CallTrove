@@ -524,8 +524,9 @@ async function loadGaps() {
         location.href = `/?contactId=${encodeURIComponent(call.contactId)}`;
       });
     }
+    const gapContactName = isNameJustThePhone(call.contactName, call.contactPhone) ? "(no name)" : call.contactName || "(no name)";
     tr.innerHTML = `
-      <td>${escapeHtml(call.contactName || "(no name)")}${call.contactPhone ? ` (${escapeHtml(call.contactPhone)})` : ""}</td>
+      <td>${escapeHtml(gapContactName)}${call.contactPhone ? ` (${escapeHtml(call.contactPhone)})` : ""}</td>
       <td>${when}</td>
       <td>${escapeHtml(call.direction || "-")}</td>
       <td>${escapeHtml(call.handledByName || "-")}</td>
@@ -840,7 +841,12 @@ const ACTION_LABELS = {
   transcription_requested: "Requested transcription",
 };
 
+// "Name (phone)" -- but when the "name" on file is really just the phone
+// number again (no real name entered), showing it a second time in parens
+// is a pointless repeat, so fall back to the phone alone.
 function contactLabel(entry) {
+  const nameIsJustPhone = isNameJustThePhone(entry.contactName, entry.contactPhone);
+  if (nameIsJustPhone) return escapeHtml(entry.contactPhone);
   if (entry.contactName || entry.contactPhone) {
     return `${escapeHtml(entry.contactName || "(no name)")}${entry.contactPhone ? ` (${escapeHtml(entry.contactPhone)})` : ""}`;
   }

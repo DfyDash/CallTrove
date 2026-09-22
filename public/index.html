@@ -38,44 +38,48 @@
         <span id="contact-context-name" class="contact-context-name"></span>
       </div>
 
-      <div class="filter-bar">
-        <div class="filter-dates">
-          <div class="preset-group">
-            <button type="button" class="preset-btn" data-preset="today">Today</button>
-            <button type="button" class="preset-btn" data-preset="week">This week</button>
-            <button type="button" class="preset-btn" data-preset="month">This month</button>
-            <button type="button" class="preset-btn" data-preset="year">This year</button>
-            <button type="button" class="preset-btn" data-preset="all">All time</button>
-          </div>
-          <label>From <input type="date" id="date-from" /></label>
-          <label>To <input type="date" id="date-to" /></label>
-        </div>
-        <label class="filter-select-label">Direction
-          <select id="direction-select">
-            <option value="">All</option>
-            <option value="inbound">Inbound</option>
-            <option value="outbound">Outbound</option>
-          </select>
-        </label>
-        <label class="filter-select-label">Outcome
-          <select id="disposition-select">
-            <option value="">All</option>
-          </select>
-        </label>
-        <label class="page-size-label">Per page
-          <select id="page-size-select">
-            <option value="20">20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-        </label>
-      </div>
-
       <div class="stat-grid" id="stat-grid"></div>
 
-      <div id="results-summary" class="results-summary"></div>
+      <div class="filter-bar">
+        <div class="filter-bar-left">
+          <div class="filter-dates">
+            <div class="preset-group">
+              <button type="button" class="preset-btn" data-preset="today">Today</button>
+              <button type="button" class="preset-btn" data-preset="week">This week</button>
+              <button type="button" class="preset-btn" data-preset="month">This month</button>
+              <button type="button" class="preset-btn" data-preset="year">This year</button>
+              <button type="button" class="preset-btn" data-preset="all">All time</button>
+            </div>
+            <label>From <input type="date" id="date-from" /></label>
+            <label>To <input type="date" id="date-to" /></label>
+          </div>
+          <label class="filter-select-label">Direction
+            <select id="direction-select">
+              <option value="">All</option>
+              <option value="inbound">Inbound</option>
+              <option value="outbound">Outbound</option>
+            </select>
+          </label>
+          <label class="filter-select-label">Outcome
+            <select id="disposition-select">
+              <option value="">All</option>
+            </select>
+          </label>
+        </div>
+        <div id="results-summary" class="results-summary"></div>
+      </div>
 
-      <table>
+      <table class="calls-table">
+        <colgroup>
+          <col width="18%" />
+          <col width="13%" />
+          <col width="9%" />
+          <col width="8%" />
+          <col width="12%" />
+          <col width="11%" />
+          <col width="18%" />
+          <col width="11%" />
+        </colgroup>
         <thead>
           <tr>
             <th>Contact</th>
@@ -92,6 +96,14 @@
       </table>
 
       <div class="pagination">
+        <label class="page-size-label">Per page
+          <select id="page-size-select">
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+        <span class="pagination-divider">&middot;</span>
         <button type="button" id="prev-page-btn">&larr; Prev</button>
         <span id="page-indicator"></span>
         <button type="button" id="next-page-btn">Next &rarr;</button>
