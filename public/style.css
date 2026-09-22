@@ -268,21 +268,37 @@ a:hover {
   border-bottom: 1px solid var(--border);
 }
 
-.filter-contact {
+/* Shown only when viewing one contact's calls (or a Coverage-report
+   recording-status deep link) -- its own row with real spacing, instead of
+   being crammed into the filter bar next to unrelated controls. */
+.contact-context {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: rgba(42, 120, 214, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 8px;
 }
 
-.clear-contact-btn {
+.back-btn {
   border: none;
   background: none;
-  color: var(--muted);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
   cursor: pointer;
-  font-size: 0.85rem;
   padding: 0;
+}
+
+.back-btn:hover {
+  text-decoration: underline;
+}
+
+.contact-context-name {
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .filter-dates {
