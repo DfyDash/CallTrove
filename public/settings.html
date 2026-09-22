@@ -34,6 +34,7 @@
         <nav class="sidebar-nav" id="settings-tabs">
           <a href="#account" class="nav-link active" data-tab="account">My account</a>
           <a href="#team" class="nav-link" data-tab="team">Team members</a>
+          <a href="#accounts" class="nav-link" data-tab="accounts">GHL accounts</a>
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
@@ -89,6 +90,27 @@
             <button type="submit">Add user</button>
             <span id="add-user-error" class="login-error" hidden></span>
           </form>
+        </section>
+
+        <!-- GHL accounts -->
+        <section id="tab-accounts" class="settings-tab-panel" hidden>
+          <h1>GHL accounts</h1>
+          <p class="settings-note">Every GHL location connected to CallTrove. Recordings and contacts from each stay separate -- switch between them from the sidebar.</p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Location name</th>
+                <th>GHL location ID</th>
+              </tr>
+            </thead>
+            <tbody id="ghl-account-rows"></tbody>
+          </table>
+
+          <p><button type="button" id="connect-ghl-account-btn" class="button-link">+ Connect a GHL account</button></p>
+          <p class="settings-note" id="ghl-oauth-not-configured" hidden>
+            GHL OAuth isn't set up on this deployment yet -- connecting a second location requires registering CallTrove as an app in GHL's Marketplace developer portal first.
+          </p>
         </section>
 
         <!-- Call report -->

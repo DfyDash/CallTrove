@@ -113,7 +113,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "report", "coverage", "transcription", "backfill", "activity", "access"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "backfill", "activity", "access"];
 const tabLoaded = {};
 
 function activateTab(tab) {
@@ -131,6 +131,7 @@ function activateTab(tab) {
 
   if (!isAdmin) return;
 
+  if (tab === "accounts" && !tabLoaded.accounts) loadGhlAccountsTab();
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
   if (tab === "backfill" && !tabLoaded.backfill) loadBackfillStatus();
@@ -282,6 +283,29 @@ function loadTeam() {
   tabLoaded.team = true;
   loadGhlUsers().then(loadUsers);
 }
+
+// --- GHL accounts (multi-tenant: connected locations) ---
+
+const ghlAccountRows = document.getElementById("ghl-account-rows");
+const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
+const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
+
+async function loadGhlAccountsTab() {
+  tabLoaded.accounts = true;
+  const res = await fetch("/api/admin/ghl-accounts");
+  const { accounts, oauthConfigured } = await res.json();
+
+  ghlAccountRows.innerHTML = accounts.length
+    ? accounts.map((a) => `<tr><td>${escapeHtml(a.name || a.ghlLocationId)}</td><td>${escapeHtml(a.ghlLocationId)}</td></tr>`).join("")
+    : `<tr><td colspan="2" class="empty-state">No GHL accounts connected yet.</td></tr>`;
+
+  connectGhlAccountBtn.hidden = !oauthConfigured;
+  ghlOauthNotConfigured.hidden = oauthConfigured;
+}
+
+connectGhlAccountBtn.addEventListener("click", () => {
+  location.href = "/api/admin/ghl-oauth/connect";
+});
 
 // --- Call report ---
 

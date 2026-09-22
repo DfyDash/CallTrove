@@ -552,10 +552,31 @@ async function createTenant({ id, name }) {
   await pool.query(`INSERT INTO tenants (id, name) VALUES ($1, $2)`, [id, name]);
 }
 
-async function createGhlAccount({ id, tenantId, ghlLocationId, name }) {
+async function createGhlAccount({ id, tenantId, ghlLocationId, name, accessToken, refreshToken, tokenExpiresAt }) {
   await pool.query(
-    `INSERT INTO ghl_accounts (id, tenant_id, ghl_location_id, name) VALUES ($1, $2, $3, $4)`,
-    [id, tenantId, ghlLocationId, name || null]
+    `INSERT INTO ghl_accounts (id, tenant_id, ghl_location_id, name, access_token, refresh_token, token_expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, tenantId, ghlLocationId, name || null, accessToken || null, refreshToken || null, tokenExpiresAt || null]
+  );
+}
+
+// Looked up by location ID (not our own row id) at the OAuth callback --
+// GHL only ever hands back its own location ID, so this is how a
+// re-installation of an already-connected location is recognized as an
+// update rather than a duplicate connection.
+async function getGhlAccountByLocationId(ghlLocationId) {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name
+     FROM ghl_accounts WHERE ghl_location_id = $1`,
+    [ghlLocationId]
+  );
+  return rows[0] || null;
+}
+
+async function updateGhlAccountTokens(id, { accessToken, refreshToken, tokenExpiresAt }) {
+  await pool.query(
+    `UPDATE ghl_accounts SET access_token = $2, refresh_token = $3, token_expires_at = $4, uninstalled_at = NULL WHERE id = $1`,
+    [id, accessToken || null, refreshToken || null, tokenExpiresAt || null]
   );
 }
 
@@ -705,6 +726,8 @@ module.exports = {
   DEFAULT_GHL_ACCOUNT_ID,
   createTenant,
   createGhlAccount,
+  getGhlAccountByLocationId,
+  updateGhlAccountTokens,
   listGhlAccountsForTenant,
   listAccessibleAccounts,
   grantUserAccountAccess,

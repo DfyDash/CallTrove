@@ -1,8 +1,9 @@
 const express = require("express");
-const { randomUUID } = require("crypto");
+const { randomUUID, randomBytes } = require("crypto");
 const archiver = require("archiver");
 const db = require("../db");
 const ghlApi = require("../ghlApi");
+const ghlOAuth = require("../ghlOAuth");
 const backfill = require("../backfill");
 const { getBuffer } = require("../storage");
 const { hashPassword, requireAdmin, requireCsrf } = require("../auth");
@@ -135,6 +136,82 @@ router.put("/settings", requireCsrf, async (req, res) => {
   await db.setAutoTranscribeEnabled(enabled);
   await log(req, "auto_transcribe_toggled", `Turned automatic transcription ${enabled ? "ON" : "OFF"}`);
   res.json({ autoTranscribeEnabled: enabled });
+});
+
+// --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---
+
+router.get("/ghl-accounts", async (req, res) => {
+  const accounts = await db.listGhlAccountsForTenant(req.session.user.tenantId);
+  res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
+});
+
+// Redirects into GHL's own "choose a location, then authorize" screen.
+// The random state is stashed on the session and checked back on the
+// callback below -- standard OAuth CSRF protection (stops a forged
+// callback from linking an attacker-chosen account into this tenant).
+router.get("/ghl-oauth/connect", (req, res) => {
+  if (!ghlOAuth.isConfigured()) {
+    return res.status(400).json({ error: "GHL OAuth is not configured on this deployment yet" });
+  }
+  const state = randomBytes(24).toString("hex");
+  req.session.ghlOAuthState = state;
+  res.redirect(ghlOAuth.buildAuthorizeUrl(state));
+});
+
+// Where GHL sends the browser back to after the admin approves the
+// install. Tied to this tenant via req.session.user.tenantId -- whoever
+// is logged into CallTrove when they click "Connect" is who the new
+// account belongs to, not anything GHL itself reports (see the design
+// discussion this followed: GHL's own login/account structure is
+// irrelevant here, only the CallTrove session that started the flow).
+router.get("/ghl-oauth/callback", async (req, res) => {
+  const { code, state } = req.query;
+  if (!state || state !== req.session.ghlOAuthState) {
+    return res.status(400).send("This connection request has expired or is invalid. Please try connecting again from Settings.");
+  }
+  delete req.session.ghlOAuthState;
+  if (!code) {
+    return res.status(400).send("GHL did not return an authorization code.");
+  }
+
+  let tokens;
+  try {
+    tokens = await ghlOAuth.exchangeCodeForTokens(code);
+  } catch (err) {
+    console.error("[admin] GHL OAuth token exchange failed:", err);
+    return res.status(502).send("Could not complete the connection to GHL. Please try again.");
+  }
+
+  const locationId = tokens.locationId;
+  if (!locationId) {
+    return res.status(400).send("GHL did not return a location for this install -- CallTrove connects one location at a time.");
+  }
+
+  const tokenFields = {
+    accessToken: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    tokenExpiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
+  };
+
+  // Re-authorizing an already-connected location (a token refresh, or
+  // reinstalling after an uninstall) updates it in place instead of
+  // creating a duplicate ghl_accounts row for the same GHL location.
+  const existing = await db.getGhlAccountByLocationId(locationId);
+  if (existing) {
+    await db.updateGhlAccountTokens(existing.id, tokenFields);
+    await log(req, "ghl_account_reconnected", `Reconnected GHL location "${locationId}"`);
+  } else {
+    await db.createGhlAccount({
+      id: randomUUID(),
+      tenantId: req.session.user.tenantId,
+      ghlLocationId: locationId,
+      name: tokens.locationName || locationId,
+      ...tokenFields,
+    });
+    await log(req, "ghl_account_connected", `Connected GHL location "${locationId}"`);
+  }
+
+  res.redirect("/settings.html?tab=team&connected=1");
 });
 
 // Historical backfill, on demand from the admin UI instead of someone
