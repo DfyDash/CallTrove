@@ -395,13 +395,24 @@ function renderReportDetail() {
   const maxCount = Math.max(1, ...Object.values(reportData.trend || {}).flat().map((d) => d.count));
   const trendEl = document.getElementById("rep-trend");
   trendEl.innerHTML = "";
-  for (const point of trend) {
-    const label = new Date(`${point.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
-    const h = Math.round((point.count / maxCount) * 90);
-    const col = document.createElement("div");
-    col.className = "trend-bar-col";
-    col.innerHTML = `<div class="trend-bar" style="height:${h}px" title="${point.count} calls"></div><span class="trend-bar-label">${escapeHtml(label)}</span>`;
-    trendEl.appendChild(col);
+
+  // A genuinely all-zero week (this rep just hasn't had a call in the last
+  // 7 calendar days -- independent of whatever date range the stats above
+  // cover) rendered as seven 0px bars, indistinguishable from the chart
+  // having failed to draw at all. Say so explicitly instead.
+  if (trend.length > 0 && trend.every((point) => point.count === 0)) {
+    trendEl.innerHTML = `<p class="empty-state">No calls in the last 7 days.</p>`;
+  } else {
+    for (const point of trend) {
+      const label = new Date(`${point.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+      // A floor of 3px keeps a real (but non-zero-week) zero-count day
+      // visibly distinct from empty space, same reasoning as above.
+      const h = point.count === 0 ? 3 : Math.max(3, Math.round((point.count / maxCount) * 90));
+      const col = document.createElement("div");
+      col.className = "trend-bar-col";
+      col.innerHTML = `<div class="trend-bar" style="height:${h}px" title="${point.count} calls"></div><span class="trend-bar-label">${escapeHtml(label)}</span>`;
+      trendEl.appendChild(col);
+    }
   }
 
   const total = rep.inbound + rep.outbound;

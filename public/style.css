@@ -506,6 +506,7 @@ audio {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 14px;
   margin-bottom: 12px;
   font-size: 0.85rem;
   color: var(--muted);
@@ -858,6 +859,8 @@ audio {
   align-items: flex-end;
   gap: 10px;
   height: 110px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
 }
 
 .trend-bar-col {
