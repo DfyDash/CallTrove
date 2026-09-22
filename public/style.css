@@ -251,7 +251,7 @@ a:hover {
 
 .content {
   flex: 1;
-  padding: 24px;
+  padding: 18px 28px;
 }
 
 .empty-state {
@@ -262,10 +262,20 @@ a:hover {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.filter-bar-left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* Shown only when viewing one contact's calls (or a Coverage-report
@@ -332,7 +342,7 @@ a:hover {
 }
 
 .preset-btn {
-  padding: 5px 10px;
+  padding: 6px 11px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: none;
@@ -399,7 +409,6 @@ a:hover {
 }
 
 .page-size-label {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -434,18 +443,23 @@ a:hover {
 }
 
 .results-summary {
-  margin-bottom: 8px;
+  margin-left: auto;
   font-size: 0.85rem;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .pagination {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 16px;
-  margin-top: 16px;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
   font-size: 0.85rem;
+}
+
+.pagination-divider {
+  color: var(--border);
 }
 
 .pagination button {
@@ -462,6 +476,10 @@ a:hover {
   cursor: default;
 }
 
+.calls-table {
+  table-layout: fixed;
+}
+
 table {
   width: 100%;
   border-collapse: separate;
@@ -474,7 +492,7 @@ table {
 
 th, td {
   text-align: left;
-  padding: 8px 10px;
+  padding: 10px 18px;
   border-bottom: 1px solid var(--border);
   font-size: 0.9rem;
 }

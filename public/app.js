@@ -302,6 +302,13 @@ function outcomeBadge(disposition) {
   return `<span class="outcome-badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
+function formatDuration(seconds) {
+  if (!seconds) return "-";
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function renderCalls(data) {
   const { calls, total, page, pageSize } = data;
   callRows.innerHTML = "";
@@ -313,8 +320,9 @@ function renderCalls(data) {
   for (const call of calls) {
     const tr = document.createElement("tr");
     const when = call.occurredAt ? new Date(call.occurredAt).toLocaleString() : "-";
-    const duration = call.durationSeconds != null ? `${Math.round(call.durationSeconds)}s` : "-";
-    const contactCell = `${escapeHtml(call.contactName || "(no name)")}<span class="contact-phone">${escapeHtml(call.contactPhone || "")}</span>`;
+    const duration = formatDuration(call.durationSeconds);
+    const contactDisplayName = isNameJustThePhone(call.contactName, call.contactPhone) ? "(no name)" : call.contactName || "(no name)";
+    const contactCell = `${escapeHtml(contactDisplayName)}<span class="contact-phone">${escapeHtml(call.contactPhone || "")}</span>`;
     const disposition = dispositionLabel(call.disposition);
     // A call GHL disposed as anything other than "Completed" (no answer,
     // busy, canceled, voicemail...) was never going to have a recording --
