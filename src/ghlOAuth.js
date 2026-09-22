@@ -54,4 +54,26 @@ async function exchangeCodeForTokens(code) {
   return res.json();
 }
 
-module.exports = { isConfigured, buildAuthorizeUrl, exchangeCodeForTokens };
+// OAuth access tokens are short-lived (GHL's are ~1hr); the refresh token
+// isn't, so this is what src/accountCredentials.js calls whenever a
+// connected account's token_expires_at has passed, to get a fresh
+// access_token without asking the admin to reauthorize.
+async function refreshAccessToken(refreshToken) {
+  const res = await fetch(GHL_OAUTH_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.GHL_OAUTH_CLIENT_ID,
+      client_secret: process.env.GHL_OAUTH_CLIENT_SECRET,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`GHL OAuth token refresh failed with status ${res.status}: ${body}`);
+  }
+  return res.json();
+}
+
+module.exports = { isConfigured, buildAuthorizeUrl, exchangeCodeForTokens, refreshAccessToken };

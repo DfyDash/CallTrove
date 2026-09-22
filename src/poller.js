@@ -1,6 +1,7 @@
 const { randomUUID } = require("crypto");
 const db = require("./db");
 const ghlApi = require("./ghlApi");
+const accountCredentials = require("./accountCredentials");
 const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
 const transcription = require("./transcription");
@@ -42,7 +43,13 @@ function getDisposition(message) {
   return message.status || (message.meta && message.meta.call && message.meta.call.status) || null;
 }
 
-async function processCallMessage(conversation, message, { checkAutoTranscribe = false } = {}) {
+// api/ghlAccountId default to the legacy single-account client and "no
+// account tag" (which db.insertCall/upsertContact fall back to the
+// default backfilled account for) -- src/backfill.js still calls this
+// with neither, and keeps working exactly as before multi-account
+// support existed. src/poller.js's own per-account loop below passes
+// both explicitly.
+async function processCallMessage(conversation, message, { checkAutoTranscribe = false, api = ghlApi, ghlAccountId } = {}) {
   const contactId = conversation.contactId;
   if (!contactId) return;
 
@@ -50,7 +57,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
   const name = conversation.fullName || conversation.contactName || null;
   const phone = conversation.phone || null;
 
-  await db.upsertContact({ contactId, name, phone });
+  await db.upsertContact({ contactId, name, phone, ghlAccountId });
 
   const callRowId = randomUUID();
   const inserted = await db.insertCall({
@@ -63,14 +70,15 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     sourceRecordingUrl: null,
     rawPayload: message,
     handledById: message.userId || null,
-    handledByName: await ghlApi.getUserName(message.userId).catch(() => null),
+    handledByName: await api.getUserName(message.userId).catch(() => null),
     disposition: getDisposition(message),
+    ghlAccountId,
   });
 
   if (!inserted) return; // already processed this call
 
   try {
-    const recording = await ghlApi.downloadRecording(message.id);
+    const recording = await api.downloadRecording(message.id);
     const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
     const taggedBuffer = embedMetadata(recording.buffer, extension, {
       occurredAt,
@@ -78,7 +86,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
       durationSeconds: (message.meta && message.meta.call && message.meta.call.duration) || null,
       contactName: name,
       phone,
-      timezone: await ghlApi.getAccountTimezone(),
+      timezone: await api.getAccountTimezone(),
     });
     const key = `${contactId}/${callRowId}.${extension}`;
     await saveRecording(key, taggedBuffer);
@@ -104,8 +112,8 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
 // why this exists). Never touches calls backfill.js inserted -- those are
 // old enough that "still processing" isn't a plausible explanation, so a
 // 'failed' there really does mean GHL has no recording for it.
-async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS) {
-  const candidates = await db.listRetryableFailedCalls(maxAgeMs);
+async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS, { api = ghlApi, ghlAccountId } = {}) {
+  const candidates = await db.listRetryableFailedCalls(maxAgeMs, ghlAccountId);
 
   for (const call of candidates) {
     const conversationId = call.rawPayload && call.rawPayload.conversationId;
@@ -113,7 +121,7 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
 
     let messages;
     try {
-      messages = await ghlApi.listCallMessages(conversationId, { since: call.occurredAt });
+      messages = await api.listCallMessages(conversationId, { since: call.occurredAt });
     } catch (err) {
       console.error(`[poller] retry: failed to list messages for call ${call.ghlCallId}:`, err);
       continue;
@@ -126,7 +134,7 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
     if (disposition === "ringing") continue; // call not actually finished yet, try again next cycle
 
     try {
-      const recording = await ghlApi.downloadRecording(call.ghlCallId);
+      const recording = await api.downloadRecording(call.ghlCallId);
       const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
       const durationSeconds = (message.meta && message.meta.call && message.meta.call.duration) || null;
       const taggedBuffer = embedMetadata(recording.buffer, extension, {
@@ -135,7 +143,7 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
         durationSeconds,
         contactName: call.contactName,
         phone: call.contactPhone,
-        timezone: await ghlApi.getAccountTimezone(),
+        timezone: await api.getAccountTimezone(),
       });
       const key = `${call.contactId}/${call.id}.${extension}`;
       await saveRecording(key, taggedBuffer);
@@ -149,25 +157,33 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
   }
 }
 
-async function pollOnce() {
-  if (!ghlApi.isConfigured()) return;
+// One connected account's full cycle: retry recordings still processing,
+// then scan for anything new since that account's own checkpoint. Each
+// account's checkpoint (account_sync_state) and credentials (its own
+// OAuth token, refreshed on demand by accountCredentials -- or the legacy
+// static token for the pre-multi-account default account) are fully
+// independent, so one account's failure or lag never touches another's.
+async function pollOneAccount(account) {
+  const api = await accountCredentials.clientForAccount(account);
+  if (!api.isConfigured()) return;
 
-  await retryFailedRecordings();
+  await retryFailedRecordings(FAILED_RECORDING_RETRY_WINDOW_MS, { api, ghlAccountId: account.id });
 
-  let checkpoint = await db.getLastSyncedAt();
+  let checkpoint = await db.getAccountLastSyncedAt(account.id);
   if (!checkpoint) {
-    // First ever run: start watching from now rather than walking the
-    // account's entire call history.
-    await db.setLastSyncedAt(new Date());
+    // First ever run for this account: start watching from now rather
+    // than walking its entire call history (that's what src/backfill.js
+    // is for).
+    await db.setAccountLastSyncedAt(account.id, new Date());
     return;
   }
 
-  const conversations = await ghlApi.searchConversations(CONVERSATIONS_PER_POLL);
+  const conversations = await api.searchConversations(CONVERSATIONS_PER_POLL);
   const candidates = conversations.filter((c) => c.lastMessageDate > checkpoint.getTime());
 
   const newMessages = [];
   for (const conversation of candidates) {
-    const messages = await ghlApi.listCallMessages(conversation.id, { since: checkpoint });
+    const messages = await api.listCallMessages(conversation.id, { since: checkpoint });
     for (const message of messages) {
       if (new Date(message.dateAdded) > checkpoint) {
         newMessages.push({ conversation, message });
@@ -179,21 +195,32 @@ async function pollOnce() {
 
   for (const { conversation, message } of newMessages) {
     try {
-      await processCallMessage(conversation, message, { checkAutoTranscribe: true });
+      await processCallMessage(conversation, message, { checkAutoTranscribe: true, api, ghlAccountId: account.id });
       checkpoint = new Date(message.dateAdded);
-      await db.setLastSyncedAt(checkpoint);
+      await db.setAccountLastSyncedAt(account.id, checkpoint);
     } catch (err) {
-      console.error(`[poller] failed to process call ${message.id}, will retry next cycle:`, err);
-      break; // stop this cycle; checkpoint stays before the failed message
+      console.error(`[poller] account ${account.id} (${account.ghlLocationId}): failed to process call ${message.id}, will retry next cycle:`, err);
+      break; // stop this account's cycle; its checkpoint stays before the failed message
+    }
+  }
+}
+
+// Loops every connected account (across every tenant) each cycle. One
+// account's error is caught and logged rather than allowed to abort the
+// whole cycle -- an outage or a bad token on one customer's connection
+// must never stall ingestion for everyone else's.
+async function pollOnce() {
+  const accounts = await db.listAllActiveGhlAccounts();
+  for (const account of accounts) {
+    try {
+      await pollOneAccount(account);
+    } catch (err) {
+      console.error(`[poller] account ${account.id} (${account.ghlLocationId}) poll cycle failed:`, err);
     }
   }
 }
 
 function start() {
-  if (!ghlApi.isConfigured()) {
-    console.warn("[poller] GHL API not configured, call polling disabled");
-    return;
-  }
   console.log(`[poller] starting, polling every ${POLL_INTERVAL_MS / 1000}s`);
   pollOnce().catch((err) => console.error("[poller] initial poll failed:", err));
   setInterval(() => {
@@ -201,4 +228,4 @@ function start() {
   }, POLL_INTERVAL_MS);
 }
 
-module.exports = { start, pollOnce, processCallMessage, retryFailedRecordings };
+module.exports = { start, pollOnce, pollOneAccount, processCallMessage, retryFailedRecordings };

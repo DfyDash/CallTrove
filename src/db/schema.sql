@@ -197,6 +197,23 @@ INSERT INTO user_account_access (user_id, ghl_account_id)
   SELECT id, '00000000-0000-0000-0000-000000000001' FROM users
   ON CONFLICT DO NOTHING;
 
+-- Per-account ingestion checkpoint, replacing the single-row sync_state
+-- above now that one poller cycle (src/poller.js) covers more than one
+-- connected GHL account -- each needs its own independent "newest call
+-- already processed" watermark. sync_state itself is left in place, not
+-- dropped, as a rollback safety net.
+CREATE TABLE IF NOT EXISTS account_sync_state (
+  ghl_account_id  UUID PRIMARY KEY REFERENCES ghl_accounts(id) ON DELETE CASCADE,
+  last_synced_at  TIMESTAMPTZ
+);
+
+-- Backfill: the existing single checkpoint becomes the default account's
+-- checkpoint, so today's single-account deployment doesn't re-scan its
+-- entire call history on the first poll cycle after this migration ships.
+INSERT INTO account_sync_state (ghl_account_id, last_synced_at)
+  SELECT '00000000-0000-0000-0000-000000000001', last_synced_at FROM sync_state WHERE id = 1
+  ON CONFLICT (ghl_account_id) DO NOTHING;
+
 -- Append-only enforcement for both log tables above: HIPAA's audit-controls
 -- guidance expects tamper-evident logs, not just "the app has no edit
 -- button". This rejects UPDATE/DELETE at the database engine level

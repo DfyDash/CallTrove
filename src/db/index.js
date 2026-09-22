@@ -86,15 +86,21 @@ async function markCallStored(callId, storageKey, durationSeconds) {
 // the moment the poller first sees the message (see src/poller.js's
 // retryFailedRecordings), so these are worth one more look rather than
 // treated as permanently missing the way an old backfilled call is.
-async function listRetryableFailedCalls(maxAgeMs) {
+async function listRetryableFailedCalls(maxAgeMs, ghlAccountId) {
+  const conditions = [`c.recording_status = 'failed'`, `c.occurred_at > now() - ($1 || ' milliseconds')::interval`];
+  const params = [maxAgeMs];
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    conditions.push(`c.ghl_account_id = $${params.length}`);
+  }
   const { rows } = await pool.query(
     `SELECT c.id, c.ghl_call_id AS "ghlCallId", c.ghl_contact_id AS "contactId", c.raw_payload AS "rawPayload",
             c.direction, c.occurred_at AS "occurredAt",
             ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
-     WHERE c.recording_status = 'failed' AND c.occurred_at > now() - ($1 || ' milliseconds')::interval`,
-    [maxAgeMs]
+     WHERE ${conditions.join(" AND ")}`,
+    params
   );
   return rows;
 }
@@ -622,6 +628,21 @@ async function revokeUserAccountAccess(userId, ghlAccountId) {
   await pool.query(`DELETE FROM user_account_access WHERE user_id = $1 AND ghl_account_id = $2`, [userId, ghlAccountId]);
 }
 
+// Every actively connected account across every tenant, with the OAuth
+// token fields ingestion code needs -- what src/poller.js loops over each
+// cycle. Unlike listGhlAccountsForTenant/listAccessibleAccounts (the
+// permission-checking layer, always scoped to one tenant since they
+// answer "what can this logged-in user see"), the poller isn't handling
+// a request for any one tenant, so it needs everything at once.
+async function listAllActiveGhlAccounts() {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+     FROM ghl_accounts WHERE uninstalled_at IS NULL`
+  );
+  return rows;
+}
+
 // --- sync_state (poller checkpoint) ---
 
 async function getLastSyncedAt() {
@@ -634,6 +655,29 @@ async function setLastSyncedAt(date) {
     `INSERT INTO sync_state (id, last_synced_at) VALUES (1, $1)
      ON CONFLICT (id) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
     [date]
+  );
+}
+
+// --- account_sync_state (per-account poller checkpoint) ---
+// Replaces the single-row sync_state above now that one poll cycle covers
+// more than one connected GHL account -- each needs its own independent
+// "newest call already processed" checkpoint. sync_state itself is left
+// in place rather than dropped (a rollback safety net); src/poller.js
+// just doesn't read it anymore once this ships.
+
+async function getAccountLastSyncedAt(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT last_synced_at AS "lastSyncedAt" FROM account_sync_state WHERE ghl_account_id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] ? rows[0].lastSyncedAt : null;
+}
+
+async function setAccountLastSyncedAt(ghlAccountId, date) {
+  await pool.query(
+    `INSERT INTO account_sync_state (ghl_account_id, last_synced_at) VALUES ($1, $2)
+     ON CONFLICT (ghl_account_id) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
+    [ghlAccountId, date]
   );
 }
 
@@ -730,6 +774,7 @@ module.exports = {
   updateGhlAccountTokens,
   listGhlAccountsForTenant,
   listAccessibleAccounts,
+  listAllActiveGhlAccounts,
   grantUserAccountAccess,
   revokeUserAccountAccess,
   upsertContact,
@@ -765,6 +810,8 @@ module.exports = {
   deleteUser,
   getLastSyncedAt,
   setLastSyncedAt,
+  getAccountLastSyncedAt,
+  setAccountLastSyncedAt,
   getAutoTranscribeEnabled,
   setAutoTranscribeEnabled,
   logAudit,
