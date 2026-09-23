@@ -7,6 +7,14 @@
 // window closes is gone for good, so this needs to run (once, or any time
 // there's a gap) before telling a customer it's safe to flip that switch on.
 //
+// Multi-account: loops every connected GHL account (db.listAllActiveGhlAccounts(),
+// same global scope src/poller.js uses) rather than just the one legacy
+// GHL_API_TOKEN-configured account, using each account's own credentials via
+// src/accountCredentials.js. One account's failure is caught and logged
+// without aborting the whole run, same reasoning as the poller: one bad
+// token or a GHL outage on one customer's connection must never stop
+// another customer's backfill from finishing.
+//
 // Transcription is on-demand only, everywhere (see routes/api.js's POST
 // /calls/:id/transcribe) -- this never triggers it either. Run it with
 // node src/backfill.js (or npm run backfill), or from the admin UI's
@@ -15,7 +23,7 @@
 
 require("dotenv").config();
 const db = require("./db");
-const ghlApi = require("./ghlApi");
+const accountCredentials = require("./accountCredentials");
 const { processCallMessage } = require("./poller");
 
 const PAGE_SIZE = 100;
@@ -25,58 +33,47 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function run() {
-  if (!ghlApi.isConfigured()) {
-    console.error("[backfill] GHL_API_TOKEN / GHL_LOCATION_ID not set, aborting");
-    process.exitCode = 1;
-    return;
-  }
-
-  console.log("[backfill] starting full history walk (oldest calls first)");
+async function runForAccount(account, api, totals) {
+  console.log(`[backfill] account ${account.id} (${account.ghlLocationId}): starting full history walk (oldest calls first)`);
 
   let cursor = {};
   let pageNum = 0;
-  let conversationsSeen = 0;
-  let callsFound = 0;
-  let callsSaved = 0;
-  let callsSkipped = 0;
-  let callsFailed = 0;
 
   for (;;) {
     pageNum += 1;
-    const conversations = await ghlApi.searchConversationsPage({
+    const conversations = await api.searchConversationsPage({
       limit: PAGE_SIZE,
       sort: "asc",
       ...cursor,
     });
     if (conversations.length === 0) break;
 
-    console.log(`[backfill] page ${pageNum}: ${conversations.length} conversations`);
+    console.log(`[backfill] account ${account.id}: page ${pageNum}: ${conversations.length} conversations`);
 
     for (const conversation of conversations) {
-      conversationsSeen += 1;
+      totals.conversationsSeen += 1;
       let messages;
       try {
-        messages = await ghlApi.listCallMessages(conversation.id);
+        messages = await api.listCallMessages(conversation.id);
       } catch (err) {
-        console.error(`[backfill] failed to list messages for conversation ${conversation.id}:`, err);
+        console.error(`[backfill] account ${account.id}: failed to list messages for conversation ${conversation.id}:`, err);
         continue;
       }
       await sleep(DELAY_MS);
 
       for (const message of messages) {
-        callsFound += 1;
+        totals.callsFound += 1;
         const before = await db.getCallByGhlId(message.id);
         if (before) {
-          callsSkipped += 1; // already captured by a prior run or the live poller
+          totals.callsSkipped += 1; // already captured by a prior run or the live poller
           continue;
         }
         try {
-          await processCallMessage(conversation, message);
-          callsSaved += 1;
+          await processCallMessage(conversation, message, { api, ghlAccountId: account.id });
+          totals.callsSaved += 1;
         } catch (err) {
-          callsFailed += 1;
-          console.error(`[backfill] failed to process call ${message.id}:`, err);
+          totals.callsFailed += 1;
+          console.error(`[backfill] account ${account.id}: failed to process call ${message.id}:`, err);
         }
         await sleep(DELAY_MS);
       }
@@ -87,19 +84,42 @@ async function run() {
 
     if (conversations.length < PAGE_SIZE) break; // short page = last page
   }
+}
 
-  const summary = {
-    conversationsSeen,
-    callsFound,
-    callsSaved,
-    callsSkipped,
-    callsFailed,
+async function run() {
+  const accounts = await db.listAllActiveGhlAccounts();
+
+  const totals = {
+    conversationsSeen: 0,
+    callsFound: 0,
+    callsSaved: 0,
+    callsSkipped: 0,
+    callsFailed: 0,
   };
+
+  let ranAny = false;
+  for (const account of accounts) {
+    const api = await accountCredentials.clientForAccount(account);
+    if (!api.isConfigured()) continue;
+    ranAny = true;
+    try {
+      await runForAccount(account, api, totals);
+    } catch (err) {
+      console.error(`[backfill] account ${account.id} (${account.ghlLocationId}): backfill failed:`, err);
+    }
+  }
+
+  if (!ranAny) {
+    console.error("[backfill] no configured GHL accounts found, aborting");
+    process.exitCode = 1;
+    return;
+  }
+
   console.log(
-    `[backfill] done. conversations scanned: ${conversationsSeen}, call messages found: ${callsFound}, ` +
-      `saved: ${callsSaved}, already had: ${callsSkipped}, failed: ${callsFailed}`
+    `[backfill] done. conversations scanned: ${totals.conversationsSeen}, call messages found: ${totals.callsFound}, ` +
+      `saved: ${totals.callsSaved}, already had: ${totals.callsSkipped}, failed: ${totals.callsFailed}`
   );
-  return summary;
+  return totals;
 }
 
 module.exports = { run };
