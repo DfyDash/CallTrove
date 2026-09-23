@@ -50,9 +50,9 @@
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
-          <a href="#backfill" class="nav-link" data-tab="backfill">Historical backfill &amp; export</a>
+          <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
-          <a href="#access" class="nav-link" data-tab="access">Access log</a>
+          <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
         </nav>
       </div>
 
@@ -72,7 +72,7 @@
           <p><a href="/account.html" class="button-link">Change password &rarr;</a></p>
 
           <div id="danger-zone" class="danger-zone" hidden>
-            <h2>Danger zone</h2>
+            <h2>Cancel account</h2>
             <p class="settings-note">
               Cancel this CallTrove account. Every login is locked out immediately.
               After a <span id="grace-period-days">7</span>-day grace period (during
@@ -296,11 +296,11 @@
           </div>
         </section>
 
-        <!-- Historical backfill & export -->
+        <!-- Import past calls & export -->
         <section id="tab-backfill" class="settings-tab-panel" hidden>
-          <h1>Historical backfill &amp; export</h1>
+          <h1>Import past calls &amp; export</h1>
           <div class="settings-section">
-            <h2>Run historical backfill</h2>
+            <h2>Import past calls</h2>
             <p class="settings-note">
               Walks the account's entire call history and captures anything not
               already here. Useful after a gap, or before turning on GHL's
@@ -309,7 +309,7 @@
               depending on call volume; runs in the background, so it's safe to
               navigate away.
             </p>
-            <button type="button" id="run-backfill-btn" class="button-link">Run historical backfill</button>
+            <button type="button" id="run-backfill-btn" class="button-link">Import past calls</button>
             <p class="settings-note" id="backfill-status"></p>
           </div>
 
@@ -347,9 +347,9 @@
           </div>
         </section>
 
-        <!-- Access log -->
+        <!-- Recording access log -->
         <section id="tab-access" class="settings-tab-panel" hidden>
-          <h1>Access log</h1>
+          <h1>Recording access log</h1>
           <p class="settings-note">
             Who accessed which call's recording or transcript, when, from where,
             and whether it was allowed. Includes denied attempts. Kept

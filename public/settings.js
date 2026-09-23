@@ -896,13 +896,13 @@ let backfillPollTimer = null;
 function renderBackfillStatus(state) {
   if (state.running) {
     runBackfillBtn.disabled = true;
-    runBackfillBtn.textContent = "Backfill running…";
+    runBackfillBtn.textContent = "Importing…";
     backfillStatus.textContent = "This can take a while for a lot of history -- feel free to navigate away and check back.";
     if (!backfillPollTimer) backfillPollTimer = setInterval(loadBackfillStatus, 5000);
     return;
   }
   runBackfillBtn.disabled = false;
-  runBackfillBtn.textContent = "Run historical backfill";
+  runBackfillBtn.textContent = "Import past calls";
   if (backfillPollTimer) {
     clearInterval(backfillPollTimer);
     backfillPollTimer = null;
@@ -926,14 +926,14 @@ async function loadBackfillStatus() {
 }
 
 runBackfillBtn.addEventListener("click", async () => {
-  if (!confirm("Run a full historical backfill now? This walks the account's entire call history and can take a while for large accounts.")) return;
+  if (!confirm("Import all past calls now? This walks the account's entire call history and can take a while for large accounts.")) return;
   const res = await fetch("/api/admin/backfill", {
     method: "POST",
     headers: { "X-CSRF-Token": csrfToken },
   });
   if (!res.ok && res.status !== 202) {
     const body = await res.json().catch(() => ({}));
-    alert(body.error || "could not start backfill");
+    alert(body.error || "could not start import");
     return;
   }
   renderBackfillStatus(await res.json());
