@@ -26,7 +26,11 @@ function log(req, action, message) {
 // (backfilled to the original admin for today's single deployment).
 // Deliberately a hard 403, not just hidden UI -- even another admin on
 // the same tenant must not be able to cancel it.
-const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 30);
+// 7 days, not longer, specifically because the bulk export (see "Bulk
+// export" above) means there's no reason someone would need weeks to
+// grab a copy of everything -- unlike GHL itself, which has no
+// equivalent one-click "download all my data" feature.
+const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 7);
 
 // GET /api/tenant/status (routes/api.js) is what actually serves status
 // to the frontend -- it isn't admin-gated, since a locked-out NON-admin

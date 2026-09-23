@@ -51,7 +51,7 @@ router.get("/tenant/status", async (req, res) => {
     // exposed here too so the Settings "Danger zone" copy (and this
     // status view) shows the real configured value instead of a
     // hardcoded guess that could drift from it.
-    gracePeriodDays: Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 30),
+    gracePeriodDays: Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 7),
   });
 });
 

@@ -318,11 +318,14 @@ derive "whoever is paying" from, so this is a stand-in, backfilled to
 each tenant's original admin), triggered from Settings > My account >
 Danger zone by typing the account's name to confirm.
 
-The 30-day grace period (`CANCELLATION_GRACE_PERIOD_DAYS`) is full,
+The 7-day grace period (`CANCELLATION_GRACE_PERIOD_DAYS`) is full,
 unrestricted access, not a lockout countdown -- everyone on the account
 keeps working normally so there's real time to export data, with a
 banner (`GET /api/me`'s `cancellationPending`) making sure people
-actually notice. `src/auth.js`'s `requireAuth` computes lockout live
+actually notice. 7 days rather than something longer specifically
+because the bulk export (see "Bulk export" above) makes grabbing a full
+copy of everything a one-click, minutes-long operation -- unlike GHL
+itself, which has no equivalent. `src/auth.js`'s `requireAuth` computes lockout live
 against `purge_at` on every request, so it takes effect the moment the
 grace period actually elapses.
 
