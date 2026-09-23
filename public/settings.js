@@ -196,10 +196,8 @@ const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcr
 const tabLoaded = {};
 
 function activateTab(tab) {
-  if (!isAdmin) {
+  if (!isAdmin || !TAB_NAMES.includes(tab)) {
     tab = "account";
-  } else if (!TAB_NAMES.includes(tab)) {
-    tab = "team";
   }
   for (const name of TAB_NAMES) {
     document.getElementById(`tab-${name}`).hidden = name !== tab;
