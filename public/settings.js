@@ -3,6 +3,9 @@ const searchResults = document.getElementById("search-results");
 const sessionBar = document.getElementById("session-bar");
 const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
+const mobileNavToggle = document.getElementById("mobile-nav-toggle");
+const sidebarEl = document.querySelector(".sidebar");
+mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 let csrfToken = "";
 let viewAs = "";
 

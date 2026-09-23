@@ -7,6 +7,9 @@ const azStrip = document.getElementById("az-strip");
 const contactGroups = document.getElementById("contact-groups");
 const accountSwitcherWrap = document.getElementById("account-switcher-wrap");
 const accountSwitcher = document.getElementById("account-switcher");
+const mobileNavToggle = document.getElementById("mobile-nav-toggle");
+const sidebarEl = document.querySelector(".sidebar");
+mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 
 let viewAs = "";
 // See app.js for why this is a plain page-navigation, not a live re-fetch.
