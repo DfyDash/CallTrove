@@ -308,8 +308,36 @@ export, so it's bumped to 600s in `/etc/nginx/conf.d/*.conf` -- a
 config-level change, not something `src/` controls.
 
 Main use case: getting a full copy of everything before an account is
-canceled and its storage purged (see the account-cancellation flow,
-still being built) -- but useful any time as an offline copy.
+canceled and its storage purged (see "Account cancellation" below) --
+but useful any time as an offline copy.
+
+## Account cancellation
+
+Owner-only (`tenants.owner_user_id` -- no billing system exists yet to
+derive "whoever is paying" from, so this is a stand-in, backfilled to
+each tenant's original admin), triggered from Settings > My account >
+Danger zone by typing the account's name to confirm.
+
+The 30-day grace period (`CANCELLATION_GRACE_PERIOD_DAYS`) is full,
+unrestricted access, not a lockout countdown -- everyone on the account
+keeps working normally so there's real time to export data, with a
+banner (`GET /api/me`'s `cancellationPending`) making sure people
+actually notice. `src/auth.js`'s `requireAuth` computes lockout live
+against `purge_at` on every request, so it takes effect the moment the
+grace period actually elapses.
+
+Actual deletion is deliberately manual, not automatic: `src/tenantPurge.js`
+is a CLI (`--list` / `--status` / `--restore` / `--purge <tenantId>`) run
+by hand against one named tenant at a time, specifically so a bug in a
+"ready for purge" query can never delete real customer data on its own.
+`--restore` also works as an operator-level override if a bug in the
+self-service restore route or the lockout check itself ever locks an
+account out incorrectly. Purge deletes every recording from storage plus
+the referencing DB rows (contacts, calls, connected GHL accounts,
+logins) but never `audit_log`/`phi_access_log` -- those specifically
+have to survive the account that generated them (HIPAA's audit-controls
+rule); the `tenants` row itself is kept, marked `canceled`, as the
+permanent record that the tenant existed.
 
 ## Historical backfill
 
