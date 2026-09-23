@@ -67,6 +67,13 @@ app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "pu
 app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
+app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
+app.get("/favicon-32.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
+app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "apple-touch-icon.png")));
+// Browsers request this by default even without a <link rel="icon">
+// pointing at it -- served from the same 32px PNG rather than a real
+// .ico file, which every modern browser accepts fine.
+app.get("/favicon.ico", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
 app.use("/fonts", express.static(path.join(__dirname, "..", "public", "fonts")));
 app.use("/auth", authRouter);
 
