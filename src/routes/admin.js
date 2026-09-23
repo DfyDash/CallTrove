@@ -247,6 +247,36 @@ router.get("/ghl-accounts", async (req, res) => {
   res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
 });
 
+// Sets which US state (or territory) this connected location's producer
+// records are governed by, for src/complianceRetention.js's per-state
+// retention math -- then recomputes retention_until for every call
+// already captured under this account, so setting/correcting the state
+// protects existing history too, not just calls captured from here on.
+// tenantAccounts below is the same tenant-ownership check requireAccount
+// uses elsewhere -- confirms this account actually belongs to the
+// admin's own tenant before touching it, so one tenant's admin can never
+// set (or discover, via a 404 vs. 200 timing/response difference) a
+// state on another tenant's connected account.
+router.put("/ghl-accounts/:id/state", requireCsrf, async (req, res) => {
+  const usState = (req.body?.state || "").trim().toUpperCase();
+  if (usState && !/^[A-Z]{2}$/.test(usState)) {
+    return res.status(400).json({ error: "state must be a 2-letter code (or blank to clear it)" });
+  }
+
+  const tenantAccounts = await db.listGhlAccountsForTenant(req.session.user.tenantId);
+  const account = tenantAccounts.find((a) => a.id === req.params.id);
+  if (!account) return res.status(404).json({ error: "account not found" });
+
+  await db.updateGhlAccountState(account.id, usState || null);
+  const updated = await db.recomputeRetentionForAccount(account.id, usState || null);
+  await log(
+    req,
+    "ghl_account_state_updated",
+    `Set state for "${account.name || account.ghlLocationId}" to ${usState || "(none)"} -- recomputed retention for ${updated} call(s)`
+  );
+  res.json({ status: "updated", state: usState || null, callsRecomputed: updated });
+});
+
 // Redirects into GHL's own "choose a location, then authorize" screen.
 // The random state is stashed on the session and checked back on the
 // callback below -- standard OAuth CSRF protection (stops a forged

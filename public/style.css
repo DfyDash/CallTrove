@@ -636,6 +636,21 @@ tbody tr:last-child td {
   max-width: 220px;
 }
 
+.account-state-input {
+  width: 44px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+}
+
+.account-state-status {
+  margin-left: 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .link-ghl-btn,
 .reset-btn {
   padding: 5px 10px;

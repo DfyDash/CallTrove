@@ -128,10 +128,15 @@
               <tr>
                 <th>Location name</th>
                 <th>GHL location ID</th>
+                <th>State (records retention)</th>
               </tr>
             </thead>
             <tbody id="ghl-account-rows"></tbody>
           </table>
+          <p class="settings-note">
+            The state a location's producer records are governed by, used to compute how long call
+            recordings must be kept. Leave blank to use a conservative default until you set the real one.
+          </p>
 
           <p><button type="button" id="connect-ghl-account-btn" class="button-link">+ Connect a GHL account</button></p>
           <p class="settings-note" id="ghl-oauth-not-configured" hidden>

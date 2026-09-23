@@ -1,5 +1,6 @@
 const { Pool } = require("pg");
 const { randomUUID } = require("crypto");
+const { getRetentionUntilDate } = require("../complianceRetention");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -39,14 +40,15 @@ async function insertCall({
   handledByName,
   disposition,
   ghlAccountId,
+  retentionUntil,
 }) {
   const result = await pool.query(
     `INSERT INTO calls (
        id, ghl_call_id, ghl_contact_id, direction, duration_seconds,
        occurred_at, source_recording_url, recording_status, raw_payload,
-       handled_by_id, handled_by_name, disposition, ghl_account_id
+       handled_by_id, handled_by_name, disposition, ghl_account_id, retention_until
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, $12, $13)
      ON CONFLICT (ghl_call_id) DO NOTHING
      RETURNING id`,
     [
@@ -62,6 +64,7 @@ async function insertCall({
       handledByName || null,
       disposition || null,
       ghlAccountId || DEFAULT_GHL_ACCOUNT_ID,
+      retentionUntil || null,
     ]
   );
   return result.rows[0] || null;
@@ -665,9 +668,53 @@ async function updateGhlAccountTokens(id, { accessToken, refreshToken, tokenExpi
 
 async function listGhlAccountsForTenant(tenantId) {
   const { rows } = await pool.query(
-    `SELECT id, ghl_location_id AS "ghlLocationId", name
+    `SELECT id, ghl_location_id AS "ghlLocationId", name, state
      FROM ghl_accounts WHERE tenant_id = $1 AND uninstalled_at IS NULL
      ORDER BY installed_at ASC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+// Admin-set, for src/complianceRetention.js's per-state retention math.
+// Deliberately doesn't validate against a fixed state list -- the
+// retention module itself falls back to a conservative default for any
+// state it doesn't have a confirmed figure for, so an unrecognized (but
+// real) code like a US territory still does something sensible rather
+// than being rejected outright.
+async function updateGhlAccountState(id, state) {
+  await pool.query(`UPDATE ghl_accounts SET state = $2 WHERE id = $1`, [id, state || null]);
+}
+
+// Recomputes retention_until for every existing call under one account,
+// using its (newly set or corrected) state. New calls get retention_until
+// computed at insert time (src/poller.js, src/backfill.js); this is what
+// catches history up when an admin sets an account's state for the first
+// time, or fixes a wrong one -- otherwise everything recorded before that
+// point would be silently stuck with no retention protection.
+async function recomputeRetentionForAccount(ghlAccountId, state) {
+  const { rows } = await pool.query(
+    `SELECT id, occurred_at AS "occurredAt" FROM calls WHERE ghl_account_id = $1 AND occurred_at IS NOT NULL`,
+    [ghlAccountId]
+  );
+  for (const call of rows) {
+    const retentionUntil = getRetentionUntilDate(call.occurredAt, state);
+    await pool.query(`UPDATE calls SET retention_until = $2 WHERE id = $1`, [call.id, retentionUntil]);
+  }
+  return rows.length;
+}
+
+// What src/tenantPurge.js checks before actually deleting a tenant's
+// data -- calls whose legally-required retention window hasn't elapsed
+// yet. Returns the calls themselves (not just a count) so the CLI can
+// show exactly what's blocking the purge and when it'll actually clear.
+async function listCallsWithinRetention(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.occurred_at AS "occurredAt", c.retention_until AS "retentionUntil", g.state
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE g.tenant_id = $1 AND c.retention_until IS NOT NULL AND c.retention_until > now()
+     ORDER BY c.retention_until DESC`,
     [tenantId]
   );
   return rows;
@@ -727,7 +774,7 @@ async function listUserAccountAccessForTenant(tenantId) {
 // a request for any one tenant, so it needs everything at once.
 async function listAllActiveGhlAccounts() {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
+    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name, state,
             access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
      FROM ghl_accounts WHERE uninstalled_at IS NULL`
   );
@@ -869,6 +916,9 @@ module.exports = {
   createGhlAccount,
   getGhlAccountByLocationId,
   updateGhlAccountTokens,
+  updateGhlAccountState,
+  recomputeRetentionForAccount,
+  listCallsWithinRetention,
   listGhlAccountsForTenant,
   listAccessibleAccounts,
   listAllActiveGhlAccounts,

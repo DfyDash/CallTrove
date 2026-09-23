@@ -247,6 +247,21 @@ UPDATE tenants SET owner_user_id = (
 )
 WHERE id = '00000000-0000-0000-0000-000000000001' AND owner_user_id IS NULL;
 
+-- State-based records-retention (src/complianceRetention.js -- see that
+-- file for the actual per-state years table and its sourcing/caveats).
+-- state lives on ghl_accounts, not tenants: retention is a property of
+-- the licensed producer/location the calls belong to, and one tenant can
+-- have connected locations in different states with different retention
+-- periods. retention_until is computed and stored per call (occurred_at
+-- + that account's state's retention years) rather than recomputed on
+-- every read, so it survives the account's state being changed later
+-- without silently reinterpreting history -- src/db/index.js's
+-- recomputeRetentionForAccount() is the explicit, deliberate way to
+-- update it in bulk when an admin sets or corrects an account's state.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS state TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS retention_until TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS calls_retention_until_idx ON calls (retention_until);
+
 -- Append-only enforcement for both log tables above: HIPAA's audit-controls
 -- guidance expects tamper-evident logs, not just "the app has no edit
 -- button". This rejects UPDATE/DELETE at the database engine level

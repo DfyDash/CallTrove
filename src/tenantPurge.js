@@ -19,13 +19,14 @@
 //   node src/tenantPurge.js --list
 //   node src/tenantPurge.js --status <tenantId>
 //   node src/tenantPurge.js --restore <tenantId>
-//   node src/tenantPurge.js --purge <tenantId>
+//   node src/tenantPurge.js --purge <tenantId> [--force]
 //
 // --purge deletes every stored recording for that tenant, then the DB
 // rows referencing them (contacts, calls, connected GHL accounts,
 // logins). audit_log and phi_access_log are never touched -- see
 // schema.sql's migration comment for why those specifically have to
-// survive.
+// survive. Also refuses if any calls are still within their state-based
+// retention period (src/complianceRetention.js) unless --force is given.
 require("dotenv").config();
 const db = require("./db");
 const { deleteRecording } = require("./storage");
@@ -78,7 +79,7 @@ async function restoreTenant(tenantId) {
   console.log(`Tenant "${tenant.name}" (${tenantId}) restored to active.`);
 }
 
-async function purgeTenant(tenantId) {
+async function purgeTenant(tenantId, { force = false } = {}) {
   const tenant = await db.getTenantById(tenantId);
   if (!tenant) {
     console.error(`No tenant found with id ${tenantId}`);
@@ -94,6 +95,30 @@ async function purgeTenant(tenantId) {
     console.error(`Tenant "${tenant.name}" (${tenantId}) is still inside its grace period (eligible ${tenant.purgeAt}) -- refusing to purge.`);
     process.exitCode = 1;
     return;
+  }
+
+  // State-based records-retention (src/complianceRetention.js): calls
+  // whose legally required retention window hasn't elapsed yet block a
+  // normal purge outright, the same way the grace period itself does --
+  // this is exactly the scenario that connects "cancellation" and
+  // "retention" together, and getting it wrong means deleting records a
+  // producer is legally required to still have. --force overrides this
+  // for the rare legitimate case (e.g. legal counsel has actually signed
+  // off, or the account's state was wrong and has since been corrected,
+  // in which case re-run without --force first to get the corrected list).
+  const blocked = await db.listCallsWithinRetention(tenantId);
+  if (blocked.length > 0 && !force) {
+    console.error(
+      `Refusing to purge: ${blocked.length} call(s) for tenant "${tenant.name}" (${tenantId}) are still within ` +
+        `their state-required retention period. The latest doesn't clear until ${blocked[0].retentionUntil} ` +
+        `(state: ${blocked[0].state || "(none set)"}).`
+    );
+    console.error(`Run with --force to purge anyway (e.g. after legal sign-off), or wait for these to clear naturally.`);
+    process.exitCode = 1;
+    return;
+  }
+  if (blocked.length > 0 && force) {
+    console.warn(`--force: proceeding despite ${blocked.length} call(s) still within their retention period.`);
   }
 
   console.log(`Purging tenant ${tenantId} (${tenant.name})...`);
@@ -123,14 +148,14 @@ if (require.main === module) {
     } else if (args[0] === "--restore" && args[1]) {
       await restoreTenant(args[1]);
     } else if (args[0] === "--purge" && args[1]) {
-      await purgeTenant(args[1]);
+      await purgeTenant(args[1], { force: args.includes("--force") });
     } else {
       console.log(
         "Usage:\n" +
           "  node src/tenantPurge.js --list\n" +
           "  node src/tenantPurge.js --status <tenantId>\n" +
           "  node src/tenantPurge.js --restore <tenantId>\n" +
-          "  node src/tenantPurge.js --purge <tenantId>"
+          "  node src/tenantPurge.js --purge <tenantId> [--force]"
       );
       process.exitCode = 1;
     }
