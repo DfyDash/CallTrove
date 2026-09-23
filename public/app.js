@@ -347,14 +347,14 @@ function renderCalls(data) {
       : `<span>${escapeHtml(noRecordingReason)}</span>`;
 
     tr.innerHTML = `
-      <td>${contactCell}</td>
-      <td>${when}</td>
-      <td>${escapeHtml(call.direction || "-")}</td>
-      <td>${duration}</td>
-      <td>${escapeHtml(call.handledByName || "-")}</td>
-      <td>${outcomeBadge(call.disposition)}</td>
-      <td>${recordingCell}</td>
-      <td>${transcriptCell(call)}</td>
+      <td data-label="Contact">${contactCell}</td>
+      <td data-label="Date/Time">${when}</td>
+      <td data-label="Direction">${escapeHtml(call.direction || "-")}</td>
+      <td data-label="Duration">${duration}</td>
+      <td data-label="Handled by">${escapeHtml(call.handledByName || "-")}</td>
+      <td data-label="Outcome">${outcomeBadge(call.disposition)}</td>
+      <td data-label="Recording">${recordingCell}</td>
+      <td data-label="Transcript">${transcriptCell(call)}</td>
     `;
     callRows.appendChild(tr);
   }

@@ -1317,24 +1317,75 @@ body {
   .content {
     width: 100%;
     padding: 14px 16px;
-    overflow-x: auto;
   }
 
-  /* table {width:100%} (defined earlier in this file) forces every
-     table's columns to squeeze into whatever narrow width is available,
-     which for an 8-column fixed-layout table like .calls-table means
-     each cell's text visibly overlaps its neighbors rather than actually
-     shrinking -- table-layout:fixed respects the column percentages
-     strictly but does nothing to stop overflowing text within a cell.
-     A min-width here overrides that 100% down to a floor the columns can
-     actually fit in, so .content's overflow-x:auto above scrolls the
-     table horizontally instead of everything colliding into each other. */
-  .calls-table {
-    min-width: 720px;
+  /* .filter-bar-left's flex-shrink:0 (needed on desktop so it never gets
+     squeezed by .results-summary's margin-left:auto) fights its own
+     flex-wrap:wrap on a narrow screen: flex-shrink:0 keeps it at its full
+     max-content width instead of ever being narrowed down to the
+     viewport, so its own children never actually get pushed onto new
+     lines -- the box just grows past the screen edge instead. Letting it
+     shrink (and take the full row's width) here is what makes the wrap
+     actually happen. */
+  .filter-bar-left {
+    flex-shrink: 1;
+    width: 100%;
   }
 
-  .settings-content table {
-    min-width: 600px;
+  /* Every table on the site (the calls table, and every table in
+     Settings) becomes a stack of cards instead of forcing a horizontal
+     scroll: each <tr> is its own bordered card, and each <td> shows its
+     own column header as a label (via the data-label attribute set on
+     the <td> itself where each table is rendered -- see renderCalls() in
+     app.js and the various loadX() functions in settings.js) instead of
+     depending on a <thead> row that no longer makes sense once there's
+     no grid of columns left to label. This replaces the earlier
+     "min-width + scroll sideways" approach: that kept text from
+     overlapping, but the user still had to scroll right to read a
+     recording status or an outcome, which isn't actually fixed -- this
+     makes every value visible without scrolling in either direction. */
+  table thead {
+    display: none;
+  }
+  table, table tbody, table tr, table td {
+    display: block;
+    width: 100%;
+  }
+  table {
+    border: none;
+    background: none;
+    border-spacing: 0;
+  }
+  table tr {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 4px 14px;
+  }
+  table td {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+    text-align: left;
+  }
+  table td:last-child {
+    border-bottom: none;
+  }
+  /* A cell with no data-label (an empty-state row spanning every column,
+     e.g. "No calls match this filter.") is already its own message and
+     doesn't need a label in front of it -- only cells the JS explicitly
+     tagged (see renderCalls() in app.js, the loadX() functions in
+     settings.js) get one. */
+  table td[data-label]::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--muted);
+    font-size: 0.78rem;
   }
 
   .content-header {

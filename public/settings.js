@@ -184,13 +184,13 @@ async function loadUsers() {
   for (const user of users) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${escapeHtml(user.username)}</td>
-      <td>${escapeHtml(user.role)}</td>
-      <td>
+      <td data-label="Username">${escapeHtml(user.username)}</td>
+      <td data-label="Role">${escapeHtml(user.role)}</td>
+      <td data-label="GHL user">
         <select class="ghl-link-select">${ghlUserOptionsHtml(user.ghlUserId)}</select>
         <button data-id="${user.id}" class="link-ghl-btn">Save</button>
       </td>
-      <td>
+      <td data-label="Actions">
         <button data-id="${user.id}" class="reset-btn">Reset password</button>
         <button data-id="${user.id}" class="delete-btn">Delete</button>
       </td>
@@ -372,11 +372,11 @@ function renderReportLeaderboard() {
     const tr = document.createElement("tr");
     tr.className = "clickable-row";
     tr.innerHTML = `
-      <td>${escapeHtml(rep.name || "(unnamed)")}</td>
-      <td>${rep.total}</td>
-      <td>${rep.completionPct}%</td>
-      <td>${formatDuration(rep.avgDurationSeconds)}</td>
-      <td>${rep.inbound} / ${rep.outbound}</td>
+      <td data-label="Rep">${escapeHtml(rep.name || "(unnamed)")}</td>
+      <td data-label="Total calls">${rep.total}</td>
+      <td data-label="Completion rate">${rep.completionPct}%</td>
+      <td data-label="Avg. duration">${formatDuration(rep.avgDurationSeconds)}</td>
+      <td data-label="Inbound / outbound">${rep.inbound} / ${rep.outbound}</td>
     `;
     tr.addEventListener("click", () => selectRep(rep.id));
     repRowsEl.appendChild(tr);
@@ -498,9 +498,9 @@ async function loadCoverage() {
       });
     }
     tr.innerHTML = `
-      <td>${escapeHtml(dispositionLabel(row.disposition))}</td>
-      <td>${row.count}</td>
-      <td>${row.stored}</td>
+      <td data-label="Outcome">${escapeHtml(dispositionLabel(row.disposition))}</td>
+      <td data-label="Calls">${row.count}</td>
+      <td data-label="Recorded">${row.stored}</td>
     `;
     dispositionRows.appendChild(tr);
   }
@@ -529,11 +529,11 @@ async function loadGaps() {
     }
     const gapContactName = isNameJustThePhone(call.contactName, call.contactPhone) ? "(no name)" : call.contactName || "(no name)";
     tr.innerHTML = `
-      <td>${escapeHtml(gapContactName)}${call.contactPhone ? ` (${escapeHtml(call.contactPhone)})` : ""}</td>
-      <td>${when}</td>
-      <td>${escapeHtml(call.direction || "-")}</td>
-      <td>${escapeHtml(call.handledByName || "-")}</td>
-      <td>${escapeHtml(call.recordingStatus || "-")}</td>
+      <td data-label="Contact">${escapeHtml(gapContactName)}${call.contactPhone ? ` (${escapeHtml(call.contactPhone)})` : ""}</td>
+      <td data-label="Date/Time">${when}</td>
+      <td data-label="Direction">${escapeHtml(call.direction || "-")}</td>
+      <td data-label="Handled by">${escapeHtml(call.handledByName || "-")}</td>
+      <td data-label="Status">${escapeHtml(call.recordingStatus || "-")}</td>
     `;
     gapRows.appendChild(tr);
   }
@@ -805,9 +805,9 @@ async function loadAuditLog() {
   for (const entry of data.entries) {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${new Date(entry.createdAt).toLocaleString()}</td>
-      <td>${escapeHtml(entry.actorUsername || "(unknown)")}</td>
-      <td>${escapeHtml(entry.message)}</td>
+      <td data-label="When">${new Date(entry.createdAt).toLocaleString()}</td>
+      <td data-label="Admin">${escapeHtml(entry.actorUsername || "(unknown)")}</td>
+      <td data-label="Action">${escapeHtml(entry.message)}</td>
     `;
     auditRows.appendChild(tr);
   }
@@ -871,12 +871,12 @@ async function loadAccessLog() {
       ? `<span>Allowed</span>`
       : `<span class="transcript-failed">Denied${entry.denialReason ? ` (${escapeHtml(entry.denialReason)})` : ""}</span>`;
     tr.innerHTML = `
-      <td>${new Date(entry.createdAt).toLocaleString()}</td>
-      <td>${escapeHtml(entry.username || "(unknown)")}</td>
-      <td>${ACTION_LABELS[entry.action] || escapeHtml(entry.action)}</td>
-      <td>${contactLabel(entry)}</td>
-      <td>${result}</td>
-      <td>${escapeHtml(entry.ipAddress || "-")}</td>
+      <td data-label="When">${new Date(entry.createdAt).toLocaleString()}</td>
+      <td data-label="User">${escapeHtml(entry.username || "(unknown)")}</td>
+      <td data-label="Action">${ACTION_LABELS[entry.action] || escapeHtml(entry.action)}</td>
+      <td data-label="Call">${contactLabel(entry)}</td>
+      <td data-label="Result">${result}</td>
+      <td data-label="IP address">${escapeHtml(entry.ipAddress || "-")}</td>
     `;
     accessRows.appendChild(tr);
   }
