@@ -83,3 +83,8 @@ app.listen(port, () => {
 // workflow/webhook -- see src/poller.js for why.
 poller.start();
 transcriptionPoller.start();
+// Account purge is deliberately NOT run automatically here -- see
+// src/tenantPurge.js. It's a manual operator command
+// (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand
+// against one specific tenant at a time, so a bug in the
+// "ready for purge" query can never delete real customer data on its own.

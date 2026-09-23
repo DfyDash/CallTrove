@@ -17,6 +17,59 @@ function log(req, action, message) {
   return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message });
 }
 
+// --- Account cancellation (owner-only, grace period then purge -- see
+// src/tenantPurge.js for the actual deletion, and schema.sql's
+// migration comment for why status/timestamps live on tenants). ---
+
+// No billing system exists yet to derive "whoever is paying" from, so
+// tenants.owner_user_id is the stand-in: set once at tenant creation
+// (backfilled to the original admin for today's single deployment).
+// Deliberately a hard 403, not just hidden UI -- even another admin on
+// the same tenant must not be able to cancel it.
+const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 30);
+
+// GET /api/tenant/status (routes/api.js) is what actually serves status
+// to the frontend -- it isn't admin-gated, since a locked-out NON-admin
+// user of a canceled tenant still needs to see "contact your account
+// owner" and /api/admin/* would 403 them before they got that far.
+
+router.post("/tenant/cancel", requireCsrf, async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  if (tenant.ownerUserId !== req.session.user.id) {
+    return res.status(403).json({ error: "only the account owner can cancel this account" });
+  }
+  if (req.body?.confirmName !== tenant.name) {
+    return res.status(400).json({ error: "confirmation text did not match the account name" });
+  }
+  if (tenant.status !== "active") {
+    return res.status(409).json({ error: `account is already ${tenant.status}` });
+  }
+
+  const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+  await db.requestTenantCancellation(tenant.id, purgeAt);
+  await log(req, "tenant_cancellation_requested", `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}`);
+  res.json({ status: "cancellation_pending", purgeAt });
+});
+
+// Reachable even while cancellation_pending (see REACHABLE_WHILE_CANCELED
+// in src/auth.js) -- this is the one action a locked-out owner still
+// needs to be able to take.
+router.post("/tenant/restore", requireCsrf, async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  if (tenant.ownerUserId !== req.session.user.id) {
+    return res.status(403).json({ error: "only the account owner can restore this account" });
+  }
+  if (tenant.status !== "cancellation_pending") {
+    return res.status(409).json({ error: `account is not pending cancellation (status: ${tenant.status})` });
+  }
+
+  await db.restoreTenant(tenant.id);
+  await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
+  res.json({ status: "active" });
+});
+
 // Auto-links any user whose login username matches a GHL user's email
 // (case-insensitively), so the common case -- login username is the
 // person's email, same as in GHL -- doesn't require manually picking

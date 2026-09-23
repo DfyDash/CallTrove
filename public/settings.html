@@ -46,6 +46,7 @@
       </div>
 
       <div class="settings-content">
+        <div id="cancellation-banner" class="cancellation-banner" hidden></div>
         <div class="content-header content-header-end">
           <div id="session-bar" class="session-bar"></div>
         </div>
@@ -55,6 +56,29 @@
           <h1>My account</h1>
           <p class="settings-note" id="account-summary"></p>
           <p><a href="/account.html" class="button-link">Change password &rarr;</a></p>
+
+          <div id="danger-zone" class="danger-zone" hidden>
+            <h2>Danger zone</h2>
+            <p class="settings-note">
+              Cancel this CallTrove account. Every login is locked out immediately.
+              After a <span id="grace-period-days">30</span>-day grace period (during
+              which you can undo this), recordings and data become eligible for
+              permanent deletion -- carried out by our team, not automatically.
+              <a href="/settings.html#backfill">Export everything</a> first if you
+              want an offline copy.
+            </p>
+            <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
+
+            <div id="cancel-confirm" hidden>
+              <p class="settings-note">
+                Type the account name (<strong id="cancel-confirm-name"></strong>) to confirm.
+              </p>
+              <input type="text" id="cancel-confirm-input" autocomplete="off" />
+              <button type="button" id="confirm-cancel-btn" class="delete-btn">Permanently cancel</button>
+              <button type="button" id="cancel-cancel-btn">Never mind</button>
+              <p id="cancel-error" class="login-error" hidden></p>
+            </div>
+          </div>
         </section>
 
         <!-- Team members -->

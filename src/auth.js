@@ -1,6 +1,15 @@
 const crypto = require("crypto");
+const db = require("./db");
 
 const SCRYPT_KEYLEN = 64;
+
+// Reachable even while a tenant is cancellation_pending/canceled -- the
+// minimum needed for the account-canceled.html page to show status and
+// (for the owner) offer to restore. Everything else in the app is
+// blocked outright once a tenant leaves 'active', which is what makes
+// cancellation "immediately locks out logins" actually true rather than
+// just a UI suggestion.
+const REACHABLE_WHILE_CANCELED = ["/api/me", "/api/tenant/status", "/api/admin/tenant/restore"];
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
@@ -24,11 +33,39 @@ function sessionUser(user) {
   return { id: user.id, username: user.username, role: user.role, ghlUserId: user.ghlUserId, tenantId: user.tenantId, accountIds: [] };
 }
 
-function requireAuth(req, res, next) {
+// Checks the tenant's status fresh from the DB on every request (not
+// cached in the session at login). The grace period itself is full,
+// completely unrestricted access -- the whole point of having one is to
+// give everyone on the account time to export their data and otherwise
+// keep working normally (including an admin freely granting/managing
+// access), not a countdown spent already locked out. Lockout is purely
+// a time comparison against purgeAt, so it kicks in the moment the grace
+// period actually elapses, with nothing for a bug to accidentally
+// trigger early -- and it's trivially reversible (flip status back to
+// 'active'), unlike the real data deletion in src/tenantPurge.js, which
+// stays a deliberate, separate, manually-run step even after this point.
+async function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
     if (req.path.startsWith("/api/")) return res.status(401).json({ error: "not logged in" });
     return res.redirect("/login.html");
   }
+
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  const lockedOut =
+    tenant &&
+    (tenant.status === "canceled" ||
+      (tenant.status === "cancellation_pending" && tenant.purgeAt && new Date(tenant.purgeAt) <= new Date()));
+
+  if (lockedOut) {
+    if (req.path.startsWith("/api/")) {
+      if (!REACHABLE_WHILE_CANCELED.includes(req.path)) {
+        return res.status(403).json({ error: "account_canceled", status: tenant.status });
+      }
+    } else if (req.path !== "/account-canceled.html") {
+      return res.redirect("/account-canceled.html");
+    }
+  }
+
   next();
 }
 

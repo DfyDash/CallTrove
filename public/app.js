@@ -102,6 +102,7 @@ async function loadSession() {
   csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
+  renderCancellationBanner(me);
 
   // currentAccountId comes from the server's own resolution (the user's
   // first/default account) whenever the page didn't already pin one via
@@ -498,6 +499,22 @@ function escapeHtml(str) {
     '"': "&quot;",
     "'": "&#39;",
   }[c]));
+}
+
+// Shown to everyone on a tenant that's mid-grace-period (see
+// cancellationPending on GET /api/me) -- the account works completely
+// normally until purgeAt, but people need to actually know that clock is
+// running so nobody's caught off guard by the lockout once it arrives.
+function renderCancellationBanner(me) {
+  const banner = document.getElementById("cancellation-banner");
+  if (!banner) return;
+  if (!me.cancellationPending) {
+    banner.hidden = true;
+    return;
+  }
+  const when = new Date(me.cancellationPending.purgeAt).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+  banner.innerHTML = `This account is scheduled for cancellation. Everyone will be locked out on <strong>${escapeHtml(when)}</strong> -- export anything you need before then.`;
+  banner.hidden = false;
 }
 
 let searchTimer;

@@ -214,6 +214,39 @@ INSERT INTO account_sync_state (ghl_account_id, last_synced_at)
   SELECT '00000000-0000-0000-0000-000000000001', last_synced_at FROM sync_state WHERE id = 1
   ON CONFLICT (ghl_account_id) DO NOTHING;
 
+-- Account cancellation: owner-triggered, grace-period-then-purge. Only a
+-- tenant's designated owner (the one "paying" -- see owner_user_id) can
+-- cancel, matching the product decision that this isn't a generic admin
+-- action. status transitions active -> cancellation_pending (set the
+-- moment /api/admin/tenant/cancel is called; every login on the tenant
+-- is immediately locked out of the app itself, see requireAuth in
+-- src/auth.js) -> canceled (set by src/tenantPurge.js once purge_at has
+-- passed, which actually deletes the tenant's recordings/contacts/calls/
+-- users -- but never audit_log/phi_access_log, which HIPAA's
+-- audit-controls rule expects to survive the account that generated
+-- them, same reasoning as those tables already having no FK to users/
+-- calls). The owner can undo a pending cancellation (restore to active)
+-- any time before purge_at.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id);
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_status_check;
+ALTER TABLE tenants ADD CONSTRAINT tenants_status_check
+  CHECK (status IN ('active', 'cancellation_pending', 'canceled'));
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS cancellation_requested_at TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS purge_at TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS canceled_at TIMESTAMPTZ;
+
+-- Backfill: the existing default tenant's owner is its one admin (the
+-- oldest admin account, for a deployment that somehow already has more
+-- than one) -- there's no billing system yet to derive this from, so
+-- this is the closest available stand-in for "whoever is paying."
+UPDATE tenants SET owner_user_id = (
+  SELECT id FROM users
+  WHERE users.tenant_id = tenants.id AND role = 'admin'
+  ORDER BY created_at ASC LIMIT 1
+)
+WHERE id = '00000000-0000-0000-0000-000000000001' AND owner_user_id IS NULL;
+
 -- Append-only enforcement for both log tables above: HIPAA's audit-controls
 -- guidance expects tamper-evident logs, not just "the app has no edit
 -- button". This rejects UPDATE/DELETE at the database engine level

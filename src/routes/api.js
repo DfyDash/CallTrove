@@ -35,12 +35,33 @@ function logAccess(req, { action, callId, success, denialReason }) {
   });
 }
 
+// Reachable even while the tenant is cancellation_pending/canceled (see
+// REACHABLE_WHILE_CANCELED in src/auth.js) -- account-canceled.html polls
+// this to show the right message, and (for the owner) the restore
+// button. isOwner decides whether that button renders at all.
+router.get("/tenant/status", async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  res.json({
+    name: tenant.name,
+    status: tenant.status,
+    purgeAt: tenant.purgeAt,
+    isOwner: tenant.ownerUserId === req.session.user.id,
+    // Same env var src/routes/admin.js's POST /tenant/cancel reads --
+    // exposed here too so the Settings "Danger zone" copy (and this
+    // status view) shows the real configured value instead of a
+    // hardcoded guess that could drift from it.
+    gracePeriodDays: Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 30),
+  });
+});
+
 router.get("/me", async (req, res) => {
   const { username, role, ghlUserId, tenantId, accountIds } = req.session.user;
   // The switcher's own data: every account this login can pick between,
   // with names (accountIds on the session is just the id list used for
   // fast per-request validation in requireAccount).
   const accounts = await db.listAccessibleAccounts(req.session.user.id, role, tenantId);
+  const tenant = await db.getTenantById(tenantId);
   res.json({
     username,
     role,
@@ -49,6 +70,11 @@ router.get("/me", async (req, res) => {
     currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
     transcriptionEnabled: transcription.isEnabled(),
     csrfToken: req.session.csrfToken,
+    // Set only during the grace period (before lockout, which requireAuth
+    // enforces once purgeAt actually passes) -- lets every page show a
+    // banner so nobody on the account is caught off guard by a lockout
+    // they never knew was coming.
+    cancellationPending: tenant && tenant.status === "cancellation_pending" ? { purgeAt: tenant.purgeAt } : null,
   });
 });
 

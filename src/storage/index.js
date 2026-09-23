@@ -26,6 +26,11 @@ function localGetBuffer(key) {
   return fs.readFileSync(filePath);
 }
 
+function localDelete(key) {
+  const filePath = path.join(localDir, key);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+}
+
 // --- S3 driver (for the eventual AWS deployment) ---
 
 let s3Client;
@@ -62,6 +67,11 @@ async function s3GetBuffer(key) {
   const chunks = [];
   for await (const chunk of res.Body) chunks.push(chunk);
   return Buffer.concat(chunks);
+}
+
+async function s3Delete(key) {
+  const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
+  await getS3Client().send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: s3ObjectKey(key) }));
 }
 
 async function s3GetPresignedUrl(key, downloadFilename) {
@@ -102,4 +112,17 @@ async function getBuffer(key) {
   return localGetBuffer(key);
 }
 
-module.exports = { saveRecording, getPlayback, getBuffer, driver };
+// For account purge (src/tenantPurge.js) -- deletes the underlying
+// recording. Never throws on a missing file/object: purge already races
+// nothing else that writes, so "already gone" is a success, not an error.
+async function deleteRecording(key) {
+  try {
+    if (driver === "s3") return await s3Delete(key);
+    return localDelete(key);
+  } catch (err) {
+    if (err.name === "NoSuchKey" || err.Code === "NoSuchKey") return;
+    throw err;
+  }
+}
+
+module.exports = { saveRecording, getPlayback, getBuffer, deleteRecording, driver };

@@ -734,6 +734,64 @@ tbody tr:last-child td {
   font-size: 0.85rem;
 }
 
+.cancel-card {
+  width: 340px;
+}
+
+.cancel-card #restore-btn {
+  padding: 9px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.cancel-card #logout-form {
+  margin-top: 4px;
+  text-align: center;
+}
+
+.cancellation-banner {
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  border: 1px solid rgba(208, 59, 59, 0.3);
+  border-radius: 8px;
+  background: rgba(208, 59, 59, 0.06);
+  color: #a02a2a;
+  font-size: 0.88rem;
+}
+
+.danger-zone {
+  margin-top: 28px;
+  padding: 16px 18px;
+  border: 1px solid rgba(208, 59, 59, 0.3);
+  border-radius: 10px;
+  background: rgba(208, 59, 59, 0.03);
+}
+
+.danger-zone h2 {
+  margin-top: 0;
+  color: #d03b3b;
+}
+
+#cancel-confirm {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(208, 59, 59, 0.2);
+}
+
+#cancel-confirm-input {
+  display: block;
+  margin: 6px 0 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  width: 220px;
+}
+
 .account-success {
   color: #16794f;
 }

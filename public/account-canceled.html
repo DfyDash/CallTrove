@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CallTrove — Account canceled</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card cancel-card">
+      <h1>CallTrove</h1>
+      <p id="cancel-message">Loading…</p>
+      <p id="cancel-purge-date" class="settings-note" hidden></p>
+      <button type="button" id="restore-btn" hidden>Restore this account</button>
+      <p id="restore-error" class="login-error" hidden></p>
+      <form method="POST" action="/auth/logout" id="logout-form">
+        <input type="hidden" name="csrfToken" id="logout-csrf" value="" />
+        <button type="submit" class="button-link">Log out</button>
+      </form>
+    </div>
+  </div>
+  <script src="account-canceled.js"></script>
+</body>
+</html>

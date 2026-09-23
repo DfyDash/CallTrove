@@ -554,8 +554,85 @@ async function deleteUser(id) {
 
 // --- tenants / ghl_accounts / user_account_access (multi-tenant) ---
 
-async function createTenant({ id, name }) {
-  await pool.query(`INSERT INTO tenants (id, name) VALUES ($1, $2)`, [id, name]);
+async function createTenant({ id, name, ownerUserId }) {
+  await pool.query(`INSERT INTO tenants (id, name, owner_user_id) VALUES ($1, $2, $3)`, [id, name, ownerUserId || null]);
+}
+
+async function getTenantById(id) {
+  const { rows } = await pool.query(
+    `SELECT id, name, owner_user_id AS "ownerUserId", status,
+            cancellation_requested_at AS "cancellationRequestedAt",
+            purge_at AS "purgeAt", canceled_at AS "canceledAt"
+     FROM tenants WHERE id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+// The owner-only trigger: locks the tenant's logins out (see
+// requireAuth in src/auth.js, which checks this status on every
+// request) and schedules the actual data purge for later rather than
+// deleting anything right now -- src/tenantPurge.js is what acts on
+// purgeAt once it arrives.
+async function requestTenantCancellation(tenantId, purgeAt) {
+  await pool.query(
+    `UPDATE tenants SET status = 'cancellation_pending', cancellation_requested_at = now(), purge_at = $2
+     WHERE id = $1 AND status = 'active'`,
+    [tenantId, purgeAt]
+  );
+}
+
+// Only works before purge_at actually arrives -- once src/tenantPurge.js
+// has run, the tenant is 'canceled' and its data is gone, so there's
+// nothing left to restore to.
+async function restoreTenant(tenantId) {
+  await pool.query(
+    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL
+     WHERE id = $1 AND status = 'cancellation_pending'`,
+    [tenantId]
+  );
+}
+
+// What src/tenantPurge.js loops over each cycle.
+async function listTenantsReadyForPurge() {
+  const { rows } = await pool.query(
+    `SELECT id, name FROM tenants WHERE status = 'cancellation_pending' AND purge_at <= now()`
+  );
+  return rows;
+}
+
+// The actual deletion, run once per tenant by src/tenantPurge.js after
+// it's already deleted every call's recording from storage. Removes the
+// PHI itself (contacts, calls, the connected accounts, every login) but
+// deliberately leaves audit_log and phi_access_log untouched -- see the
+// migration comment in schema.sql for why -- and leaves the tenants row
+// itself in place, now marked 'canceled', as the permanent record that
+// this tenant existed and was canceled (audit_log entries reference it
+// by name, not a live foreign key, so this doesn't orphan anything).
+async function purgeTenantData(tenantId) {
+  // owner_user_id has to be cleared before the users row it points at can
+  // be deleted -- the tenants row itself is kept (marked 'canceled'
+  // below), just with nobody left to own it.
+  await pool.query(`UPDATE tenants SET owner_user_id = NULL WHERE id = $1`, [tenantId]);
+  await pool.query(`DELETE FROM calls WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1)`, [tenantId]);
+  await pool.query(`DELETE FROM contacts WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1)`, [tenantId]);
+  await pool.query(`DELETE FROM user_account_access WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1)`, [tenantId]);
+  await pool.query(`DELETE FROM ghl_accounts WHERE tenant_id = $1`, [tenantId]);
+  await pool.query(`DELETE FROM users WHERE tenant_id = $1`, [tenantId]);
+  await pool.query(`UPDATE tenants SET status = 'canceled', canceled_at = now() WHERE id = $1`, [tenantId]);
+}
+
+// listRetryableFailedCalls/listAllCallsWithRecordings-style helper for
+// the purge job -- every stored recording's key, for a tenant about to
+// be purged, so src/tenantPurge.js can delete each one from storage
+// before the DB rows referencing them are gone.
+async function listStorageKeysForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT storage_key AS "storageKey" FROM calls
+     WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1) AND storage_key IS NOT NULL`,
+    [tenantId]
+  );
+  return rows.map((r) => r.storageKey);
 }
 
 async function createGhlAccount({ id, tenantId, ghlLocationId, name, accessToken, refreshToken, tokenExpiresAt }) {
@@ -783,6 +860,12 @@ module.exports = {
   DEFAULT_TENANT_ID,
   DEFAULT_GHL_ACCOUNT_ID,
   createTenant,
+  getTenantById,
+  requestTenantCancellation,
+  restoreTenant,
+  listTenantsReadyForPurge,
+  purgeTenantData,
+  listStorageKeysForTenant,
   createGhlAccount,
   getGhlAccountByLocationId,
   updateGhlAccountTokens,

@@ -25,6 +25,20 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// See app.js for why this exists -- shown to everyone on a tenant that's
+// mid-grace-period so nobody's caught off guard by the eventual lockout.
+function renderCancellationBanner(me) {
+  const banner = document.getElementById("cancellation-banner");
+  if (!banner) return;
+  if (!me.cancellationPending) {
+    banner.hidden = true;
+    return;
+  }
+  const when = new Date(me.cancellationPending.purgeAt).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+  banner.innerHTML = `This account is scheduled for cancellation. Everyone will be locked out on <strong>${escapeHtml(when)}</strong> -- export anything you need before then.`;
+  banner.hidden = false;
+}
+
 // GHL sometimes stores the contact's own phone number in the "name" field
 // when no real name was ever entered -- treat that the same as no name.
 function isNameJustThePhone(name, phone) {
@@ -50,6 +64,7 @@ async function loadSession() {
   const csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
+  renderCancellationBanner(me);
 
   currentAccountId = me.currentAccountId || "";
   if (me.accounts && me.accounts.length > 1) {

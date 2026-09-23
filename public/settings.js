@@ -19,6 +19,20 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// See app.js for why this exists -- shown to everyone on a tenant that's
+// mid-grace-period so nobody's caught off guard by the eventual lockout.
+function renderCancellationBanner(me) {
+  const banner = document.getElementById("cancellation-banner");
+  if (!banner) return;
+  if (!me.cancellationPending) {
+    banner.hidden = true;
+    return;
+  }
+  const when = new Date(me.cancellationPending.purgeAt).toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+  banner.innerHTML = `This account is scheduled for cancellation. Everyone will be locked out on <strong>${escapeHtml(when)}</strong> -- export anything you need before then.`;
+  banner.hidden = false;
+}
+
 function isNameJustThePhone(name, phone) {
   if (!name || !phone) return false;
   const nameDigits = name.replace(/\D/g, "");
@@ -50,6 +64,7 @@ async function loadSession() {
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
+  renderCancellationBanner(me);
 
   if (!isAdmin) {
     for (const name of TAB_NAMES) {
@@ -63,12 +78,73 @@ async function loadSession() {
 
   adminNav.hidden = false;
   await loadViewAsOptions();
+  await loadDangerZone();
 
   if (me.transcriptionEnabled) await loadTranscriptionSettings();
 
   loadTeam();
   activateTab(location.hash.replace("#", ""));
 }
+
+// --- Cancel this account (owner-only -- see src/routes/admin.js) ---
+
+const dangerZone = document.getElementById("danger-zone");
+const openCancelBtn = document.getElementById("open-cancel-btn");
+const cancelConfirm = document.getElementById("cancel-confirm");
+const cancelConfirmName = document.getElementById("cancel-confirm-name");
+const cancelConfirmInput = document.getElementById("cancel-confirm-input");
+const confirmCancelBtn = document.getElementById("confirm-cancel-btn");
+const cancelCancelBtn = document.getElementById("cancel-cancel-btn");
+const cancelError = document.getElementById("cancel-error");
+const gracePeriodDaysEl = document.getElementById("grace-period-days");
+let tenantName = "";
+
+async function loadDangerZone() {
+  const res = await fetch("/api/tenant/status");
+  const tenant = await res.json();
+  if (!tenant.isOwner) return; // stays hidden -- only the paying owner can see or trigger this
+  if (tenant.status !== "active") return; // already canceled/pending -- nothing new to offer here, account-canceled.html covers that state
+  tenantName = tenant.name;
+  cancelConfirmName.textContent = tenant.name;
+  gracePeriodDaysEl.textContent = tenant.gracePeriodDays;
+  dangerZone.hidden = false;
+}
+
+openCancelBtn.addEventListener("click", () => {
+  cancelConfirm.hidden = false;
+  cancelConfirmInput.value = "";
+  cancelConfirmInput.focus();
+});
+
+cancelCancelBtn.addEventListener("click", () => {
+  cancelConfirm.hidden = true;
+  cancelError.hidden = true;
+});
+
+confirmCancelBtn.addEventListener("click", async () => {
+  if (cancelConfirmInput.value !== tenantName) {
+    cancelError.textContent = "That doesn't match the account name.";
+    cancelError.hidden = false;
+    return;
+  }
+  if (!confirm(`This will lock everyone out of "${tenantName}" immediately and permanently delete its data after the grace period. Are you sure?`)) {
+    return;
+  }
+  confirmCancelBtn.disabled = true;
+  const res = await fetch("/api/admin/tenant/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ confirmName: cancelConfirmInput.value }),
+  });
+  if (res.ok) {
+    location.href = "/account-canceled.html";
+    return;
+  }
+  const body = await res.json().catch(() => ({}));
+  cancelError.textContent = body.error || "Could not cancel the account.";
+  cancelError.hidden = false;
+  confirmCancelBtn.disabled = false;
+});
 
 async function loadViewAsOptions() {
   const res = await fetch("/api/admin/users");
