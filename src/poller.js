@@ -4,6 +4,7 @@ const ghlApi = require("./ghlApi");
 const accountCredentials = require("./accountCredentials");
 const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
+const { getRealDurationSeconds } = require("./audioDuration");
 const transcription = require("./transcription");
 
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -80,17 +81,24 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
   try {
     const recording = await api.downloadRecording(message.id);
     const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
+    // Measured from the actual recording bytes -- GHL's self-reported
+    // duration (message.meta.call.duration) isn't always settled yet at
+    // the moment this message was first seen (see the comment on
+    // FAILED_RECORDING_RETRY_WINDOW_MS above), so it can't be trusted
+    // even once the recording itself is successfully in hand.
+    const ghlDurationSeconds = (message.meta && message.meta.call && message.meta.call.duration) || null;
+    const durationSeconds = (await getRealDurationSeconds(recording.buffer, recording.contentType)) ?? ghlDurationSeconds;
     const taggedBuffer = embedMetadata(recording.buffer, extension, {
       occurredAt,
       direction: message.direction,
-      durationSeconds: (message.meta && message.meta.call && message.meta.call.duration) || null,
+      durationSeconds,
       contactName: name,
       phone,
       timezone: await api.getAccountTimezone(),
     });
     const key = `${contactId}/${callRowId}.${extension}`;
     await saveRecording(key, taggedBuffer);
-    await db.markCallStored(callRowId, key);
+    await db.markCallStored(callRowId, key, durationSeconds);
     console.log(`[poller] stored recording for call ${message.id}`);
 
     if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled())) {
@@ -136,7 +144,8 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
     try {
       const recording = await api.downloadRecording(call.ghlCallId);
       const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
-      const durationSeconds = (message.meta && message.meta.call && message.meta.call.duration) || null;
+      const ghlDurationSeconds = (message.meta && message.meta.call && message.meta.call.duration) || null;
+      const durationSeconds = (await getRealDurationSeconds(recording.buffer, recording.contentType)) ?? ghlDurationSeconds;
       const taggedBuffer = embedMetadata(recording.buffer, extension, {
         occurredAt: call.occurredAt,
         direction: call.direction,
