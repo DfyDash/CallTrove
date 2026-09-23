@@ -5,7 +5,6 @@ const accountCredentials = require("./accountCredentials");
 const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
 const transcription = require("./transcription");
-const { getRetentionUntilDate } = require("./complianceRetention");
 
 const POLL_INTERVAL_MS = 60 * 1000;
 const CONVERSATIONS_PER_POLL = 100;
@@ -49,10 +48,8 @@ function getDisposition(message) {
 // default backfilled account for) -- src/backfill.js still calls this
 // with neither, and keeps working exactly as before multi-account
 // support existed. src/poller.js's own per-account loop below passes
-// both explicitly, plus accountState (see src/complianceRetention.js --
-// undefined/null just means "no state set yet," which getRetentionUntilDate
-// already treats as the conservative default rather than erroring).
-async function processCallMessage(conversation, message, { checkAutoTranscribe = false, api = ghlApi, ghlAccountId, accountState } = {}) {
+// both explicitly.
+async function processCallMessage(conversation, message, { checkAutoTranscribe = false, api = ghlApi, ghlAccountId } = {}) {
   const contactId = conversation.contactId;
   if (!contactId) return;
 
@@ -76,7 +73,6 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     handledByName: await api.getUserName(message.userId).catch(() => null),
     disposition: getDisposition(message),
     ghlAccountId,
-    retentionUntil: getRetentionUntilDate(occurredAt, accountState),
   });
 
   if (!inserted) return; // already processed this call
@@ -199,7 +195,7 @@ async function pollOneAccount(account) {
 
   for (const { conversation, message } of newMessages) {
     try {
-      await processCallMessage(conversation, message, { checkAutoTranscribe: true, api, ghlAccountId: account.id, accountState: account.state });
+      await processCallMessage(conversation, message, { checkAutoTranscribe: true, api, ghlAccountId: account.id });
       checkpoint = new Date(message.dateAdded);
       await db.setAccountLastSyncedAt(account.id, checkpoint);
     } catch (err) {

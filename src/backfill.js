@@ -69,7 +69,7 @@ async function runForAccount(account, api, totals) {
           continue;
         }
         try {
-          await processCallMessage(conversation, message, { api, ghlAccountId: account.id, accountState: account.state });
+          await processCallMessage(conversation, message, { api, ghlAccountId: account.id });
           totals.callsSaved += 1;
         } catch (err) {
           totals.callsFailed += 1;

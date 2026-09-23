@@ -430,46 +430,12 @@ async function loadGhlAccountsTab() {
   const { accounts, oauthConfigured } = await res.json();
 
   ghlAccountRows.innerHTML = accounts.length
-    ? accounts
-        .map(
-          (a) => `<tr>
-            <td data-label="Location name">${escapeHtml(a.name || a.ghlLocationId)}</td>
-            <td data-label="GHL location ID">${escapeHtml(a.ghlLocationId)}</td>
-            <td data-label="State (records retention)">
-              <input type="text" class="account-state-input" maxlength="2" placeholder="e.g. CA" value="${escapeHtml(a.state || "")}" data-id="${escapeHtml(a.id)}" />
-              <button type="button" class="account-state-save-btn" data-id="${escapeHtml(a.id)}">Save</button>
-              <span class="account-state-status" data-id="${escapeHtml(a.id)}"></span>
-            </td>
-          </tr>`
-        )
-        .join("")
-    : `<tr><td colspan="3" class="empty-state">No GHL accounts connected yet.</td></tr>`;
+    ? accounts.map((a) => `<tr><td>${escapeHtml(a.name || a.ghlLocationId)}</td><td>${escapeHtml(a.ghlLocationId)}</td></tr>`).join("")
+    : `<tr><td colspan="2" class="empty-state">No GHL accounts connected yet.</td></tr>`;
 
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
 }
-
-ghlAccountRows.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".account-state-save-btn");
-  if (!btn) return;
-  const id = btn.dataset.id;
-  const input = ghlAccountRows.querySelector(`.account-state-input[data-id="${id}"]`);
-  const statusEl = ghlAccountRows.querySelector(`.account-state-status[data-id="${id}"]`);
-  btn.disabled = true;
-  statusEl.textContent = "Saving…";
-  const res = await fetch(`/api/admin/ghl-accounts/${id}/state`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ state: input.value.trim() }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (res.ok) {
-    statusEl.textContent = `Saved -- recomputed retention for ${body.callsRecomputed} call(s).`;
-  } else {
-    statusEl.textContent = body.error || "Could not save.";
-  }
-  btn.disabled = false;
-});
 
 connectGhlAccountBtn.addEventListener("click", () => {
   location.href = "/api/admin/ghl-oauth/connect";
