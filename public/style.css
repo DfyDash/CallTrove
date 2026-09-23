@@ -52,29 +52,20 @@
   }
 }
 
+/* Aliases onto the main brand tokens (:root, above) rather than its own
+   fixed values -- these already flip for dark mode via that block's own
+   media query, so .viz-root automatically follows without a duplicate
+   light/dark split here. */
 .viz-root {
-  color-scheme: light;
-  --chart-surface: #fcfcfb;
-  --chart-text-primary: #0b0b0b;
-  --chart-text-secondary: #52514e;
-  --chart-text-muted: #898781;
-  --chart-gridline: #e1e0d9;
-  --chart-axis: #c3c2b7;
-  --status-good: #0ca30c;
-  --status-critical: #d03b3b;
-}
-@media (prefers-color-scheme: dark) {
-  .viz-root {
-    color-scheme: dark;
-    --chart-surface: #1a1a19;
-    --chart-text-primary: #ffffff;
-    --chart-text-secondary: #c3c2b7;
-    --chart-text-muted: #898781;
-    --chart-gridline: #2c2c2a;
-    --chart-axis: #383835;
-    --status-good: #0ca30c;
-    --status-critical: #e66767;
-  }
+  color-scheme: light dark;
+  --chart-surface: var(--surface);
+  --chart-text-primary: var(--ink);
+  --chart-text-secondary: var(--muted);
+  --chart-text-muted: var(--muted);
+  --chart-gridline: var(--border);
+  --chart-axis: var(--border);
+  --status-good: var(--good);
+  --status-critical: var(--critical);
 }
 
 * { box-sizing: border-box; }
@@ -952,7 +943,7 @@ tbody tr:last-child td {
    style-src). Also fixes the Inbound swatch, which was still the old
    pre-redesign blue (#2563eb) instead of --accent. */
 .legend-swatch-inbound { background: var(--accent); }
-.legend-swatch-outbound { background: #eda100; }
+.legend-swatch-outbound { background: var(--ink); }
 .legend-swatch-good { background: var(--status-good); }
 .legend-swatch-critical { background: var(--status-critical); }
 
@@ -1273,7 +1264,7 @@ tbody tr:last-child td {
 }
 
 .mix-bar-outbound {
-  background: #eda100;
+  background: var(--ink);
 }
 
 .stat-grid {
