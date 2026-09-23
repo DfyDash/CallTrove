@@ -9,8 +9,10 @@ history with role-based access (admins see everything; regular users see
 only calls they personally handled).
 
 **Phase**: prototype. No real client/PHI data yet, and most of a HIPAA
-compliance layer still isn't built (BAAs, encryption-at-rest specifics,
-retention/purge policy are deliberately phase 2) -- but PHI-access and
+compliance layer still isn't built (BAAs, formal compliance
+documentation, retention/purge policy are deliberately phase 2 --
+infrastructure encryption-at-rest is already in place, see "Security
+hardening" below) -- but PHI-access and
 admin-action audit logging (45 CFR 164.312(b)'s "Audit controls") is
 already in, ahead of actually needing it. See "Admin activity log" and
 "PHI-access log" below. This phase proves the pipeline works end to end
@@ -283,15 +285,16 @@ Beyond auth/RBAC/audit logging (covered above):
   anywhere; all deploys go through SSM, which never needed it open.
 - **RDS automated backups** — turned on (7-day retention); was 0 before,
   meaning zero recovery path from a bad migration or bug.
+- **RDS encryption-at-rest** — done. The original instance was
+  unencrypted (RDS can't toggle this in place), so it was migrated by
+  snapshotting the database, copying the snapshot with a KMS key, and
+  restoring into a new instance (`call-recording-vault-db-encrypted`)
+  during a maintenance window.
 
-Deliberately not done yet, and why: **RDS encryption-at-rest** requires
-snapshotting the database, copying the snapshot with a KMS key, and
-restoring into a new instance — a real maintenance window, not a live
-toggle — so it's scheduled for before any customer with real PHI, not
-before then. **Multi-AZ** would roughly double the RDS bill for a
-failure mode (an AWS data-center outage) that doesn't matter much for a
-single-account prototype yet; worth turning on once real customers depend
-on uptime.
+Deliberately not done yet, and why: **Multi-AZ** would roughly double the
+RDS bill for a failure mode (an AWS data-center outage) that doesn't
+matter much for a single-account prototype yet; worth turning on once
+real customers depend on uptime.
 
 ## Bulk export
 
@@ -386,9 +389,10 @@ runs is unrecoverable.
 
 ## Deferred to later phases (intentionally not built yet)
 
-- HIPAA compliance: encryption-at-rest specifics, BAAs, formal
+- HIPAA compliance: BAAs, formal compliance documentation, formal
   retention/purge policy (audit logging itself is already built — see
-  "PHI-access log" and "Admin activity log" above).
+  "PHI-access log" and "Admin activity log" above; infrastructure
+  encryption-at-rest is already done, see "Security hardening" above).
 - AI analysis of calls beyond raw transcription (summaries, sentiment,
   coaching scores).
 - True multi-tenancy (one deployment serving multiple GHL sub-accounts with
