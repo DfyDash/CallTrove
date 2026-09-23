@@ -91,6 +91,24 @@ a:hover {
   padding: 0 4px;
 }
 
+/* Hidden on desktop (see the @media block near the end of this file) --
+   there's no sidebar to collapse when it's already fully visible. */
+.mobile-nav-toggle {
+  display: none;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 1rem;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 .brand-mark {
   width: 26px;
   height: 26px;
@@ -1227,4 +1245,136 @@ tbody tr:last-child td {
 .button-link:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+/* --- Mobile (phone-width) layout ---
+   Nothing below this point exists on desktop -- there was previously no
+   responsive handling at all, so a phone (~390px CSS width) rendered the
+   fixed 240px sidebar + wide table/filter-bar exactly as sized for
+   desktop. Since the table cells and filter controls don't have room to
+   shrink that far without overflowing, the page's own layout viewport
+   grew to fit them (well past the physical screen width), which is what
+   actually causes the "zoomed out, everything tiny and overlapping"
+   mess on a phone -- not just "things looked cramped." overflow-x:hidden
+   on body plus overflow-x:auto on the two content containers below stop
+   that from happening again even if some future addition doesn't fit. */
+body {
+  overflow-x: hidden;
+}
+
+@media (max-width: 860px) {
+  .layout {
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+
+  .sidebar-brand {
+    margin-bottom: 0;
+  }
+
+  .mobile-nav-toggle {
+    display: flex;
+  }
+
+  /* Collapsed by default -- expanded via .nav-open (toggled by
+     #mobile-nav-toggle in app.js/contacts.js/settings.js). The
+     :not([hidden]) guard on account-switcher-wrap/admin-nav matters: both
+     are conditionally hidden by JS already (single-account deployments,
+     non-admin logins) via the hidden ATTRIBUTE, and a plain class
+     selector here would otherwise have higher specificity than the
+     browser's default [hidden] rule and silently un-hide them regardless
+     of that JS-driven state -- the same class of bug the play/pause icon
+     fix in app.js ran into earlier with SVG elements. */
+  .sidebar > .search-wrap,
+  .sidebar > .sidebar-nav {
+    display: none;
+  }
+  .sidebar > .account-switcher-wrap:not([hidden]),
+  .sidebar > .admin-nav:not([hidden]) {
+    display: none;
+  }
+  .sidebar.nav-open > .search-wrap {
+    display: block;
+    margin-top: 12px;
+  }
+  .sidebar.nav-open > .sidebar-nav {
+    display: flex;
+    margin-top: 12px;
+  }
+  .sidebar.nav-open > .account-switcher-wrap:not([hidden]),
+  .sidebar.nav-open > .admin-nav:not([hidden]) {
+    display: block;
+    margin-top: 12px;
+  }
+
+  .content {
+    width: 100%;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
+
+  /* table {width:100%} (defined earlier in this file) forces every
+     table's columns to squeeze into whatever narrow width is available,
+     which for an 8-column fixed-layout table like .calls-table means
+     each cell's text visibly overlaps its neighbors rather than actually
+     shrinking -- table-layout:fixed respects the column percentages
+     strictly but does nothing to stop overflowing text within a cell.
+     A min-width here overrides that 100% down to a floor the columns can
+     actually fit in, so .content's overflow-x:auto above scrolls the
+     table horizontally instead of everything colliding into each other. */
+  .calls-table {
+    min-width: 720px;
+  }
+
+  .settings-content table {
+    min-width: 600px;
+  }
+
+  .content-header {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .settings-layout {
+    flex-direction: column;
+  }
+
+  .settings-tabs-col {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+
+  /* Redundant with the page's own content-header title once the tabs
+     column is a slim horizontal strip instead of a full sidebar. */
+  .settings-tabs-col > h1 {
+    display: none;
+  }
+
+  #settings-tabs {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    margin-top: 0;
+  }
+
+  #settings-tabs .nav-link {
+    white-space: nowrap;
+  }
+
+  .settings-content {
+    width: 100%;
+    max-width: 100%;
+    padding: 14px 16px;
+    overflow-x: auto;
+  }
 }

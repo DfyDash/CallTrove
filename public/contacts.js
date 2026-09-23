@@ -5,6 +5,9 @@ const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
 const azStrip = document.getElementById("az-strip");
 const contactGroups = document.getElementById("contact-groups");
+const mobileNavToggle = document.getElementById("mobile-nav-toggle");
+const sidebarEl = document.querySelector(".sidebar");
+mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 
 let viewAs = "";
 
