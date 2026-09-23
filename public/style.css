@@ -33,8 +33,11 @@
   --critical: #ae3131;
   --critical-soft: rgba(174, 49, 49, 0.1);
 }
+/* Three states: system dark (unless explicitly overridden to light),
+   and an explicit dark override that wins even on a light system --
+   [data-theme] is set by theme.js from the toggle in the sidebar/header. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --ink: #f7f4ec;
     --page-bg: #141312;
     --surface: #1d1b17;
@@ -50,6 +53,22 @@
     --critical: #e07a7a;
     --critical-soft: rgba(224, 122, 122, 0.15);
   }
+}
+:root[data-theme="dark"] {
+  --ink: #f7f4ec;
+  --page-bg: #141312;
+  --surface: #1d1b17;
+  --head-bg: #242119;
+  --border: #35322b;
+  --border-soft: rgba(247, 244, 236, 0.08);
+  --muted: #bcb2a0;
+  --accent: #d97a54;
+  --accent-text: #d97a54;
+  --accent-soft: rgba(217, 122, 84, 0.16);
+  --good: #7fd39a;
+  --good-soft: rgba(76, 175, 106, 0.18);
+  --critical: #e07a7a;
+  --critical-soft: rgba(224, 122, 122, 0.15);
 }
 
 /* Aliases onto the main brand tokens (:root, above) rather than its own
@@ -185,8 +204,36 @@ a:hover {
   font-weight: 700;
 }
 
+.content-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .content-header .session-bar {
   margin-bottom: 0;
+}
+
+.theme-toggle {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--surface);
+  color: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.theme-toggle:hover {
+  background: var(--head-bg);
+}
+
+/* Login/account-canceled have no header bar to dock the toggle in --
+   a fixed corner placement instead. */
+.theme-toggle-corner {
+  position: fixed;
+  top: 16px;
+  right: 16px;
 }
 
 .contact-list {
@@ -772,8 +819,9 @@ tbody tr:last-child td {
   cursor: pointer;
 }
 @media (prefers-color-scheme: dark) {
-  .login-card button { color: var(--ink); }
+  :root:not([data-theme="light"]) .login-card button { color: var(--ink); }
 }
+:root[data-theme="dark"] .login-card button { color: var(--ink); }
 
 .login-error {
   color: #c00;
