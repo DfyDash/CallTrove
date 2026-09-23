@@ -1,17 +1,54 @@
+/* Self-hosted (see server.js's CSP comment: no third-party fonts/CDNs) --
+   Inter ships as one variable-font file, so all four weights below point
+   at the same file; the browser snaps to the named instance per weight. */
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/cormorant-garamond-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("fonts/inter-variable.woff2") format("woff2");
+}
+
 :root {
   color-scheme: light dark;
-  --border: #e2e1dc;
-  --muted: #898781;
-  --accent: #2a78d6;
-  --page-bg: #f5f5f3;
+  --ink: #141312;
+  --page-bg: #f7f4ec;
   --surface: #ffffff;
+  --head-bg: rgba(20, 19, 18, 0.04);
+  --border: #e6ddc9;
+  --border-soft: rgba(20, 19, 18, 0.06);
+  --muted: #726b5d;
+  --accent: #b1502f;
+  --accent-text: #b1502f;
+  --accent-soft: rgba(177, 80, 47, 0.1);
+  --good: #1f7a34;
+  --good-soft: rgba(31, 122, 52, 0.1);
+  --critical: #ae3131;
+  --critical-soft: rgba(174, 49, 49, 0.1);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --border: #35342f;
-    --muted: #918f89;
-    --page-bg: #121212;
-    --surface: #1a1a19;
+    --ink: #f7f4ec;
+    --page-bg: #141312;
+    --surface: #1d1b17;
+    --head-bg: #242119;
+    --border: #35322b;
+    --border-soft: rgba(247, 244, 236, 0.08);
+    --muted: #bcb2a0;
+    --accent: #d97a54;
+    --accent-text: #d97a54;
+    --accent-soft: rgba(217, 122, 84, 0.16);
+    --good: #7fd39a;
+    --good-soft: rgba(76, 175, 106, 0.18);
+    --critical: #e07a7a;
+    --critical-soft: rgba(224, 122, 122, 0.15);
   }
 }
 
@@ -44,12 +81,9 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--page-bg);
-  color: #0b0b0b;
-}
-@media (prefers-color-scheme: dark) {
-  body { color: #ffffff; }
+  color: var(--ink);
 }
 
 a {
@@ -57,10 +91,8 @@ a {
 }
 
 a:hover {
-  color: #1c5cab;
-}
-@media (prefers-color-scheme: dark) {
-  a:hover { color: #7fb2e8; }
+  color: var(--accent-text);
+  opacity: 0.8;
 }
 
 .layout {
@@ -110,22 +142,31 @@ a:hover {
 }
 
 .brand-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
-  font-weight: 700;
+  width: 18px;
+  height: 35px;
   flex-shrink: 0;
+  display: flex;
 }
 
+.brand-mark svg {
+  display: block;
+}
+
+.brand-mark .mark-lock-stroke { fill: none; stroke: var(--accent); stroke-width: 6.5; }
+.brand-mark .mark-lock-body { fill: var(--accent); }
+.brand-mark .mark-keyhole { fill: var(--page-bg); }
+.brand-mark .mark-handset { fill: var(--ink); }
+
 .brand-name {
-  font-size: 0.95rem;
-  font-weight: 700;
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 600;
+  font-size: 1.2rem;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.brand-name .brand-name-accent {
+  color: var(--accent);
 }
 
 #search,
@@ -272,8 +313,8 @@ a:hover {
 }
 
 .nav-link.active {
-  background: rgba(42, 120, 214, 0.12);
-  color: #1c5cab;
+  background: var(--accent-soft);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -328,7 +369,7 @@ a:hover {
   gap: 10px;
   margin-bottom: 14px;
   padding: 10px 14px;
-  background: rgba(42, 120, 214, 0.06);
+  background: var(--accent-soft);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
@@ -410,12 +451,12 @@ a:hover {
 /* Per-outcome colors as fixed classes rather than inline styles: the CSP
    here has no 'unsafe-inline' for style-src, so a dynamically computed
    style="" attribute is silently dropped by the browser. */
-.outcome-completed { background: rgba(12, 163, 12, 0.12); color: #0a6b0a; }
-.outcome-no-answer { background: rgba(137, 135, 129, 0.18); color: #52514e; }
-.outcome-voicemail { background: rgba(42, 120, 214, 0.12); color: #1c5cab; }
+.outcome-completed { background: var(--good-soft); color: var(--good); }
+.outcome-no-answer { background: var(--border-soft); color: var(--muted); }
+.outcome-voicemail { background: var(--accent-soft); color: var(--accent-text); }
 .outcome-busy { background: rgba(250, 178, 25, 0.2); color: #8a5a00; }
-.outcome-canceled { background: rgba(208, 59, 59, 0.12); color: #a52e2e; }
-.outcome-default { background: rgba(137, 135, 129, 0.18); color: #52514e; }
+.outcome-canceled { background: var(--critical-soft); color: var(--critical); }
+.outcome-default { background: var(--border-soft); color: var(--muted); }
 
 /* Discrete width/height buckets for bars whose fill is computed from data
    (rep leaderboard bars, trend chart, inbound/outbound mix). Same CSP
@@ -699,10 +740,21 @@ tbody tr:last-child td {
   border-radius: 8px;
 }
 
-.login-card h1 {
-  font-size: 1.1rem;
+.login-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   margin: 0 0 4px;
-  text-align: center;
+}
+
+.login-brand .brand-mark {
+  width: 23px;
+  height: 44px;
+}
+
+.login-brand .brand-name {
+  font-size: 1.5rem;
 }
 
 .login-card label {
@@ -727,6 +779,9 @@ tbody tr:last-child td {
   color: #fff;
   font-size: 0.9rem;
   cursor: pointer;
+}
+@media (prefers-color-scheme: dark) {
+  .login-card button { color: var(--ink); }
 }
 
 .login-error {
@@ -994,8 +1049,8 @@ tbody tr:last-child td {
 }
 
 .az-letter.has-contacts {
-  color: #1c5cab;
-  background: rgba(42, 120, 214, 0.12);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
 .contact-groups {
@@ -1044,8 +1099,8 @@ tbody tr:last-child td {
   width: 28px;
   height: 28px;
   border-radius: 100px;
-  background: rgba(42, 120, 214, 0.15);
-  color: #1c5cab;
+  background: var(--accent-soft);
+  color: var(--accent-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1170,9 +1225,9 @@ tbody tr:last-child td {
 }
 
 .rep-chip.active {
-  background: rgba(42, 120, 214, 0.12);
-  color: #1c5cab;
-  border-color: #2a78d6;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: var(--accent);
   font-weight: 600;
 }
 
@@ -1280,7 +1335,7 @@ tbody tr:last-child td {
 .account-access-details summary {
   cursor: pointer;
   font-size: 0.85rem;
-  color: #1c5cab;
+  color: var(--accent-text);
 }
 
 .account-access-list {
