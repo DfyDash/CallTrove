@@ -66,6 +66,7 @@ app.use(
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.html")));
 app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
+app.use("/fonts", express.static(path.join(__dirname, "..", "public", "fonts")));
 app.use("/auth", authRouter);
 
 app.use(requireAuth);
