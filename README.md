@@ -361,22 +361,25 @@ runs is unrecoverable.
 - AI analysis of calls beyond raw transcription (summaries, sentiment,
   coaching scores).
 - True multi-tenancy (one deployment serving multiple GHL sub-accounts with
-  isolated data) — this prototype is one deployment per sub-account.
-  **In progress**: `tenants`/`ghl_accounts`/`user_account_access` tables,
-  the `requireAccount` permission boundary, the account-switcher UI, and
-  both call-ingestion paths (the live poller and the historical backfill)
-  are all built and each connected account's data is fully isolated
+  isolated data) — this prototype was one deployment per sub-account.
+  **Built**: `tenants`/`ghl_accounts`/`user_account_access` tables, the
+  `requireAccount` permission boundary, the account-switcher UI, both
+  call-ingestion paths (the live poller and the historical backfill), and
+  the admin screen for granting/revoking a specific team member's access
+  to a specific connected account are all in place, tested against a real
+  database, and each connected account's data is fully isolated
   end-to-end (see `src/db/schema.sql`, `src/auth.js`, `src/routes/api.js`,
-  `src/poller.js`, `src/backfill.js`, `src/accountCredentials.js`, the
-  sidebar dropdown in `public/app.js`/`public/contacts.js`). Not yet done:
-  there's no admin UI yet for granting/revoking a specific team member's
-  access to a specific connected account (the `user_account_access` table
-  itself works, just has no screen to manage it from).
-- Formal GHL Marketplace app packaging / OAuth. **In progress**: the
-  connect flow itself is built (`src/ghlOAuth.js`, the
-  `/api/admin/ghl-oauth/*` routes, the Settings > "GHL accounts" tab) but
-  can't actually be used yet — it requires registering CallTrove as an
-  app in GHL's Marketplace developer portal first, to get real
+  `src/routes/admin.js`, `src/poller.js`, `src/backfill.js`,
+  `src/accountCredentials.js`, Settings → "Team members" and the sidebar
+  dropdown in `public/app.js`/`public/contacts.js`). The one thing this
+  can't do anything with yet is actually get a *second* real account
+  connected — that's the GHL OAuth piece directly below.
+- Formal GHL Marketplace app packaging / OAuth. **Built**: the connect
+  flow itself (`src/ghlOAuth.js`, the `/api/admin/ghl-oauth/*` routes,
+  the Settings → "GHL accounts" tab) — but it can't actually be used yet.
+  It requires registering CallTrove as an app in GHL's Marketplace
+  developer portal first (an external, one-time action on GHL's site, not
+  something this codebase can do on its own) to get real
   `GHL_OAUTH_CLIENT_ID` / `GHL_OAUTH_CLIENT_SECRET` / `GHL_OAUTH_REDIRECT_URI`
   values. Until those are set, the Settings tab shows "not set up yet"
   instead of a broken Connect button.
