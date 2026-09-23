@@ -364,17 +364,14 @@ runs is unrecoverable.
   isolated data) — this prototype is one deployment per sub-account.
   **In progress**: `tenants`/`ghl_accounts`/`user_account_access` tables,
   the `requireAccount` permission boundary, the account-switcher UI, and
-  the call-ingestion poller are all built and each connected account's
-  data is fully isolated end-to-end (see `src/db/schema.sql`,
-  `src/auth.js`, `src/routes/api.js`, `src/poller.js`,
-  `src/accountCredentials.js`, the sidebar dropdown in
-  `public/app.js`/`public/contacts.js`). Not yet done: `src/backfill.js`
-  (the historical-history walk) still only runs against the one legacy
-  `GHL_API_TOKEN`-configured account rather than looping every connected
-  account the way the live poller now does, and there's no admin UI yet
-  for granting/revoking a specific team member's access to a specific
-  connected account (the `user_account_access` table itself works, just
-  has no screen to manage it from).
+  both call-ingestion paths (the live poller and the historical backfill)
+  are all built and each connected account's data is fully isolated
+  end-to-end (see `src/db/schema.sql`, `src/auth.js`, `src/routes/api.js`,
+  `src/poller.js`, `src/backfill.js`, `src/accountCredentials.js`, the
+  sidebar dropdown in `public/app.js`/`public/contacts.js`). Not yet done:
+  there's no admin UI yet for granting/revoking a specific team member's
+  access to a specific connected account (the `user_account_access` table
+  itself works, just has no screen to manage it from).
 - Formal GHL Marketplace app packaging / OAuth. **In progress**: the
   connect flow itself is built (`src/ghlOAuth.js`, the
   `/api/admin/ghl-oauth/*` routes, the Settings > "GHL accounts" tab) but

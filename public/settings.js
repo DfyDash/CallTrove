@@ -149,6 +149,8 @@ document.getElementById("settings-tabs").addEventListener("click", (e) => {
 // --- Team members ---
 
 const userRows = document.getElementById("user-rows");
+const accountsColTh = document.getElementById("accounts-col-th");
+let tenantAccounts = [];
 const addUserForm = document.getElementById("add-user-form");
 const addUserError = document.getElementById("add-user-error");
 const ghlUserSelect = document.getElementById("ghl-user-select");
@@ -175,6 +177,26 @@ async function loadGhlUsers() {
   }
 }
 
+function accountAccessCellHtml(user) {
+  if (tenantAccounts.length <= 1) return "";
+  if (user.accountIds === null) return `<span class="settings-note">All (admin)</span>`;
+
+  const checkboxes = tenantAccounts
+    .map((a) => {
+      const checked = user.accountIds.includes(a.id) ? "checked" : "";
+      return `<label class="account-access-option"><input type="checkbox" value="${escapeHtml(a.id)}" ${checked} /> ${escapeHtml(a.name || a.ghlLocationId)}</label>`;
+    })
+    .join("");
+  const count = user.accountIds.length;
+  return `
+    <details class="account-access-details">
+      <summary>${count} account${count === 1 ? "" : "s"}</summary>
+      <div class="account-access-list">${checkboxes}</div>
+      <button type="button" data-id="${escapeHtml(user.id)}" class="account-access-save-btn">Save</button>
+    </details>
+  `;
+}
+
 async function loadUsers() {
   const res = await fetch("/api/admin/users");
   const users = await res.json();
@@ -188,6 +210,7 @@ async function loadUsers() {
         <select class="ghl-link-select">${ghlUserOptionsHtml(user.ghlUserId)}</select>
         <button data-id="${user.id}" class="link-ghl-btn">Save</button>
       </td>
+      <td class="accounts-col" ${tenantAccounts.length <= 1 ? "hidden" : ""}>${accountAccessCellHtml(user)}</td>
       <td>
         <button data-id="${user.id}" class="reset-btn">Reset password</button>
         <button data-id="${user.id}" class="delete-btn">Delete</button>
@@ -199,8 +222,29 @@ async function loadUsers() {
       const select = tr.querySelector(".ghl-link-select");
       linkGhlUser(user.id, select.value || null);
     });
+    const accountSaveBtn = tr.querySelector(".account-access-save-btn");
+    if (accountSaveBtn) {
+      accountSaveBtn.addEventListener("click", () => {
+        const checked = Array.from(tr.querySelectorAll(".account-access-list input:checked")).map((el) => el.value);
+        saveAccountAccess(user.id, checked);
+      });
+    }
     userRows.appendChild(tr);
   }
+}
+
+async function saveAccountAccess(userId, accountIds) {
+  const res = await fetch(`/api/admin/users/${userId}/account-access`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ accountIds }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.error || "could not update account access");
+    return;
+  }
+  loadUsers();
 }
 
 function generatePassword() {
@@ -278,10 +322,21 @@ addUserForm.addEventListener("submit", async (e) => {
   loadUsers();
 });
 
-function loadTeam() {
+async function loadTeam() {
   if (tabLoaded.team) return;
   tabLoaded.team = true;
-  loadGhlUsers().then(loadUsers);
+
+  // The per-user account-access checklist only makes sense (and only
+  // shows) once there's more than one connected account -- same "don't
+  // clutter today's single-account reality" reasoning as the sidebar
+  // switcher.
+  const res = await fetch("/api/admin/ghl-accounts");
+  const { accounts } = await res.json();
+  tenantAccounts = accounts;
+  accountsColTh.hidden = tenantAccounts.length <= 1;
+
+  await loadGhlUsers();
+  await loadUsers();
 }
 
 // --- GHL accounts (multi-tenant: connected locations) ---

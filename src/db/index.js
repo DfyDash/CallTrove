@@ -628,6 +628,20 @@ async function revokeUserAccountAccess(userId, ghlAccountId) {
   await pool.query(`DELETE FROM user_account_access WHERE user_id = $1 AND ghl_account_id = $2`, [userId, ghlAccountId]);
 }
 
+// Every access grant across a tenant's users, in one query -- for the
+// Team members admin screen, which needs every user's granted accounts
+// at once rather than one query per user.
+async function listUserAccountAccessForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT a.user_id AS "userId", a.ghl_account_id AS "ghlAccountId"
+     FROM user_account_access a
+     JOIN ghl_accounts g ON g.id = a.ghl_account_id
+     WHERE g.tenant_id = $1`,
+    [tenantId]
+  );
+  return rows;
+}
+
 // Every actively connected account across every tenant, with the OAuth
 // token fields ingestion code needs -- what src/poller.js loops over each
 // cycle. Unlike listGhlAccountsForTenant/listAccessibleAccounts (the
@@ -777,6 +791,7 @@ module.exports = {
   listAllActiveGhlAccounts,
   grantUserAccountAccess,
   revokeUserAccountAccess,
+  listUserAccountAccessForTenant,
   upsertContact,
   insertCall,
   getCallByGhlId,

@@ -1201,6 +1201,30 @@ tbody tr:last-child td {
   color: var(--muted);
 }
 
+.account-access-details summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #1c5cab;
+}
+
+.account-access-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.account-access-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+
 .admin-form {
   display: flex;
   flex-wrap: wrap;

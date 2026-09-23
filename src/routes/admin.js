@@ -47,7 +47,52 @@ async function autoLinkGhlUsers(users) {
 
 router.get("/users", async (req, res) => {
   const users = await autoLinkGhlUsers(await db.listUsers());
-  res.json(users);
+
+  // accountIds: null for an admin (they bypass the grant table and see
+  // every account their tenant owns -- see db.listAccessibleAccounts),
+  // otherwise the real list of connected accounts this user has been
+  // explicitly granted. The Team members UI only shows the checklist for
+  // the latter case.
+  const grants = await db.listUserAccountAccessForTenant(req.session.user.tenantId);
+  const accountIdsByUser = {};
+  for (const g of grants) {
+    (accountIdsByUser[g.userId] = accountIdsByUser[g.userId] || []).push(g.ghlAccountId);
+  }
+  const usersWithAccess = users.map((u) => ({
+    ...u,
+    accountIds: u.role === "admin" ? null : accountIdsByUser[u.id] || [],
+  }));
+  res.json(usersWithAccess);
+});
+
+// Reconciles one user's connected-account grants to exactly the given
+// list (rather than one grant/revoke call per checkbox) -- simpler for
+// the UI, which just posts whatever's checked. allowedIds filters out
+// anything not actually owned by the admin's own tenant, so this can
+// never be used to grant access into a different tenant's account.
+router.put("/users/:id/account-access", requireCsrf, async (req, res) => {
+  const { accountIds } = req.body || {};
+  if (!Array.isArray(accountIds)) {
+    return res.status(400).json({ error: "accountIds must be an array" });
+  }
+  const target = await db.getUserById(req.params.id);
+  if (!target) return res.status(404).json({ error: "user not found" });
+
+  const tenantAccounts = await db.listGhlAccountsForTenant(req.session.user.tenantId);
+  const allowedIds = new Set(tenantAccounts.map((a) => a.id));
+  const current = await db.listAccessibleAccounts(target.id, target.role, req.session.user.tenantId);
+  const currentIds = new Set(current.map((a) => a.id));
+  const nextIds = new Set(accountIds.filter((id) => allowedIds.has(id)));
+
+  for (const id of nextIds) {
+    if (!currentIds.has(id)) await db.grantUserAccountAccess(target.id, id);
+  }
+  for (const id of currentIds) {
+    if (!nextIds.has(id)) await db.revokeUserAccountAccess(target.id, id);
+  }
+
+  await log(req, "user_account_access_updated", `Updated connected-account access for "${target.username}"`);
+  res.json({ status: "updated" });
 });
 
 // The real GHL user list, for populating a picker in the admin UI instead
