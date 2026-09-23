@@ -207,6 +207,8 @@ a:hover {
 .content-header-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 12px;
 }
 
@@ -221,6 +223,7 @@ a:hover {
   background: var(--surface);
   color: inherit;
   font-size: 0.8rem;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -900,6 +903,7 @@ tbody tr:last-child td {
 .session-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 14px;
   margin-bottom: 12px;
@@ -909,6 +913,7 @@ tbody tr:last-child td {
 
 .session-bar a {
   color: inherit;
+  white-space: nowrap;
 }
 
 .session-bar form {
@@ -921,6 +926,7 @@ tbody tr:last-child td {
   color: inherit;
   text-decoration: underline;
   font-size: inherit;
+  white-space: nowrap;
   cursor: pointer;
   padding: 0;
 }
