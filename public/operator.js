@@ -19,6 +19,10 @@ const activityPageIndicator = document.getElementById("operator-activity-page-in
 let activityPage = 1;
 let activityLoaded = false;
 
+const analyticsSummary = document.getElementById("operator-analytics-summary");
+const analyticsRows = document.getElementById("operator-analytics-rows");
+let cachedTenants = [];
+
 let csrfToken = "";
 let pendingPurgeTenantId = null;
 
@@ -41,7 +45,7 @@ async function loadSession() {
   if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
 
   if (!me.isOperator) {
-    operatorRows.innerHTML = `<tr><td colspan="9">Operator access required.</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="4">Operator access required.</td></tr>`;
     return false;
   }
   return true;
@@ -69,27 +73,70 @@ function actionsForTenant(t) {
 async function loadTenants() {
   const res = await fetch("/api/operator/tenants");
   if (!res.ok) {
-    operatorRows.innerHTML = `<tr><td colspan="9">Could not load accounts.</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
+    analyticsRows.innerHTML = `<tr><td colspan="6">Could not load analytics.</td></tr>`;
+    analyticsSummary.innerHTML = "";
     return;
   }
-  const tenants = await res.json();
-  if (tenants.length === 0) {
-    operatorRows.innerHTML = `<tr><td colspan="9">No accounts yet.</td></tr>`;
+  cachedTenants = await res.json();
+  renderAccounts();
+  renderAnalytics();
+}
+
+function renderAccounts() {
+  if (cachedTenants.length === 0) {
+    operatorRows.innerHTML = `<tr><td colspan="4">No accounts yet.</td></tr>`;
     return;
   }
-  operatorRows.innerHTML = tenants
+  operatorRows.innerHTML = cachedTenants
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
       <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
+      <td data-label="Actions">${actionsForTenant(t)}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderAnalytics() {
+  if (cachedTenants.length === 0) {
+    analyticsSummary.innerHTML = "";
+    analyticsRows.innerHTML = `<tr><td colspan="6">No accounts yet.</td></tr>`;
+    return;
+  }
+
+  const totals = cachedTenants.reduce(
+    (acc, t) => ({
+      ghlAccountCount: acc.ghlAccountCount + t.ghlAccountCount,
+      totalCalls: acc.totalCalls + t.totalCalls,
+      recordingsStored: acc.recordingsStored + t.recordingsStored,
+      transcribedMinutes: acc.transcribedMinutes + t.transcribedMinutes,
+      estimatedTranscribeCost: acc.estimatedTranscribeCost + t.estimatedTranscribeCost,
+    }),
+    { ghlAccountCount: 0, totalCalls: 0, recordingsStored: 0, transcribedMinutes: 0, estimatedTranscribeCost: 0 }
+  );
+
+  analyticsSummary.innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${cachedTenants.length}</div><div class="stat-label">Accounts</div></div>
+    <div class="stat-tile"><div class="stat-value">${totals.totalCalls}</div><div class="stat-label">Total calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${totals.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
+    <div class="stat-tile"><div class="stat-value">${Math.round(totals.transcribedMinutes * 10) / 10}</div><div class="stat-label">Transcribed minutes</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
+  `;
+
+  analyticsRows.innerHTML = cachedTenants
+    .map(
+      (t) => `
+    <tr data-tenant-id="${escapeHtml(t.id)}">
+      <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="GHL accounts">${t.ghlAccountCount}</td>
       <td data-label="Total calls">${t.totalCalls}</td>
       <td data-label="Recordings stored">${t.recordingsStored}</td>
       <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
       <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
-      <td data-label="Actions">${actionsForTenant(t)}</td>
     </tr>`
     )
     .join("");
@@ -207,7 +254,7 @@ activityNextBtn.addEventListener("click", () => {
 
 // --- Tabs ---
 
-const TAB_NAMES = ["accounts", "activity"];
+const TAB_NAMES = ["accounts", "analytics", "activity"];
 
 function activateTab(tab) {
   if (!TAB_NAMES.includes(tab)) tab = "accounts";
