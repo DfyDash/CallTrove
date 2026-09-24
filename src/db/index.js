@@ -366,10 +366,13 @@ async function getCallReportByRep(tenantId, { dateFrom, dateTo } = {}) {
   const { rows } = await pool.query(
     `SELECT c.handled_by_id AS id, c.handled_by_name AS name,
             count(*)::int AS total,
+            count(*) FILTER (WHERE c.disposition = 'completed')::int AS "completedCount",
             CASE WHEN count(*) > 0
               THEN round(100.0 * count(*) FILTER (WHERE c.disposition = 'completed') / count(*))::int
               ELSE 0 END AS "completionPct",
             COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            COALESCE(sum(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL), 0)::int AS "totalDurationSeconds",
+            count(*) FILTER (WHERE c.duration_seconds IS NOT NULL)::int AS "durationSampleCount",
             count(*) FILTER (WHERE c.direction = 'inbound')::int AS inbound,
             count(*) FILTER (WHERE c.direction = 'outbound')::int AS outbound
      FROM calls c
@@ -382,19 +385,61 @@ async function getCallReportByRep(tenantId, { dateFrom, dateTo } = {}) {
   return rows;
 }
 
+// Per-rep, per-disposition breakdown for the same leaderboard/date range --
+// completionPct above is a single number; this is the full picture (how
+// much is no-answer/busy/voicemail/etc., not just "did it complete"), same
+// idea as getCoverageByDisposition but sliced by rep instead of tenant-wide.
+async function getCallReportDispositionsByRep(tenantId, { dateFrom, dateTo } = {}) {
+  const conditions = ["c.handled_by_id IS NOT NULL", "g.tenant_id = $1"];
+  const params = [tenantId];
+  if (dateFrom) {
+    params.push(dateFrom);
+    conditions.push(`c.occurred_at >= $${params.length}::date`);
+  }
+  if (dateTo) {
+    params.push(dateTo);
+    conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
+  }
+  const { rows } = await pool.query(
+    `SELECT c.handled_by_id AS id, COALESCE(c.disposition, '(unknown)') AS disposition, count(*)::int AS count
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY c.handled_by_id, c.disposition
+     ORDER BY count DESC`,
+    params
+  );
+  return rows;
+}
+
 // Always the trailing 7 calendar days, independent of the report's own
 // date-range preset -- a fixed short-term pulse check per rep.
-async function getCallReportTrend(tenantId) {
+// granularity is computed server-side (routes/admin.js's trendGranularityFor,
+// never taken directly from client input) from the same dateFrom/dateTo as
+// the leaderboard, so it's safe to interpolate into date_trunc()/to_char()
+// below -- it's always exactly "day" or "month", never attacker-influenced.
+async function getCallReportTrend(tenantId, { dateFrom, dateTo, granularity = "day" } = {}) {
+  const truncUnit = granularity === "month" ? "month" : "day";
+  const bucketFormat = granularity === "month" ? "YYYY-MM" : "YYYY-MM-DD";
+  const conditions = ["c.handled_by_id IS NOT NULL", "g.tenant_id = $1"];
+  const params = [tenantId];
+  if (dateFrom) {
+    params.push(dateFrom);
+    conditions.push(`c.occurred_at >= $${params.length}::date`);
+  }
+  if (dateTo) {
+    params.push(dateTo);
+    conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
+  }
   const { rows } = await pool.query(
-    `SELECT c.handled_by_id AS id, to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day,
+    `SELECT c.handled_by_id AS id, to_char(date_trunc('${truncUnit}', c.occurred_at), '${bucketFormat}') AS bucket,
             count(*)::int AS count
      FROM calls c
      JOIN ghl_accounts g ON g.id = c.ghl_account_id
-     WHERE c.handled_by_id IS NOT NULL
-       AND c.occurred_at >= (current_date - interval '6 days')
-       AND g.tenant_id = $1
-     GROUP BY c.handled_by_id, day`,
-    [tenantId]
+     WHERE ${conditions.join(" AND ")}
+     GROUP BY c.handled_by_id, bucket
+     ORDER BY bucket`,
+    params
   );
   return rows;
 }
@@ -1083,6 +1128,7 @@ module.exports = {
   getCallStats,
   listDistinctDispositions,
   getCallReportByRep,
+  getCallReportDispositionsByRep,
   getCallReportTrend,
   listAllCallsWithRecordings,
   getCoverageSummary,

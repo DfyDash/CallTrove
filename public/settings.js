@@ -492,13 +492,13 @@ const repBarsEl = document.getElementById("rep-bars");
 const repRowsEl = document.getElementById("rep-rows");
 const repChipsEl = document.getElementById("rep-chips");
 let reportPreset = "month";
-let reportData = null; // { reps, trend }
+let reportData = null; // { reps, trend, trendGranularity, dispositionsByRep }
 let selectedRepId = null;
 
-// Bars below are filled by rounding to one of the .w-N / .trend-h-N
-// classes in style.css rather than an inline style="width:…"/"height:…":
-// the CSP here has no 'unsafe-inline' for style-src, so a computed
-// style="" attribute is silently dropped by the browser.
+// Bars below are filled by rounding to one of the .w-N classes in
+// style.css rather than an inline style="width:…": the CSP here has no
+// 'unsafe-inline' for style-src, so a computed style="" attribute is
+// silently dropped by the browser.
 function widthBucket(pct) {
   const clamped = Math.max(0, Math.min(100, Math.round(pct)));
   return Math.round(clamped / 10) * 10;
@@ -594,6 +594,34 @@ document.getElementById("back-to-leaderboard").addEventListener("click", () => {
   reportLeaderboardEl.hidden = false;
 });
 
+// Simple average across reps for "avg calls per rep"; volume-weighted for
+// completion rate and duration, since a straight average-of-percentages
+// would give a 5-call rep and a 500-call rep equal weight. Includes the
+// selected rep in their own team average (the common leaderboard
+// convention) rather than "everyone else" -- negligible difference with
+// more than a couple of reps, and simpler to reason about.
+function computeTeamAverages(reps) {
+  const totals = reps.reduce(
+    (acc, r) => ({
+      calls: acc.calls + r.total,
+      completed: acc.completed + r.completedCount,
+      durationSum: acc.durationSum + r.totalDurationSeconds,
+      durationSamples: acc.durationSamples + r.durationSampleCount,
+      inbound: acc.inbound + r.inbound,
+      outbound: acc.outbound + r.outbound,
+    }),
+    { calls: 0, completed: 0, durationSum: 0, durationSamples: 0, inbound: 0, outbound: 0 }
+  );
+  const repCount = reps.length || 1;
+  const mixTotal = totals.inbound + totals.outbound;
+  return {
+    avgCallsPerRep: Math.round(totals.calls / repCount),
+    avgCompletionPct: totals.calls > 0 ? Math.round((100 * totals.completed) / totals.calls) : 0,
+    avgDurationSeconds: totals.durationSamples > 0 ? Math.round(totals.durationSum / totals.durationSamples) : 0,
+    avgInboundPct: mixTotal > 0 ? Math.round((100 * totals.inbound) / mixTotal) : 0,
+  };
+}
+
 function renderReportDetail() {
   const rep = reportData.reps.find((r) => r.id === selectedRepId);
   if (!rep) {
@@ -609,6 +637,12 @@ function renderReportDetail() {
   document.getElementById("rep-detail-duration").textContent = formatDuration(rep.avgDurationSeconds);
   document.getElementById("rep-detail-mix").textContent = `${rep.inbound} / ${rep.outbound}`;
 
+  const team = computeTeamAverages(reportData.reps);
+  document.getElementById("rep-detail-total-compare").textContent = `Team avg: ${team.avgCallsPerRep}/rep`;
+  document.getElementById("rep-detail-completion-compare").textContent = `Team avg: ${team.avgCompletionPct}%`;
+  document.getElementById("rep-detail-duration-compare").textContent = `Team avg: ${formatDuration(team.avgDurationSeconds)}`;
+  document.getElementById("rep-detail-mix-compare").textContent = `Team avg: ${team.avgInboundPct}% inbound`;
+
   repChipsEl.innerHTML = "";
   for (const r of reportData.reps) {
     const chip = document.createElement("button");
@@ -619,30 +653,19 @@ function renderReportDetail() {
     repChipsEl.appendChild(chip);
   }
 
-  const trend = (reportData.trend && reportData.trend[rep.id]) || [];
-  const maxCount = Math.max(1, ...Object.values(reportData.trend || {}).flat().map((d) => d.count));
-  const trendEl = document.getElementById("rep-trend");
-  trendEl.innerHTML = "";
+  const dispositionRows = document.getElementById("rep-disposition-rows");
+  const dispositions = (reportData.dispositionsByRep && reportData.dispositionsByRep[rep.id]) || [];
+  dispositionRows.innerHTML =
+    dispositions.length === 0
+      ? `<tr><td colspan="2" class="empty-state">No calls in this range yet.</td></tr>`
+      : dispositions
+          .map((d) => `<tr><td data-label="Outcome">${escapeHtml(dispositionLabel(d.disposition))}</td><td data-label="Calls">${d.count}</td></tr>`)
+          .join("");
 
-  // A genuinely all-zero week (this rep just hasn't had a call in the last
-  // 7 calendar days -- independent of whatever date range the stats above
-  // cover) rendered as seven 0px bars, indistinguishable from the chart
-  // having failed to draw at all. Say so explicitly instead.
-  if (trend.length > 0 && trend.every((point) => point.count === 0)) {
-    trendEl.innerHTML = `<p class="empty-state">No calls in the last 7 days.</p>`;
-  } else {
-    for (const point of trend) {
-      const label = new Date(`${point.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
-      // A floor bucket (trend-h-0, 3px) keeps a real (but non-zero-week)
-      // zero-count day visibly distinct from empty space, same reasoning
-      // as above.
-      const bucket = point.count === 0 ? 0 : Math.max(10, widthBucket((point.count / maxCount) * 100));
-      const col = document.createElement("div");
-      col.className = "trend-bar-col";
-      col.innerHTML = `<div class="trend-bar trend-h-${bucket}" title="${point.count} calls"></div><span class="trend-bar-label">${escapeHtml(label)}</span>`;
-      trendEl.appendChild(col);
-    }
-  }
+  document.getElementById("rep-trend-heading").textContent =
+    reportData.trendGranularity === "month" ? "Calls over time (by month)" : "Calls over time (by day)";
+  const trend = (reportData.trend && reportData.trend[rep.id]) || [];
+  renderRepTrendChart(trend, reportData.trendGranularity || "day");
 
   const total = rep.inbound + rep.outbound;
   const inboundPct = total ? Math.round((rep.inbound / total) * 100) : 0;
@@ -660,6 +683,8 @@ const gapNextBtn = document.getElementById("gap-next-btn");
 const gapPageIndicator = document.getElementById("gap-page-indicator");
 const monthChartSvg = document.getElementById("month-chart");
 const chartTooltip = document.getElementById("chart-tooltip");
+const repTrendChartSvg = document.getElementById("rep-trend-chart");
+const repTrendTooltip = document.getElementById("rep-trend-tooltip");
 let gapPage = 1;
 
 function statTile(label, value, href) {
@@ -903,6 +928,109 @@ function showChartTooltip(e, m, missing, i, bandW, storedH) {
 
 function hideChartTooltip() {
   chartTooltip.hidden = true;
+}
+
+// --- Rep trend chart (single series, day or month buckets -- see
+// routes/admin.js's trendGranularityFor) -- same SVG approach as
+// renderMonthChart above, just one series instead of stacked stored/missing. ---
+
+function trendBucketLabel(bucket, granularity) {
+  if (granularity === "month") return monthLabel(bucket);
+  return new Date(`${bucket}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function renderRepTrendChart(points, granularity) {
+  const { width, height, margin } = CHART;
+  repTrendChartSvg.innerHTML = "";
+  repTrendChartSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  repTrendChartSvg.setAttribute("preserveAspectRatio", "none");
+
+  // A genuinely all-zero range (this rep just hasn't had a call in the
+  // selected window) renders as a row of 0px bars, indistinguishable from
+  // the chart having failed to draw at all. Say so explicitly instead.
+  if (points.length === 0 || points.every((p) => p.count === 0)) {
+    const label = svgEl("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "chart-axis-label" });
+    label.textContent = "No calls in this range.";
+    repTrendChartSvg.appendChild(label);
+    return;
+  }
+
+  const plotW = width - margin.left - margin.right;
+  const plotH = height - margin.top - margin.bottom;
+  const maxVal = niceMax(Math.max(...points.map((p) => p.count)));
+  const baselineY = margin.top + plotH;
+  const bandW = plotW / points.length;
+  const barW = Math.min(28, Math.max(2, bandW - 6));
+  // More buckets (a year of days, say) than there's room to label every
+  // one of -- skip enough of them that what's left doesn't collide, same
+  // idea as renderMonthChart's labelEvery.
+  const labelEvery = Math.max(1, Math.ceil(points.length / 12));
+
+  const tickCount = 4;
+  for (let i = 0; i <= tickCount; i++) {
+    const v = Math.round((maxVal / tickCount) * i);
+    const y = baselineY - (v / maxVal) * plotH;
+    repTrendChartSvg.appendChild(svgEl("line", { x1: margin.left, x2: margin.left + plotW, y1: y, y2: y, class: "chart-gridline" }));
+    const label = svgEl("text", { x: margin.left - 8, y: y + 3, "text-anchor": "end", class: "chart-axis-label" });
+    label.textContent = v.toLocaleString();
+    repTrendChartSvg.appendChild(label);
+  }
+
+  points.forEach((p, i) => {
+    const x = margin.left + i * bandW + (bandW - barW) / 2;
+    const h = (p.count / maxVal) * plotH;
+    const group = svgEl("g", {});
+
+    if (p.count > 0) {
+      const el = svgEl("path", { d: topRoundedRectPath(x, baselineY - h, barW, h, 3) });
+      el.setAttribute("class", "chart-bar-seg");
+      el.setAttribute("fill", "var(--accent)");
+      group.appendChild(el);
+    }
+
+    const hit = svgEl("rect", { x: margin.left + i * bandW, y: margin.top, width: bandW, height: plotH, class: "chart-bar-hit", tabindex: "0" });
+    const move = (e) => showRepTrendTooltip(e, p, granularity, i, bandW, h);
+    hit.addEventListener("pointerenter", move);
+    hit.addEventListener("pointermove", move);
+    hit.addEventListener("pointerleave", hideRepTrendTooltip);
+    hit.addEventListener("focus", move);
+    hit.addEventListener("blur", hideRepTrendTooltip);
+    group.appendChild(hit);
+
+    if (i % labelEvery === 0) {
+      const label = svgEl("text", { x: margin.left + i * bandW + bandW / 2, y: height - 6, "text-anchor": "middle", class: "chart-axis-label" });
+      label.textContent = trendBucketLabel(p.bucket, granularity);
+      group.appendChild(label);
+    }
+
+    repTrendChartSvg.appendChild(group);
+  });
+}
+
+function showRepTrendTooltip(e, p, granularity, i, bandW, barH) {
+  const rect = repTrendChartSvg.getBoundingClientRect();
+  const scaleX = rect.width / CHART.width;
+  const scaleY = rect.height / CHART.height;
+  const { margin } = CHART;
+  const cx = (margin.left + i * bandW + bandW / 2) * scaleX;
+  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - barH)) * scaleY;
+
+  repTrendTooltip.hidden = false;
+  repTrendTooltip.style.left = `${cx}px`;
+  repTrendTooltip.style.top = `${Math.max(0, cy - 8)}px`;
+  repTrendTooltip.textContent = "";
+  const dateLine = document.createElement("div");
+  dateLine.textContent = trendBucketLabel(p.bucket, granularity);
+  const countLine = document.createElement("div");
+  const valueSpan = document.createElement("span");
+  valueSpan.className = "tooltip-value";
+  valueSpan.textContent = String(p.count);
+  countLine.append("Calls: ", valueSpan);
+  repTrendTooltip.append(dateLine, countLine);
+}
+
+function hideRepTrendTooltip() {
+  repTrendTooltip.hidden = true;
 }
 
 // --- Transcription ---

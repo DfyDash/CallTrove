@@ -448,32 +448,66 @@ router.get("/coverage", async (req, res) => {
   res.json({ summary, byDisposition, byMonth });
 });
 
-// "Call report" -- per-rep volume/quality leaderboard. dateFrom/dateTo
-// scope the totals to the tab's selected preset; the per-rep trailing-7-day
-// trend is always the same fixed window regardless of that preset, so it's
-// filled in here rather than left to the client to recompute.
+// A bounded range (today/week/month presets, or any explicit custom range
+// under a month) gets daily bars -- fine-grained enough to be useful, few
+// enough to read. Year and All-time (open-ended: no dateFrom/dateTo at all)
+// get monthly bars instead -- 365+ daily bars would be unreadable, and
+// that's the same by-month granularity the client-facing Coverage report's
+// own month-chart already uses.
+function trendGranularityFor(dateFrom, dateTo) {
+  if (!dateFrom || !dateTo) return "month";
+  const spanDays = (new Date(dateTo) - new Date(dateFrom)) / 86400000;
+  return spanDays > 31 ? "month" : "day";
+}
+
+// "Call report" -- per-rep volume/quality leaderboard. dateFrom/dateTo scope
+// the totals to the tab's selected preset; the trend now follows that same
+// range (see trendGranularityFor above) instead of always being a fixed
+// trailing-7-day window regardless of what's selected elsewhere on the tab.
 router.get("/call-report", async (req, res) => {
   const { dateFrom, dateTo } = req.query;
-  const [reps, trendRows] = await Promise.all([
+  const granularity = trendGranularityFor(dateFrom, dateTo);
+  const [reps, trendRows, dispositionRows] = await Promise.all([
     db.getCallReportByRep(req.session.user.tenantId, { dateFrom, dateTo }),
-    db.getCallReportTrend(req.session.user.tenantId),
+    db.getCallReportTrend(req.session.user.tenantId, { dateFrom, dateTo, granularity }),
+    db.getCallReportDispositionsByRep(req.session.user.tenantId, { dateFrom, dateTo }),
   ]);
 
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().slice(0, 10));
-  }
   const trend = {};
-  for (const rep of reps) {
-    trend[rep.id] = days.map((day) => {
-      const match = trendRows.find((r) => r.id === rep.id && r.day === day);
-      return { day, count: match ? match.count : 0 };
-    });
+  if (granularity === "day") {
+    // Bounded range -- fill every day so a genuine zero-call day reads as
+    // "no calls" rather than "chart didn't load". No explicit dateTo (e.g.
+    // "today") defaults the end to today, matching the leaderboard's own
+    // reportPresetRange on the client.
+    const start = dateFrom ? new Date(`${dateFrom}T00:00:00`) : new Date();
+    const end = dateTo ? new Date(`${dateTo}T00:00:00`) : new Date();
+    const buckets = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      buckets.push(d.toISOString().slice(0, 10));
+    }
+    for (const rep of reps) {
+      trend[rep.id] = buckets.map((bucket) => {
+        const match = trendRows.find((r) => r.id === rep.id && r.bucket === bucket);
+        return { bucket, count: match ? match.count : 0 };
+      });
+    }
+  } else {
+    // Open-ended (All time) or a year-plus span -- don't force-fill every
+    // possible month back to whenever the tenant's first call happened; a
+    // gap here is a normal, unremarkable quiet month, not the "did this
+    // even load" ambiguity a gap in the last few days would be.
+    for (const rep of reps) {
+      trend[rep.id] = trendRows.filter((r) => r.id === rep.id).map((r) => ({ bucket: r.bucket, count: r.count }));
+    }
   }
 
-  res.json({ reps, trend });
+  const dispositionsByRep = {};
+  for (const row of dispositionRows) {
+    if (!dispositionsByRep[row.id]) dispositionsByRep[row.id] = [];
+    dispositionsByRep[row.id].push({ disposition: row.disposition, count: row.count });
+  }
+
+  res.json({ reps, trend, trendGranularity: granularity, dispositionsByRep });
 });
 
 router.get("/coverage/gaps", async (req, res) => {

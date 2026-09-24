@@ -160,7 +160,7 @@
         </section>
 
         <!-- Call report -->
-        <section id="tab-report" class="settings-tab-panel" hidden>
+        <section id="tab-report" class="settings-tab-panel viz-root" hidden>
           <div id="report-leaderboard">
             <h1>Call report</h1>
             <p class="settings-note">Volume and quality of calls across the whole team. Click a rep to see their individual breakdown.</p>
@@ -199,15 +199,18 @@
             <div class="rep-chips" id="rep-chips"></div>
 
             <div class="stat-grid">
-              <div class="stat-tile"><div class="stat-value" id="rep-detail-total"></div><div class="stat-label">Total calls</div></div>
-              <div class="stat-tile"><div class="stat-value" id="rep-detail-completion"></div><div class="stat-label">Completion rate</div></div>
-              <div class="stat-tile"><div class="stat-value" id="rep-detail-duration"></div><div class="stat-label">Avg. duration</div></div>
-              <div class="stat-tile"><div class="stat-value" id="rep-detail-mix"></div><div class="stat-label">Inbound / outbound</div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-total"></div><div class="stat-label">Total calls</div><div class="stat-compare" id="rep-detail-total-compare"></div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-completion"></div><div class="stat-label">Completion rate</div><div class="stat-compare" id="rep-detail-completion-compare"></div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-duration"></div><div class="stat-label">Avg. duration</div><div class="stat-compare" id="rep-detail-duration-compare"></div></div>
+              <div class="stat-tile"><div class="stat-value" id="rep-detail-mix"></div><div class="stat-label">Inbound / outbound</div><div class="stat-compare" id="rep-detail-mix-compare"></div></div>
             </div>
 
             <div class="rep-bars-card">
-              <h3>Calls per day (last 7 days)</h3>
-              <div class="trend-chart" id="rep-trend"></div>
+              <h3 id="rep-trend-heading">Calls over time</h3>
+              <div class="chart-wrap">
+                <svg id="rep-trend-chart" class="month-chart" role="img" aria-label="Calls over time for this rep"></svg>
+                <div id="rep-trend-tooltip" class="chart-tooltip" hidden></div>
+              </div>
             </div>
 
             <div class="rep-bars-card rep-bars-card-narrow">
@@ -217,6 +220,19 @@
                 <span class="legend-item"><span class="legend-swatch legend-swatch-inbound"></span>Inbound</span>
                 <span class="legend-item"><span class="legend-swatch legend-swatch-outbound"></span>Outbound</span>
               </div>
+            </div>
+
+            <div class="rep-bars-card rep-bars-card-narrow">
+              <h3>Calls by outcome</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Outcome</th>
+                    <th>Calls</th>
+                  </tr>
+                </thead>
+                <tbody id="rep-disposition-rows"></tbody>
+              </table>
             </div>
           </div>
         </section>
