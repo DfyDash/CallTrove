@@ -7,6 +7,7 @@ const helmet = require("helmet");
 const apiRouter = require("./routes/api");
 const authRouter = require("./routes/auth");
 const adminRouter = require("./routes/admin");
+const operatorRouter = require("./routes/operator");
 const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
@@ -80,6 +81,7 @@ app.use("/auth", authRouter);
 app.use(requireAuth);
 app.use(express.json());
 app.use("/api/admin", adminRouter);
+app.use("/api/operator", operatorRouter);
 app.use("/api", apiRouter);
 app.use(express.static(path.join(__dirname, "..", "public")));
 

@@ -30,7 +30,15 @@ function verifyPassword(password, hash, salt) {
 // function can't do on its own -- see requireAccount below for how it's
 // enforced.
 function sessionUser(user) {
-  return { id: user.id, username: user.username, role: user.role, ghlUserId: user.ghlUserId, tenantId: user.tenantId, accountIds: [] };
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    ghlUserId: user.ghlUserId,
+    tenantId: user.tenantId,
+    accountIds: [],
+    isOperator: Boolean(user.isOperator),
+  };
 }
 
 // Checks the tenant's status fresh from the DB on every request (not
@@ -97,6 +105,19 @@ function requireAccount(req, res, next) {
   next();
 }
 
+// Cross-tenant boundary for the platform operator (src/routes/operator.js)
+// -- completely separate from requireAdmin, which only ever proves someone
+// is an admin *of their own tenant*. isOperator is set at login from the
+// users table (see routes/auth.js), never derived from role or anything
+// else client-influenced.
+function requireOperator(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user || !user.isOperator) {
+    return res.status(403).json({ error: "operator access required" });
+  }
+  next();
+}
+
 // Session-bound CSRF token, issued on login (routes/auth.js) and handed to
 // the client via GET /api/me. For the JSON/fetch-based API routes here --
 // the two classic HTML-form POSTs (logout, change-password) check a hidden
@@ -110,4 +131,4 @@ function requireCsrf(req, res, next) {
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireCsrf };
+module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf };

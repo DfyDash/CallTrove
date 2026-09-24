@@ -53,62 +53,56 @@ async function showStatus(tenantId) {
   console.log(tenant);
 }
 
+// Throws on any refusal/error rather than console.error + process.exitCode
+// -- this and purgeTenant below are called two ways: the CLI entry point
+// at the bottom of this file (which catches and prints), and
+// src/routes/operator.js (which catches and turns it into a JSON error
+// response). process.exitCode is CLI-only concept; setting it here would
+// mark the exit code of the whole long-running server process on every
+// failed request, which is wrong outside a one-shot CLI invocation.
 async function restoreTenant(tenantId) {
   const tenant = await db.getTenantById(tenantId);
   if (!tenant) {
-    console.error(`No tenant found with id ${tenantId}`);
-    process.exitCode = 1;
-    return;
+    throw new Error(`No tenant found with id ${tenantId}`);
   }
   if (tenant.status === "active") {
-    console.log(`Tenant "${tenant.name}" (${tenantId}) is already active -- nothing to do.`);
-    return;
+    return { tenant, alreadyActive: true };
   }
   if (tenant.status === "canceled") {
-    console.error(
+    throw new Error(
       `Tenant "${tenant.name}" (${tenantId}) is already marked 'canceled' -- its data may already be ` +
         `deleted. Refusing to silently flip status back to 'active', since that would be misleading if ` +
         `the purge already ran. Check calls/contacts/ghl_accounts for this tenant by hand before deciding ` +
         `what to do.`
     );
-    process.exitCode = 1;
-    return;
   }
   await db.restoreTenant(tenantId);
-  console.log(`Tenant "${tenant.name}" (${tenantId}) restored to active.`);
+  return { tenant, alreadyActive: false };
 }
 
 async function purgeTenant(tenantId) {
   const tenant = await db.getTenantById(tenantId);
   if (!tenant) {
-    console.error(`No tenant found with id ${tenantId}`);
-    process.exitCode = 1;
-    return;
+    throw new Error(`No tenant found with id ${tenantId}`);
   }
   if (tenant.status !== "cancellation_pending") {
-    console.error(`Tenant "${tenant.name}" (${tenantId}) is not pending cancellation (status: ${tenant.status}) -- refusing to purge.`);
-    process.exitCode = 1;
-    return;
+    throw new Error(`Tenant "${tenant.name}" (${tenantId}) is not pending cancellation (status: ${tenant.status}) -- refusing to purge.`);
   }
   if (tenant.purgeAt && new Date(tenant.purgeAt) > new Date()) {
-    console.error(`Tenant "${tenant.name}" (${tenantId}) is still inside its grace period (eligible ${tenant.purgeAt}) -- refusing to purge.`);
-    process.exitCode = 1;
-    return;
+    throw new Error(`Tenant "${tenant.name}" (${tenantId}) is still inside its grace period (eligible ${tenant.purgeAt}) -- refusing to purge.`);
   }
 
-  console.log(`Purging tenant ${tenantId} (${tenant.name})...`);
   const storageKeys = await db.listStorageKeysForTenant(tenantId);
-  console.log(`Deleting ${storageKeys.length} recording(s)...`);
   for (const key of storageKeys) {
     try {
       await deleteRecording(key);
     } catch (err) {
-      console.error(`Failed to delete recording ${key}, continuing:`, err);
+      console.error(`[tenantPurge] failed to delete recording ${key}, continuing:`, err);
     }
   }
 
   await db.purgeTenantData(tenantId);
-  console.log(`Done. Tenant "${tenant.name}" is now marked canceled; audit_log and phi_access_log entries were left in place.`);
+  return { tenant, recordingsDeleted: storageKeys.length };
 }
 
 module.exports = { listReady, showStatus, restoreTenant, purgeTenant };
@@ -121,9 +115,19 @@ if (require.main === module) {
     } else if (args[0] === "--status" && args[1]) {
       await showStatus(args[1]);
     } else if (args[0] === "--restore" && args[1]) {
-      await restoreTenant(args[1]);
+      const result = await restoreTenant(args[1]);
+      console.log(
+        result.alreadyActive
+          ? `Tenant "${result.tenant.name}" (${args[1]}) is already active -- nothing to do.`
+          : `Tenant "${result.tenant.name}" (${args[1]}) restored to active.`
+      );
     } else if (args[0] === "--purge" && args[1]) {
-      await purgeTenant(args[1]);
+      console.log(`Purging tenant ${args[1]}...`);
+      const result = await purgeTenant(args[1]);
+      console.log(
+        `Deleted ${result.recordingsDeleted} recording(s). Tenant "${result.tenant.name}" is now marked ` +
+          `canceled; audit_log and phi_access_log entries were left in place.`
+      );
     } else {
       console.log(
         "Usage:\n" +

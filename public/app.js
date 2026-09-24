@@ -3,6 +3,7 @@ const searchResults = document.getElementById("search-results");
 const callRows = document.getElementById("call-rows");
 const sessionBar = document.getElementById("session-bar");
 const adminNav = document.getElementById("admin-nav");
+const operatorNavLink = document.getElementById("operator-nav-link");
 const viewAsSelect = document.getElementById("view-as");
 const accountSwitcherWrap = document.getElementById("account-switcher-wrap");
 const accountSwitcher = document.getElementById("account-switcher");
@@ -103,6 +104,7 @@ async function loadSession() {
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   renderCancellationBanner(me);
+  if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
 
   // currentAccountId comes from the server's own resolution (the user's
   // first/default account) whenever the page didn't already pin one via

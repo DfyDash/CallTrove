@@ -511,7 +511,8 @@ async function createUser({ id, username, passwordHash, passwordSalt, role, ghlU
 async function getUserByUsername(username) {
   const { rows } = await pool.query(
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
-            role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId"
+            role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
+            is_operator AS "isOperator"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -637,6 +638,35 @@ async function listStorageKeysForTenant(tenantId) {
     [tenantId]
   );
   return rows.map((r) => r.storageKey);
+}
+
+// Cross-tenant, for src/routes/operator.js only (see requireOperator) --
+// every other query in this file scopes to one tenant/account on purpose,
+// this is the one deliberate exception. transcribedMinutes is what
+// actually varies by client and costs real money per-minute (see
+// src/transcription.js's own cost reasoning) -- shown as an estimate, not
+// pulled from an actual AWS bill, since nothing here tags Transcribe usage
+// by tenant. The shared EC2/RDS cost is deliberately left out: it's fixed
+// overhead that doesn't grow per account, not something one client's usage
+// increases, so it doesn't belong in a "which account costs the most"
+// comparison.
+async function listTenantsForOperator() {
+  const { rows } = await pool.query(`
+    SELECT
+      t.id, t.name, t.status, t.created_at AS "createdAt", t.purge_at AS "purgeAt",
+      u.username AS "ownerUsername",
+      (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
+      (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id) AS "totalCalls",
+      (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id AND c.storage_key IS NOT NULL) AS "recordingsStored",
+      (SELECT coalesce(sum(c.duration_seconds), 0)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds"
+    FROM tenants t
+    LEFT JOIN users u ON u.id = t.owner_user_id
+    ORDER BY t.name
+  `);
+  return rows;
 }
 
 async function createGhlAccount({ id, tenantId, ghlLocationId, name, accessToken, refreshToken, tokenExpiresAt }) {
@@ -875,6 +905,7 @@ module.exports = {
   listTenantsReadyForPurge,
   purgeTenantData,
   listStorageKeysForTenant,
+  listTenantsForOperator,
   createGhlAccount,
   getGhlAccountByLocationId,
   updateGhlAccountTokens,

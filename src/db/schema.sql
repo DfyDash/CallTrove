@@ -177,6 +177,16 @@ CREATE TABLE IF NOT EXISTS user_account_access (
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+
+-- Cross-tenant access for the platform operator (your own agency), not any
+-- client -- separate from the per-tenant 'admin' role above, which only
+-- ever sees its own tenant's data no matter what. False for every user by
+-- default; there is deliberately no self-service or UI way to grant this
+-- to a user, only a direct DB update (see src/grantOperator.js) -- the
+-- same reasoning as tenantPurge.js's CLI-only purge: granting the ability
+-- to see and delete every client's data is not something a bug in a route
+-- should ever be able to do on its own.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_operator BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE contacts ADD COLUMN IF NOT EXISTS ghl_account_id UUID REFERENCES ghl_accounts(id);
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS ghl_account_id UUID REFERENCES ghl_accounts(id);
 CREATE INDEX IF NOT EXISTS contacts_ghl_account_idx ON contacts (ghl_account_id);

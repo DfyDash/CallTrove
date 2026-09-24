@@ -2,6 +2,7 @@ const searchInput = document.getElementById("search");
 const searchResults = document.getElementById("search-results");
 const sessionBar = document.getElementById("session-bar");
 const adminNav = document.getElementById("admin-nav");
+const operatorNavLink = document.getElementById("operator-nav-link");
 const viewAsSelect = document.getElementById("view-as");
 const mobileNavToggle = document.getElementById("mobile-nav-toggle");
 const sidebarEl = document.querySelector(".sidebar");
@@ -72,6 +73,7 @@ async function loadSession() {
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
   renderCancellationBanner(me);
+  if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
 
   // Same resolution/switcher pattern as app.js -- see the comment on
   // currentAccountId's declaration above.

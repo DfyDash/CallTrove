@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Contacts — CallTrove</title>
+  <title>Operator — CallTrove</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="favicon-32.png" type="image/png" />
@@ -25,40 +25,61 @@
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
         <button type="button" id="mobile-nav-toggle" class="mobile-nav-toggle" aria-label="Menu">&#9776;</button>
       </div>
-      <div class="search-wrap">
-        <input id="search" type="search" placeholder="Search contacts by name or phone..." autocomplete="off" />
-        <ul id="search-results" class="search-results" hidden></ul>
-      </div>
-      <div id="account-switcher-wrap" class="account-switcher-wrap" hidden>
-        <span class="account-switcher-label">Account</span>
-        <select id="account-switcher" class="account-switcher"></select>
-      </div>
       <nav class="sidebar-nav">
         <a href="/" class="nav-link">Dashboard</a>
-        <a href="/contacts.html" class="nav-link active">Contacts</a>
+        <a href="/contacts.html" class="nav-link">Contacts</a>
         <a href="/settings.html" class="nav-link">Settings</a>
-        <a href="/operator.html" class="nav-link" id="operator-nav-link" hidden>Operator</a>
+        <a href="/operator.html" class="nav-link active" id="operator-nav-link" hidden>Operator</a>
       </nav>
-      <div id="admin-nav" class="admin-nav" hidden>
-        <span class="view-as-label">Viewing calls for</span>
-        <select id="view-as" class="view-as"></select>
-      </div>
     </aside>
-    <main class="content contacts-page">
-      <div id="cancellation-banner" class="cancellation-banner" hidden></div>
+
+    <main class="content">
       <div class="content-header">
-        <span class="page-title">Contacts</span>
+        <span class="page-title">Operator</span>
         <div class="content-header-right">
           <div id="session-bar" class="session-bar"></div>
           <button type="button" id="theme-toggle" class="theme-toggle">Dark mode</button>
         </div>
       </div>
 
-      <div class="az-strip" id="az-strip"></div>
+      <p class="settings-note">
+        Every client account on this deployment -- not scoped to any one tenant. Estimated
+        transcribe cost is exactly that, an estimate (transcribed minutes &times; AWS's per-minute
+        rate), not a real AWS bill -- the shared server/database cost isn't included since it
+        doesn't grow per client. Revenue/profit isn't shown yet -- no billing system exists to
+        pull it from.
+      </p>
 
-      <div class="contact-groups" id="contact-groups"></div>
+      <table id="operator-table">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Status</th>
+            <th>Owner</th>
+            <th>GHL accounts</th>
+            <th>Total calls</th>
+            <th>Recordings stored</th>
+            <th>Transcribed minutes</th>
+            <th>Est. transcribe cost</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="operator-rows"></tbody>
+      </table>
+
+      <div id="purge-confirm" class="danger-zone" hidden>
+        <p class="settings-note">
+          This permanently deletes every recording, call, contact, and login for
+          <strong id="purge-confirm-name"></strong>. It cannot be undone.
+          Type <strong>DELETE ACCOUNT</strong> to confirm.
+        </p>
+        <input type="text" id="purge-confirm-input" autocomplete="off" />
+        <button type="button" id="confirm-purge-btn" class="delete-btn">Permanently delete</button>
+        <button type="button" id="cancel-purge-btn">Never mind</button>
+        <p id="purge-error" class="login-error" hidden></p>
+      </div>
     </main>
   </div>
-  <script src="contacts.js"></script>
+  <script src="operator.js"></script>
 </body>
 </html>

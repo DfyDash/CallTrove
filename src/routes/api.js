@@ -60,7 +60,7 @@ router.get("/tenant/status", async (req, res) => {
 });
 
 router.get("/me", async (req, res) => {
-  const { username, role, ghlUserId, tenantId, accountIds } = req.session.user;
+  const { username, role, ghlUserId, tenantId, accountIds, isOperator } = req.session.user;
   // The switcher's own data: every account this login can pick between,
   // with names (accountIds on the session is just the id list used for
   // fast per-request validation in requireAccount).
@@ -70,6 +70,7 @@ router.get("/me", async (req, res) => {
     username,
     role,
     ghlUserId,
+    isOperator,
     accounts,
     currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
     transcriptionEnabled: transcription.isEnabled(),
