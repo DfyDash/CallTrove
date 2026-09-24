@@ -41,6 +41,14 @@ ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_transcription_status_check;
 ALTER TABLE calls ADD CONSTRAINT calls_transcription_status_check
   CHECK (transcription_status IN ('none', 'pending', 'completed', 'failed'));
 
+-- Each Transcribe job is real, billable AWS cost regardless of whether it
+-- ultimately succeeds -- 'failed' is deliberately retryable (a transient
+-- AWS issue shouldn't leave a call stuck forever), but nothing else bounds
+-- how many times a call can be resubmitted. Counted here so the on-demand
+-- endpoint can cap retries instead of a bad file (or a bug, or someone just
+-- clicking the retry button) racking up jobs with no limit.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcription_attempts INTEGER NOT NULL DEFAULT 0;
+
 -- GHL's own call disposition (completed / no-answer / busy / canceled /
 -- voicemail / ...). Most of these never have a recording -- there was
 -- nothing to record -- so the dashboard needs this to tell "no recording

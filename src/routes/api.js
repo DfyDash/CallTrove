@@ -6,6 +6,10 @@ const { requireCsrf, requireAccount } = require("../auth");
 
 const router = express.Router();
 
+// See the on-demand /calls/:id/transcribe route below -- each attempt is a
+// real, separately billed AWS Transcribe job whether or not it succeeds.
+const MAX_TRANSCRIPTION_ATTEMPTS = 3;
+
 // Regular users are always scoped to calls they handled -- this is the real
 // security boundary and never changes based on request input. Admins see
 // everything by default, but can optionally narrow the *list views* to a
@@ -233,6 +237,16 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   }
   if (call.transcriptionStatus === "pending" || call.transcriptionStatus === "completed") {
     return res.status(409).json({ error: `transcription already ${call.transcriptionStatus}` });
+  }
+  // 'failed' is deliberately retryable -- a transient AWS issue shouldn't
+  // leave a call stuck forever -- but each attempt is a real, separately
+  // billed Transcribe job whether or not it succeeds. Capped so a bad
+  // recording (or a bug, or someone just clicking the button) can't rack
+  // up an unbounded number of jobs against the same audio.
+  if (call.transcriptionAttempts >= MAX_TRANSCRIPTION_ATTEMPTS) {
+    return res.status(409).json({
+      error: `transcription failed ${call.transcriptionAttempts} times for this call -- not retrying automatically. Contact support if this recording should transcribe.`,
+    });
   }
 
   try {

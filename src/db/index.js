@@ -131,7 +131,10 @@ async function updateCallDisposition(callId, disposition) {
 // --- transcription (src/transcription.js, src/transcriptionPoller.js) ---
 
 async function markTranscriptionPending(callId) {
-  await pool.query(`UPDATE calls SET transcription_status = 'pending' WHERE id = $1`, [callId]);
+  await pool.query(
+    `UPDATE calls SET transcription_status = 'pending', transcription_attempts = transcription_attempts + 1 WHERE id = $1`,
+    [callId]
+  );
 }
 
 async function markTranscriptionComplete(callId, transcript) {
@@ -485,6 +488,7 @@ async function getCall(callId) {
     `SELECT c.id, c.storage_key AS "storageKey", c.recording_status AS "recordingStatus",
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
             c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
+            c.transcription_attempts AS "transcriptionAttempts",
             c.transcript, c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
