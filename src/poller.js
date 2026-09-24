@@ -214,27 +214,57 @@ async function pollOneAccount(account) {
   }
 }
 
-// Loops every connected account (across every tenant) each cycle. One
-// account's error is caught and logged rather than allowed to abort the
-// whole cycle -- an outage or a bad token on one customer's connection
-// must never stall ingestion for everyone else's.
+// How many accounts' poll cycles run concurrently. Each account hits a
+// different GHL location with its own token, so they don't share a rate
+// limit -- the cap exists for our own side (DB pool, outbound sockets),
+// not GHL's. Comfortably under the default `pg` Pool size of 10 so a full
+// batch of account work never queues waiting for a free connection.
+const ACCOUNT_CONCURRENCY = 8;
+
+// Loops every connected account (across every tenant) each cycle, up to
+// ACCOUNT_CONCURRENCY at a time rather than one at a time -- at any real
+// number of accounts, a fully sequential loop (even accounts with nothing
+// new still cost one GHL API round-trip) risks a single cycle taking
+// longer than POLL_INTERVAL_MS, which is exactly what start() below
+// guards against by never overlapping cycles regardless. One account's
+// error is caught and logged rather than allowed to abort the whole
+// cycle -- an outage or a bad token on one customer's connection must
+// never stall ingestion for everyone else's.
 async function pollOnce() {
   const accounts = await db.listAllActiveGhlAccounts();
-  for (const account of accounts) {
-    try {
-      await pollOneAccount(account);
-    } catch (err) {
-      console.error(`[poller] account ${account.id} (${account.ghlLocationId}) poll cycle failed:`, err);
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      const account = accounts[next++];
+      if (!account) return;
+      try {
+        await pollOneAccount(account);
+      } catch (err) {
+        console.error(`[poller] account ${account.id} (${account.ghlLocationId}) poll cycle failed:`, err);
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(ACCOUNT_CONCURRENCY, accounts.length) }, worker));
 }
 
+// Reschedules itself only after the previous cycle fully finishes, instead
+// of a fixed setInterval -- setInterval fires on the clock regardless of
+// whether the last pollOnce() is still running, so as account count grows
+// and a cycle starts taking longer than POLL_INTERVAL_MS, cycles would
+// start overlapping and stacking (multiple pollOneAccount runs for the
+// same account racing each other, growing DB/connection load without
+// bound). This way a slow cycle just delays the next one instead.
 function start() {
   console.log(`[poller] starting, polling every ${POLL_INTERVAL_MS / 1000}s`);
-  pollOnce().catch((err) => console.error("[poller] initial poll failed:", err));
-  setInterval(() => {
-    pollOnce().catch((err) => console.error("[poller] poll cycle failed:", err));
-  }, POLL_INTERVAL_MS);
+  async function cycle() {
+    try {
+      await pollOnce();
+    } catch (err) {
+      console.error("[poller] poll cycle failed:", err);
+    }
+    setTimeout(cycle, POLL_INTERVAL_MS);
+  }
+  cycle();
 }
 
 module.exports = { start, pollOnce, pollOneAccount, processCallMessage, retryFailedRecordings };
