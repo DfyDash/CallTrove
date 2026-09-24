@@ -360,6 +360,50 @@ a:hover {
   font-weight: 600;
 }
 
+/* Deliberately not the client brand palette -- this is the operator's
+   own cross-tenant view (see public/operator.html), not another client
+   page, and it needs to be unmistakable at a glance that switching accent
+   colors alone wouldn't achieve as clearly. A distinct dark sidebar
+   regardless of light/dark theme, a different accent hue than the
+   terracotta client brand uses anywhere, and an explicit badge -- not
+   just a color a colorblind viewer might not register as "different." */
+.sidebar--operator {
+  background: #1b2430;
+  border-right: 1px solid #2a3542;
+  color: #e8ecf1;
+}
+.sidebar--operator .brand-name,
+.sidebar--operator .mobile-nav-toggle,
+.sidebar--operator .nav-link {
+  color: #e8ecf1;
+}
+.sidebar--operator .brand-name .brand-name-accent {
+  color: #7dd3fc;
+}
+.sidebar--operator .brand-mark .mark-lock-stroke { stroke: #7dd3fc; }
+.sidebar--operator .brand-mark .mark-lock-body { fill: #7dd3fc; }
+.sidebar--operator .brand-mark .mark-keyhole { fill: #1b2430; }
+.sidebar--operator .brand-mark .mark-handset { fill: #e8ecf1; }
+.sidebar--operator .nav-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.sidebar--operator .nav-link.active {
+  background: rgba(125, 211, 252, 0.16);
+  color: #7dd3fc;
+}
+.operator-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: rgba(125, 211, 252, 0.16);
+  color: #7dd3fc;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .admin-nav {
   margin-top: 14px;
   padding-top: 12px;
