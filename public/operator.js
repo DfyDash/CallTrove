@@ -76,7 +76,7 @@ async function loadTenants() {
   const res = await fetch("/api/operator/tenants");
   if (!res.ok) {
     operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
-    analyticsRows.innerHTML = `<tr><td colspan="6">Could not load analytics.</td></tr>`;
+    analyticsRows.innerHTML = `<tr><td colspan="7">Could not load analytics.</td></tr>`;
     analyticsSummary.innerHTML = "";
     return;
   }
@@ -106,7 +106,7 @@ function renderAccounts() {
 function renderAnalytics() {
   if (cachedTenants.length === 0) {
     analyticsSummary.innerHTML = "";
-    analyticsRows.innerHTML = `<tr><td colspan="6">No accounts yet.</td></tr>`;
+    analyticsRows.innerHTML = `<tr><td colspan="7">No accounts yet.</td></tr>`;
     renderAccountsChart([]);
     return;
   }
@@ -115,16 +115,18 @@ function renderAnalytics() {
     (acc, t) => ({
       ghlAccountCount: acc.ghlAccountCount + t.ghlAccountCount,
       totalCalls: acc.totalCalls + t.totalCalls,
+      completedCalls: acc.completedCalls + t.completedCalls,
       recordingsStored: acc.recordingsStored + t.recordingsStored,
       transcribedMinutes: acc.transcribedMinutes + t.transcribedMinutes,
       estimatedTranscribeCost: acc.estimatedTranscribeCost + t.estimatedTranscribeCost,
     }),
-    { ghlAccountCount: 0, totalCalls: 0, recordingsStored: 0, transcribedMinutes: 0, estimatedTranscribeCost: 0 }
+    { ghlAccountCount: 0, totalCalls: 0, completedCalls: 0, recordingsStored: 0, transcribedMinutes: 0, estimatedTranscribeCost: 0 }
   );
 
   analyticsSummary.innerHTML = `
     <div class="stat-tile"><div class="stat-value">${cachedTenants.length}</div><div class="stat-label">Accounts</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.totalCalls}</div><div class="stat-label">Total calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${totals.completedCalls}</div><div class="stat-label">Completed calls</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
     <div class="stat-tile"><div class="stat-value">${Math.round(totals.transcribedMinutes * 10) / 10}</div><div class="stat-label">Transcribed minutes</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
@@ -137,6 +139,7 @@ function renderAnalytics() {
       <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="GHL accounts">${t.ghlAccountCount}</td>
       <td data-label="Total calls">${t.totalCalls}</td>
+      <td data-label="Completed calls">${t.completedCalls}</td>
       <td data-label="Recordings stored">${t.recordingsStored}</td>
       <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
       <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
@@ -195,7 +198,14 @@ function renderAccountsChart(tenants) {
   // recording" at a floating baseline, which hides its true height -- the
   // exact "plopped two colors on top of each other" complaint that sent us
   // back to this.
-  const maxVal = niceMax(Math.max(...tenants.map((t) => Math.max(t.recordingsStored, t.totalCalls - t.recordingsStored))));
+  // "Missing" is t.completedMissing (completed calls without a recording,
+  // computed server-side -- see db.listTenantsForOperator), not
+  // totalCalls minus recordingsStored -- a no-answer/busy/voicemail/
+  // failed/canceled call never had a recording to begin with, so counting
+  // it as "missing" overstates the real gap (verified against production:
+  // totalCalls-recordingsStored said 393, but only 209 of those were
+  // actually completed calls with no recording).
+  const maxVal = niceMax(Math.max(...tenants.map((t) => Math.max(t.recordingsStored, t.completedMissing))));
   const baselineY = margin.top + plotH;
   const bandW = plotW / tenants.length;
   const barGap = 3;
@@ -225,7 +235,7 @@ function renderAccountsChart(tenants) {
   const showValueLabels = tenants.length <= 6;
 
   tenants.forEach((t, i) => {
-    const missing = Math.max(0, t.totalCalls - t.recordingsStored);
+    const missing = t.completedMissing;
     const groupX = margin.left + i * bandW + (bandW - pairW) / 2;
     const storedH = (t.recordingsStored / maxVal) * plotH;
     const missingH = (missing / maxVal) * plotH;

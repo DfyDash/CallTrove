@@ -99,7 +99,9 @@
           <div class="chart-card" data-palette="#0ca30c,#d03b3b">
             <h2>Calls by account</h2>
             <p class="settings-note">
-              Recordings stored vs. calls with none, per account.
+              Recordings stored vs. completed calls with none, per account -- calls that
+              never connected (no answer, busy, voicemail, etc.) never had a recording to
+              begin with, so those aren't counted as a gap.
             </p>
             <div class="chart-wrap">
               <svg id="operator-accounts-chart" class="month-chart" role="img" aria-label="Total calls per account, stored vs no recording found"></svg>
@@ -117,6 +119,7 @@
                 <th>Account</th>
                 <th>GHL accounts</th>
                 <th>Total calls</th>
+                <th>Completed calls</th>
                 <th>Recordings stored</th>
                 <th>Transcribed minutes</th>
                 <th>Est. transcribe cost</th>

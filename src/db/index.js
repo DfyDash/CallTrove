@@ -735,6 +735,21 @@ async function listTenantsForOperator() {
       (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id) AS "totalCalls",
+      -- Same definitions as getCoverageSummary's own "completed" and
+      -- "completedMissing" (the client-facing Coverage report) -- a
+      -- no-answer/busy/voicemail/failed/canceled call never had a
+      -- recording to begin with, so it shouldn't count as a gap.
+      -- completedMissing is computed directly here, not derived from
+      -- completedCalls/recordingsStored client-side -- recordingsStored
+      -- below is the OVERALL stored count (it includes recordings that
+      -- exist on non-completed calls, e.g. a voicemail message itself
+      -- getting recorded), a different population than "completed calls
+      -- specifically missing one", so subtracting one from the other
+      -- would silently undercount the real gap.
+      (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id AND c.disposition = 'completed') AS "completedCalls",
+      (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id AND c.disposition = 'completed' AND c.storage_key IS NULL) AS "completedMissing",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id AND c.storage_key IS NOT NULL) AS "recordingsStored",
       (SELECT coalesce(sum(c.duration_seconds), 0)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
