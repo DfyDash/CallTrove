@@ -212,6 +212,18 @@ function renderAccountsChart(tenants) {
     accountsChartSvg.appendChild(label);
   }
 
+  // Direct value labels above each bar -- without these, the only way to
+  // learn a bar's exact number is to hover it, and the axis (scaled to
+  // the taller of the two bars per account, not to totalCalls) never
+  // shows anything close to the "Total calls" stat tile above the chart.
+  // Someone glancing at "817" there and then a chart capped at 500 reads
+  // that as the chart being wrong, even when the math is fine -- labeling
+  // the actual numbers removes the need to reconcile the two by eye at
+  // all. Skipped once there are enough accounts that the labels would
+  // start colliding with each other, same "only render a label when it
+  // fits" rule as everywhere else in this chart.
+  const showValueLabels = tenants.length <= 6;
+
   tenants.forEach((t, i) => {
     const missing = Math.max(0, t.totalCalls - t.recordingsStored);
     const groupX = margin.left + i * bandW + (bandW - pairW) / 2;
@@ -219,6 +231,14 @@ function renderAccountsChart(tenants) {
     const missingH = (missing / maxVal) * plotH;
 
     const group = svgEl("g", {});
+
+    function valueLabel(x, barHeight, value) {
+      if (!showValueLabels || value <= 0) return;
+      const barTopY = baselineY - barHeight;
+      const el = svgEl("text", { x: x + barW / 2, y: Math.max(margin.top + 8, barTopY - 4), "text-anchor": "middle", class: "chart-axis-label" });
+      el.textContent = value.toLocaleString();
+      group.appendChild(el);
+    }
 
     if (t.recordingsStored > 0) {
       const el = svgEl("path", { d: topRoundedRectPath(groupX, baselineY - storedH, barW, storedH, 4) });
@@ -232,6 +252,8 @@ function renderAccountsChart(tenants) {
       el.setAttribute("fill", "var(--status-critical)");
       group.appendChild(el);
     }
+    valueLabel(groupX, storedH, t.recordingsStored);
+    valueLabel(groupX + barW + barGap, missingH, missing);
 
     const hit = svgEl("rect", {
       x: margin.left + i * bandW,
