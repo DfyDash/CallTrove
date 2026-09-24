@@ -269,6 +269,15 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
 // reset, this doesn't touch the person's password at all, only their MFA
 // enrollment.
 router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
+  // Otherwise this route is a trivial self-bypass of the mandatory-MFA
+  // policy (routes/auth.js's mfaRequiredFor) -- log in, immediately
+  // disable your own required MFA through the "admin override" path, with
+  // an audit entry indistinguishable from a genuine colleague helping
+  // someone back in. A locked-out admin with no recovery codes still has a
+  // path out: a *different* admin in the same tenant runs this for them.
+  if (req.params.id === req.session.user.id) {
+    return res.status(400).json({ error: "cannot disable your own two-factor authentication this way -- ask another admin, or use one of your recovery codes to log in" });
+  }
   const target = await db.getUserById(req.params.id);
   if (!target || target.tenantId !== req.session.user.tenantId) {
     return res.status(404).json({ error: "user not found" });

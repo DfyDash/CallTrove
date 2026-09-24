@@ -7,6 +7,13 @@ const transcription = require("../transcription");
 const { requireCsrf, requireAccount, verifyPassword } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
+// Same rule as routes/auth.js's mfaRequiredFor -- admin/operator logins
+// can't self-service their way out of the mandatory-MFA policy that
+// forces them through enrollment at login in the first place.
+function mfaRequiredFor(user) {
+  return user.role === "admin" || user.isOperator;
+}
+
 const router = express.Router();
 
 // See the on-demand /calls/:id/transcribe route below -- each attempt is a
@@ -144,6 +151,9 @@ router.post("/account/mfa/confirm", requireCsrf, async (req, res) => {
 // logged-in session shouldn't be able to do on its own.
 router.post("/account/mfa/disable", requireCsrf, async (req, res) => {
   const user = await db.getUserByUsername(req.session.user.username);
+  if (mfaRequiredFor(user)) {
+    return res.status(400).json({ error: "two-factor authentication is required for admin/operator logins and can't be turned off here -- ask another admin to do it from Team members if you've lost access" });
+  }
   const password = (req.body || {}).password;
   if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
     return res.status(400).json({ error: "incorrect password" });

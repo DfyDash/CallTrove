@@ -1,11 +1,25 @@
 const express = require("express");
 const { randomBytes } = require("crypto");
 const rateLimit = require("express-rate-limit");
+const qrcode = require("qrcode-generator");
 const db = require("../db");
 const totp = require("../totp");
 const { verifyPassword, hashPassword, sessionUser } = require("../auth");
 
 const router = express.Router();
+
+// Admin and operator logins are the highest-blast-radius accounts in this
+// app -- an admin sees a whole tenant's data, an operator spans every
+// tenant (see README's "Operator view"). MFA is mandatory for both,
+// enforced here rather than left to memory: one of these logging in
+// without totp_enabled gets walked through enrollment before a real
+// session exists (see /login-mfa-setup/* below), not just nagged. Regular
+// staff logins stay opt-in -- see /api/account/mfa/* in routes/api.js.
+function mfaRequiredFor(user) {
+  return user.role === "admin" || user.isOperator;
+}
+
+const RECOVERY_CODE_COUNT = 10;
 
 function limiterKey(username) {
   return username.trim().toLowerCase();
@@ -97,8 +111,62 @@ router.post("/login", express.urlencoded({ extended: false }), loginLimiter, asy
     return res.redirect("/login-mfa.html");
   }
 
+  if (mfaRequiredFor(user)) {
+    // Mandatory for this account, but not enrolled yet -- same
+    // not-logged-in-until-the-second-factor-checks-out rule as above,
+    // just with a setup step in front of it instead of an existing code.
+    req.session.pendingMfaUserId = user.id;
+    return res.redirect("/login-mfa-setup.html");
+  }
+
   await completeLogin(req, user);
   res.redirect("/");
+});
+
+// --- Mandatory-MFA first-time enrollment (admin/operator logins only --
+// see mfaRequiredFor above). Same pendingMfaUserId session mechanism as
+// /login-mfa, and deliberately no CSRF check for the same reason that
+// route has none: there's no token yet at this point in a login, only the
+// session-bound pendingMfaUserId a real password check already set. ---
+
+router.post("/login-mfa-setup/start", async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.status(401).json({ error: "not in a pending login" });
+  const secret = totp.generateSecret();
+  await db.setUserTotpSecret(pendingUserId, secret);
+  res.json({ manualEntryKey: secret });
+});
+
+// Same same-origin-SVG-not-a-data-URI reasoning as /api/account/mfa/qr.
+router.get("/login-mfa-setup/qr", async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.status(401).end();
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.totpSecret) return res.status(404).end();
+
+  const qr = qrcode(0, "M");
+  qr.addData(totp.otpauthUrl({ secret: user.totpSecret, username: user.username }));
+  qr.make();
+  res.setHeader("Content-Type", "image/svg+xml");
+  res.send(qr.createSvgTag(4, 0));
+});
+
+router.post("/login-mfa-setup/confirm", express.json(), mfaLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.status(401).json({ error: "not in a pending login" });
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.totpSecret) return res.status(400).json({ error: "start setup first" });
+
+  const code = String((req.body || {}).code || "").trim();
+  if (!totp.verifyTotp(user.totpSecret, code)) {
+    return res.status(400).json({ error: "incorrect code" });
+  }
+
+  await db.enableUserTotp(user.id);
+  const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => totp.generateRecoveryCode());
+  await db.replaceRecoveryCodes(user.id, codes.map(totp.hashRecoveryCode));
+  await completeLogin(req, user);
+  res.json({ status: "enabled", recoveryCodes: codes });
 });
 
 router.post("/login-mfa", express.urlencoded({ extended: false }), mfaLimiter, async (req, res) => {

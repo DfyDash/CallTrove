@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CallTrove — Set up two-factor authentication</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="favicon-32.png" type="image/png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script src="theme.js"></script>
+</head>
+<body>
+  <div class="login-page">
+    <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">
+          <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
+            <path class="mark-lock-stroke" d="M38 78 V62 A12 12 0 0 1 62 62 V78" />
+            <path class="mark-lock-body" d="M34 78 H66 L74 92 V114 L50 126 L26 114 V92 Z" />
+            <path class="mark-keyhole" d="M50 96 L57 102 L54 112 H46 L43 102 Z" />
+            <path class="mark-handset" transform="translate(14 4) scale(3.1)" d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z" />
+          </svg>
+        </div>
+        <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
+      </div>
+
+      <div id="setup-panel">
+        <p class="settings-note">Two-factor authentication is required for your account. Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator, Proton Authenticator, Authy, 1Password, etc.), or enter the key manually.</p>
+        <img id="mfa-qr" src="" width="148" height="148" alt="QR code for authenticator app setup" />
+        <p class="settings-note">Manual entry key: <code id="mfa-manual-key"></code></p>
+        <label>
+          Enter the 6-digit code from your app to confirm
+          <input type="text" id="mfa-confirm-input" inputmode="numeric" autocomplete="one-time-code" autofocus />
+        </label>
+        <button type="button" id="mfa-confirm-btn">Confirm and continue</button>
+        <p id="mfa-setup-error" class="login-error" hidden></p>
+      </div>
+
+      <div id="recovery-codes-panel" hidden>
+        <p class="settings-note"><strong>Save these recovery codes somewhere safe.</strong> Each one can be used once, instead of your authenticator app, if you ever lose access to it. They won't be shown again.</p>
+        <pre id="mfa-recovery-codes-list" class="recovery-codes"></pre>
+        <button type="button" id="mfa-recovery-codes-download-btn">Download as a text file</button>
+        <button type="button" id="mfa-continue-btn">Continue to dashboard</button>
+      </div>
+    </div>
+  </div>
+  <script src="login-mfa-setup.js"></script>
+</body>
+</html>

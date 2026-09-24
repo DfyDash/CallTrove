@@ -290,21 +290,32 @@ Beyond auth/RBAC/audit logging (covered above):
   snapshotting the database, copying the snapshot with a KMS key, and
   restoring into a new instance (`call-recording-vault-db-encrypted`)
   during a maintenance window.
-- **Authenticator-app MFA (TOTP)** — optional, self-service, from
-  `/account.html`: scan a QR code (or enter the key manually), confirm one
-  real code before it actually turns on (`totp_enabled` only flips once
-  that's proven -- see `src/db/schema.sql`), then 10 one-time recovery
-  codes are shown exactly once. Hand-rolled on Node's `crypto` (RFC 6238/
-  4226, verified against the RFC's own test vectors) rather than a
-  dependency, same reasoning as the scrypt password hashing above --
-  `src/totp.js`. Login becomes two steps once enabled: password first
-  (`req.session.user` deliberately not set yet), then the code
-  (`POST /auth/login-mfa`, its own rate limit separate from the password
-  one). The escape hatch for a lost device with no recovery codes saved
-  (there's no email-based recovery yet -- see the deferred list) is an
-  admin-only disable from Team members, logged like any other admin
-  action -- never self-service, same reasoning as every other
-  admin-override action in this app.
+- **Authenticator-app MFA (TOTP)** — self-service, from `/account.html`:
+  scan a QR code (or enter the key manually), confirm one real code before
+  it actually turns on (`totp_enabled` only flips once that's proven --
+  see `src/db/schema.sql`), then 10 one-time recovery codes are shown
+  exactly once. Hand-rolled on Node's `crypto` (RFC 6238/4226, verified
+  against the RFC's own test vectors) rather than a dependency, same
+  reasoning as the scrypt password hashing above -- `src/totp.js`. Login
+  becomes two steps once enabled: password first (`req.session.user`
+  deliberately not set yet), then the code (`POST /auth/login-mfa`, its
+  own rate limit separate from the password one).
+  **Mandatory for admin and operator logins specifically**
+  (`routes/auth.js`'s `mfaRequiredFor`) -- those are the highest-blast-
+  radius accounts (an admin sees a whole tenant, an operator spans every
+  tenant), so one without `totp_enabled` yet is walked through real
+  enrollment (`/login-mfa-setup.html`) before a session exists, not just
+  left to remember. Regular staff logins stay opt-in. Self-service
+  disable is blocked for admin/operator accounts (`api.js`'s
+  `/account/mfa/disable`) -- otherwise "mandatory" is trivially
+  bypassable by immediately turning it back off. The only way out for
+  one of them is a *different* admin in the same tenant, from Team
+  members (`admin.js`'s `/users/:id/disable-mfa`, which refuses to
+  target your own account for the same reason), logged like any other
+  admin action. If that's ever not available either -- down to one
+  admin, locked out, no recovery codes saved -- `src/mfaAdmin.js` is the
+  same "a human runs this by hand, once" CLI escape hatch as
+  `grantOperator.js`/`tenantPurge.js` (`--list` / `--disable <username>`).
 
 Deliberately not done yet, and why: **Multi-AZ** would roughly double the
 RDS bill for a failure mode (an AWS data-center outage) that doesn't
