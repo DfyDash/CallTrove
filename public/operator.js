@@ -192,25 +192,39 @@ function renderAccountsChart(tenants) {
 
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
-  // Grouped, not stacked -- each account gets two independent bars sharing
-  // the 0 baseline, so "Stored" is directly comparable account-to-account
-  // by height alone. A stacked "Stored" segment sits on top of "No
-  // recording" at a floating baseline, which hides its true height -- the
-  // exact "plopped two colors on top of each other" complaint that sent us
-  // back to this.
-  // "Missing" is t.completedMissing (completed calls without a recording,
-  // computed server-side -- see db.listTenantsForOperator), not
+  // Grouped, not stacked -- every account gets four independent bars
+  // sharing the 0 baseline, so each one (including "Stored") is directly
+  // comparable account-to-account by height alone. A stacked segment
+  // sits on top of the one below it at a floating baseline, which hides
+  // its true height -- the exact "plopped two colors on top of each
+  // other" complaint that sent us back to grouped bars in the first
+  // place, and stacking four series would only make that worse.
+  //
+  // All four numbers get their own bar and their own label, rather than
+  // showing two and expecting the other two to be read off by eye:
+  // Total calls and Completed calls aren't the same population as
+  // "Completed, no recording" -- subtracting the wrong pair (e.g.
+  // completedCalls - recordingsStored) silently gives the wrong gap,
+  // exactly the bug this replaced. "Missing" is t.completedMissing
+  // (computed server-side -- see db.listTenantsForOperator), not
   // totalCalls minus recordingsStored -- a no-answer/busy/voicemail/
-  // failed/canceled call never had a recording to begin with, so counting
-  // it as "missing" overstates the real gap (verified against production:
-  // totalCalls-recordingsStored said 393, but only 209 of those were
-  // actually completed calls with no recording).
-  const maxVal = niceMax(Math.max(...tenants.map((t) => Math.max(t.recordingsStored, t.completedMissing))));
+  // failed/canceled call never had a recording to begin with, so
+  // counting it as "missing" overstates the real gap.
+  //
+  // totalCalls is always >= the other three for a given account, so it
+  // alone sets the scale.
+  const maxVal = niceMax(Math.max(...tenants.map((t) => t.totalCalls)));
   const baselineY = margin.top + plotH;
   const bandW = plotW / tenants.length;
   const barGap = 3;
-  const barW = Math.min(36, Math.max(3, (bandW - 16 - barGap) / 2));
-  const pairW = barW * 2 + barGap;
+  const barW = Math.min(22, Math.max(3, (bandW - 16 - barGap * 3) / 4));
+  const groupW = barW * 4 + barGap * 3;
+  const BAR_SERIES = [
+    { key: "totalCalls", color: "var(--ink)" },
+    { key: "completedCalls", color: "var(--accent)" },
+    { key: "recordingsStored", color: "var(--status-good)" },
+    { key: "completedMissing", color: "var(--status-critical)" },
+  ];
 
   const tickCount = 4;
   for (let i = 0; i <= tickCount; i++) {
@@ -223,23 +237,14 @@ function renderAccountsChart(tenants) {
   }
 
   // Direct value labels above each bar -- without these, the only way to
-  // learn a bar's exact number is to hover it, and the axis (scaled to
-  // the taller of the two bars per account, not to totalCalls) never
-  // shows anything close to the "Total calls" stat tile above the chart.
-  // Someone glancing at "817" there and then a chart capped at 500 reads
-  // that as the chart being wrong, even when the math is fine -- labeling
-  // the actual numbers removes the need to reconcile the two by eye at
-  // all. Skipped once there are enough accounts that the labels would
-  // start colliding with each other, same "only render a label when it
-  // fits" rule as everywhere else in this chart.
-  const showValueLabels = tenants.length <= 6;
+  // learn a bar's exact number is to hover it. With four bars per account
+  // now instead of two, they need more horizontal room each, so the
+  // account-count cutoff for showing them at all is lower than the
+  // two-bar version's.
+  const showValueLabels = tenants.length <= 4;
 
   tenants.forEach((t, i) => {
-    const missing = t.completedMissing;
-    const groupX = margin.left + i * bandW + (bandW - pairW) / 2;
-    const storedH = (t.recordingsStored / maxVal) * plotH;
-    const missingH = (missing / maxVal) * plotH;
-
+    const groupX = margin.left + i * bandW + (bandW - groupW) / 2;
     const group = svgEl("g", {});
 
     function valueLabel(x, barHeight, value) {
@@ -250,20 +255,20 @@ function renderAccountsChart(tenants) {
       group.appendChild(el);
     }
 
-    if (t.recordingsStored > 0) {
-      const el = svgEl("path", { d: topRoundedRectPath(groupX, baselineY - storedH, barW, storedH, 4) });
-      el.setAttribute("class", "chart-bar-seg");
-      el.setAttribute("fill", "var(--status-good)");
-      group.appendChild(el);
-    }
-    if (missing > 0) {
-      const el = svgEl("path", { d: topRoundedRectPath(groupX + barW + barGap, baselineY - missingH, barW, missingH, 4) });
-      el.setAttribute("class", "chart-bar-seg");
-      el.setAttribute("fill", "var(--status-critical)");
-      group.appendChild(el);
-    }
-    valueLabel(groupX, storedH, t.recordingsStored);
-    valueLabel(groupX + barW + barGap, missingH, missing);
+    let tallestH = 0;
+    BAR_SERIES.forEach((series, seriesIndex) => {
+      const value = t[series.key];
+      const h = (value / maxVal) * plotH;
+      tallestH = Math.max(tallestH, h);
+      const x = groupX + seriesIndex * (barW + barGap);
+      if (value > 0) {
+        const el = svgEl("path", { d: topRoundedRectPath(x, baselineY - h, barW, h, 3) });
+        el.setAttribute("class", "chart-bar-seg");
+        el.setAttribute("fill", series.color);
+        group.appendChild(el);
+      }
+      valueLabel(x, h, value);
+    });
 
     const hit = svgEl("rect", {
       x: margin.left + i * bandW,
@@ -274,7 +279,7 @@ function renderAccountsChart(tenants) {
       tabindex: t.totalCalls > 0 ? "0" : "-1",
     });
     if (t.totalCalls > 0) {
-      const move = (e) => showAccountsChartTooltip(e, t, missing, i, bandW, Math.max(storedH, missingH));
+      const move = (e) => showAccountsChartTooltip(e, t, i, bandW, tallestH);
       hit.addEventListener("pointerenter", move);
       hit.addEventListener("pointermove", move);
       hit.addEventListener("pointerleave", hideAccountsChartTooltip);
@@ -296,7 +301,7 @@ function renderAccountsChart(tenants) {
   });
 }
 
-function showAccountsChartTooltip(e, t, missing, i, bandW, tallestH) {
+function showAccountsChartTooltip(e, t, i, bandW, tallestH) {
   const rect = accountsChartSvg.getBoundingClientRect();
   const scaleX = rect.width / CHART.width;
   const scaleY = rect.height / CHART.height;
@@ -320,7 +325,13 @@ function showAccountsChartTooltip(e, t, missing, i, bandW, tallestH) {
     return row;
   }
 
-  accountsChartTooltip.append(nameLine, tooltipRow("Stored", t.recordingsStored), tooltipRow("No recording found", missing));
+  accountsChartTooltip.append(
+    nameLine,
+    tooltipRow("Total calls", t.totalCalls),
+    tooltipRow("Completed calls", t.completedCalls),
+    tooltipRow("Stored", t.recordingsStored),
+    tooltipRow("No recording found", t.completedMissing)
+  );
 }
 
 function hideAccountsChartTooltip() {

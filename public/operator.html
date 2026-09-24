@@ -99,15 +99,18 @@
           <div class="chart-card" data-palette="#0ca30c,#d03b3b">
             <h2>Calls by account</h2>
             <p class="settings-note">
-              Recordings stored vs. completed calls with none, per account -- calls that
-              never connected (no answer, busy, voicemail, etc.) never had a recording to
-              begin with, so those aren't counted as a gap.
+              Total calls, completed calls, recordings stored, and completed calls with
+              none -- per account. Calls that never connected (no answer, busy, voicemail,
+              etc.) never had a recording to begin with, so those aren't counted toward
+              the gap.
             </p>
             <div class="chart-wrap">
-              <svg id="operator-accounts-chart" class="month-chart" role="img" aria-label="Total calls per account, stored vs no recording found"></svg>
+              <svg id="operator-accounts-chart" class="month-chart" role="img" aria-label="Total calls, completed calls, recordings stored, and completed calls with no recording, per account"></svg>
               <div id="operator-chart-tooltip" class="chart-tooltip" hidden></div>
             </div>
             <div class="chart-legend">
+              <span class="legend-item"><span class="legend-swatch legend-swatch-outbound"></span>Total calls</span>
+              <span class="legend-item"><span class="legend-swatch legend-swatch-inbound"></span>Completed calls</span>
               <span class="legend-item"><span class="legend-swatch legend-swatch-good"></span>Stored</span>
               <span class="legend-item"><span class="legend-swatch legend-swatch-critical"></span>No recording found</span>
             </div>
