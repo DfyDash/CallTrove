@@ -27,15 +27,26 @@ async function pollOnce() {
   }
 }
 
+// Reschedules itself only after the previous cycle fully finishes -- see
+// src/poller.js's start() for why a fixed setInterval risks overlapping
+// cycles (here, that would mean checkJob() running twice concurrently for
+// the same call, racing on marking it complete/failed and cleaning up its
+// transient S3 input and Transcribe job record).
 function start() {
   if (!transcription.isEnabled()) {
     console.warn("[transcription] disabled (set TRANSCRIPTION_ENABLED=true plus S3_BUCKET/S3_REGION to enable)");
     return;
   }
   console.log(`[transcription] starting, checking every ${POLL_INTERVAL_MS / 1000}s`);
-  setInterval(() => {
-    pollOnce().catch((err) => console.error("[transcription] poll cycle failed:", err));
-  }, POLL_INTERVAL_MS);
+  async function cycle() {
+    try {
+      await pollOnce();
+    } catch (err) {
+      console.error("[transcription] poll cycle failed:", err);
+    }
+    setTimeout(cycle, POLL_INTERVAL_MS);
+  }
+  cycle();
 }
 
 module.exports = { start, pollOnce };
