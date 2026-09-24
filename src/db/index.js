@@ -909,19 +909,27 @@ async function listAuditLog(tenantId, { page = 1, pageSize = 50 } = {}) {
 
 // Cross-tenant, for src/routes/operator.js only -- same reasoning as
 // listTenantsForOperator.
+// tenant_id IS NULL is exactly the operator-only entries (see logAudit's
+// comment) -- every regular per-tenant admin action already has a
+// tenant_id and belongs on that tenant's own Activity log (listAuditLog
+// above), not mixed in here. Without this filter this returned every
+// tenant's routine admin activity too, which is both not what this view
+// is for and a real privacy overreach: an operator has no business
+// browsing a specific client's day-to-day settings changes through this
+// page.
 async function listAuditLogForOperator({ page = 1, pageSize = 50 } = {}) {
   const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 50;
   const pageNum = Math.max(1, Number(page) || 1);
 
-  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM audit_log`);
+  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM audit_log WHERE tenant_id IS NULL`);
   const total = Number(countRows[0].count);
 
   const { rows } = await pool.query(
     `SELECT l.id, l.actor_id AS "actorId", COALESCE(u.ghl_user_name, l.actor_username) AS "actorUsername",
-            l.action, l.message, l.created_at AS "createdAt", t.name AS "tenantName"
+            l.action, l.message, l.created_at AS "createdAt"
      FROM audit_log l
      LEFT JOIN users u ON u.id = l.actor_id
-     LEFT JOIN tenants t ON t.id = l.tenant_id
+     WHERE l.tenant_id IS NULL
      ORDER BY l.created_at DESC
      LIMIT $1 OFFSET $2`,
     [size, (pageNum - 1) * size]

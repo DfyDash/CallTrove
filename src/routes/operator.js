@@ -42,6 +42,18 @@ router.get("/tenants", async (req, res) => {
   );
 });
 
+// Every operator action across every tenant (cancel/restore/purge, each
+// logged above) -- distinct from any one tenant's own Activity log tab
+// (routes/admin.js's /audit-log), which never shows these since operator
+// actions are deliberately written with no tenant_id (see db.logAudit's
+// comment) -- they aren't that tenant's own admin doing something, and
+// mixing them in would be confusing on a page the tenant's own admin can
+// see. This is the only place they're visible at all.
+router.get("/audit-log", async (req, res) => {
+  const result = await db.listAuditLogForOperator({ page: req.query.page, pageSize: req.query.pageSize });
+  res.json(result);
+});
+
 router.post("/tenants/:id/cancel", requireCsrf, async (req, res) => {
   const tenant = await db.getTenantById(req.params.id);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });

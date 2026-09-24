@@ -29,56 +29,92 @@
         <a href="/" class="nav-link">Dashboard</a>
         <a href="/contacts.html" class="nav-link">Contacts</a>
         <a href="/settings.html" class="nav-link">Settings</a>
-        <a href="/operator.html" class="nav-link active" id="operator-nav-link" hidden>Operator</a>
+        <a href="/operator.html" class="nav-link active" id="operator-nav-link" hidden>Operator<span class="operator-badge">Cross-account</span></a>
       </nav>
     </aside>
 
-    <main class="content">
-      <div class="content-header">
-        <span class="page-title">Operator<span class="operator-badge">Cross-account</span></span>
-        <div class="content-header-right">
-          <div id="session-bar" class="session-bar"></div>
-          <button type="button" id="theme-toggle" class="theme-toggle">Dark mode</button>
+    <div class="settings-layout">
+      <div class="settings-tabs-col">
+        <h1>Operator<span class="operator-badge">Cross-account</span></h1>
+        <nav class="sidebar-nav" id="operator-tabs">
+          <a href="#accounts" class="nav-link active" data-tab="accounts">Accounts</a>
+          <a href="#activity" class="nav-link" data-tab="activity">Activity</a>
+        </nav>
+      </div>
+
+      <div class="settings-content">
+        <div class="content-header content-header-end">
+          <div class="content-header-right">
+            <div id="session-bar" class="session-bar"></div>
+            <button type="button" id="theme-toggle" class="theme-toggle">Dark mode</button>
+          </div>
         </div>
+
+        <section id="tab-accounts" class="settings-tab-panel">
+          <h1>Accounts</h1>
+          <p class="settings-note">
+            Every client account on this deployment -- not scoped to any one tenant. Estimated
+            transcribe cost is exactly that, an estimate (transcribed minutes &times; AWS's
+            per-minute rate), not a real AWS bill -- the shared server/database cost isn't
+            included since it doesn't grow per client. Revenue/profit isn't shown yet -- no
+            billing system exists to pull it from.
+          </p>
+
+          <table id="operator-table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>GHL accounts</th>
+                <th>Total calls</th>
+                <th>Recordings stored</th>
+                <th>Transcribed minutes</th>
+                <th>Est. transcribe cost</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="operator-rows"></tbody>
+          </table>
+
+          <div id="purge-confirm" class="danger-zone" hidden>
+            <p class="settings-note">
+              This permanently deletes every recording, call, contact, and login for
+              <strong id="purge-confirm-name"></strong>. It cannot be undone.
+              Type <strong>DELETE ACCOUNT</strong> to confirm.
+            </p>
+            <input type="text" id="purge-confirm-input" autocomplete="off" />
+            <button type="button" id="confirm-purge-btn" class="delete-btn">Permanently delete</button>
+            <button type="button" id="cancel-purge-btn">Never mind</button>
+            <p id="purge-error" class="login-error" hidden></p>
+          </div>
+        </section>
+
+        <section id="tab-activity" class="settings-tab-panel" hidden>
+          <h1>Activity</h1>
+          <p class="settings-note">
+            Every cancel/restore/delete an operator has triggered, across every tenant. Each
+            tenant's own Activity log (in their Settings) never shows these -- this is the only
+            place they're visible.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Operator</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="operator-activity-rows"></tbody>
+          </table>
+          <div class="pagination">
+            <button type="button" id="operator-activity-prev-btn">&larr; Prev</button>
+            <span id="operator-activity-page-indicator"></span>
+            <button type="button" id="operator-activity-next-btn">Next &rarr;</button>
+          </div>
+        </section>
       </div>
-
-      <p class="settings-note">
-        Every client account on this deployment -- not scoped to any one tenant. Estimated
-        transcribe cost is exactly that, an estimate (transcribed minutes &times; AWS's per-minute
-        rate), not a real AWS bill -- the shared server/database cost isn't included since it
-        doesn't grow per client. Revenue/profit isn't shown yet -- no billing system exists to
-        pull it from.
-      </p>
-
-      <table id="operator-table">
-        <thead>
-          <tr>
-            <th>Account</th>
-            <th>Status</th>
-            <th>Owner</th>
-            <th>GHL accounts</th>
-            <th>Total calls</th>
-            <th>Recordings stored</th>
-            <th>Transcribed minutes</th>
-            <th>Est. transcribe cost</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="operator-rows"></tbody>
-      </table>
-
-      <div id="purge-confirm" class="danger-zone" hidden>
-        <p class="settings-note">
-          This permanently deletes every recording, call, contact, and login for
-          <strong id="purge-confirm-name"></strong>. It cannot be undone.
-          Type <strong>DELETE ACCOUNT</strong> to confirm.
-        </p>
-        <input type="text" id="purge-confirm-input" autocomplete="off" />
-        <button type="button" id="confirm-purge-btn" class="delete-btn">Permanently delete</button>
-        <button type="button" id="cancel-purge-btn">Never mind</button>
-        <p id="purge-error" class="login-error" hidden></p>
-      </div>
-    </main>
+    </div>
   </div>
   <script src="operator.js"></script>
 </body>

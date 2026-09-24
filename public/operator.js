@@ -12,6 +12,13 @@ const confirmPurgeBtn = document.getElementById("confirm-purge-btn");
 const cancelPurgeBtn = document.getElementById("cancel-purge-btn");
 const purgeError = document.getElementById("purge-error");
 
+const activityRows = document.getElementById("operator-activity-rows");
+const activityPrevBtn = document.getElementById("operator-activity-prev-btn");
+const activityNextBtn = document.getElementById("operator-activity-next-btn");
+const activityPageIndicator = document.getElementById("operator-activity-page-indicator");
+let activityPage = 1;
+let activityLoaded = false;
+
 let csrfToken = "";
 let pendingPurgeTenantId = null;
 
@@ -160,7 +167,71 @@ confirmPurgeBtn.addEventListener("click", async () => {
   loadTenants();
 });
 
+// --- Activity ---
+
+async function loadOperatorActivity() {
+  activityLoaded = true;
+  const res = await fetch(`/api/operator/audit-log?page=${activityPage}&pageSize=50`);
+  const data = await res.json();
+  activityRows.innerHTML = "";
+
+  if (data.entries.length === 0) {
+    activityRows.innerHTML = `<tr><td colspan="3" class="empty-state">No operator activity yet.</td></tr>`;
+  }
+  for (const entry of data.entries) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td data-label="When">${new Date(entry.createdAt).toLocaleString()}</td>
+      <td data-label="Operator">${escapeHtml(entry.actorUsername || "(unknown)")}</td>
+      <td data-label="Action">${escapeHtml(entry.message)}</td>
+    `;
+    activityRows.appendChild(tr);
+  }
+
+  const totalPages = Math.max(1, Math.ceil(data.total / data.pageSize));
+  activityPageIndicator.textContent = `Page ${data.page} of ${totalPages}`;
+  activityPrevBtn.disabled = data.page <= 1;
+  activityNextBtn.disabled = data.page >= totalPages;
+}
+
+activityPrevBtn.addEventListener("click", () => {
+  if (activityPage > 1) {
+    activityPage -= 1;
+    loadOperatorActivity();
+  }
+});
+activityNextBtn.addEventListener("click", () => {
+  activityPage += 1;
+  loadOperatorActivity();
+});
+
+// --- Tabs ---
+
+const TAB_NAMES = ["accounts", "activity"];
+
+function activateTab(tab) {
+  if (!TAB_NAMES.includes(tab)) tab = "accounts";
+  for (const name of TAB_NAMES) {
+    document.getElementById(`tab-${name}`).hidden = name !== tab;
+    const link = document.querySelector(`#operator-tabs [data-tab="${name}"]`);
+    if (link) link.classList.toggle("active", name === tab);
+  }
+  history.replaceState(null, "", `#${tab}`);
+
+  if (tab === "activity" && !activityLoaded) loadOperatorActivity();
+}
+
+document.getElementById("operator-tabs").addEventListener("click", (e) => {
+  const link = e.target.closest("[data-tab]");
+  if (!link) return;
+  e.preventDefault();
+  activateTab(link.dataset.tab);
+});
+
 (async () => {
   const isOperator = await loadSession();
-  if (isOperator) await loadTenants();
+  if (isOperator) {
+    await loadTenants();
+    activateTab(location.hash.replace("#", ""));
+  }
 })();
