@@ -345,6 +345,36 @@ have to survive the account that generated them (HIPAA's audit-controls
 rule); the `tenants` row itself is kept, marked `canceled`, as the
 permanent record that the tenant existed.
 
+## Operator view
+
+The platform-owner view (`/operator.html`), for managing every tenant on
+the deployment -- completely separate from being an admin of any one
+tenant. `users.is_operator` gates it (`requireOperator` in `src/auth.js`),
+and there's deliberately no self-service way to grant it: `src/grantOperator.js`
+is a CLI (`--list` / `--grant <username>` / `--revoke <username>`), same
+"can't be flipped on by a bug" reasoning as `tenantPurge.js`.
+
+Three tabs: **Accounts** (every tenant, status, owner, cancel/restore/purge
+-- the same actions as self-service account cancellation above, just
+triggered by the operator instead of the tenant's own admin, each one
+still logged); **Analytics** (aggregate + per-account stat tiles and a
+calls-by-account chart -- recordings stored vs. calls with none, grouped
+bars so each account's count is directly comparable, not stacked); and
+**Activity** (every operator-triggered action across every tenant, kept
+completely separate from any one tenant's own Activity log).
+
+The load-bearing property: this view is aggregate counts only, never
+content. `db.listTenantsForOperator` returns counts (calls, recordings,
+transcribed minutes) with no per-call rows and no `storage_key`, and
+nothing under `/api/operator/*` touches the `calls` table at all. An
+operator's own session `accountIds` -- the thing that actually gates
+recording/transcript playback (`src/routes/api.js`) -- comes from
+`db.listAccessibleAccounts`, which is always scoped to the operator's own
+`tenantId`; `is_operator` never widens it. Verified end-to-end against a
+real second tenant: an operator's session included only their own tenant's
+accounts, and a direct request for another tenant's recording/transcript
+by ID returned 403, not just "hidden from the UI."
+
 ## Historical backfill
 
 GHL lets sub-accounts turn on auto-deleting call recordings after N days
@@ -442,6 +472,20 @@ runs is unrecoverable.
   for non-billing routes when the subscription isn't active/trialing.
   Tradeoff: a cancellation takes up to an hour to lock the app out, since
   status is polled rather than pushed.
+- Temporary, client-consented access grant for support (an operator asking
+  a client "let me listen to this one call" today has no way to do it —
+  see "Operator view" above: the operator's own session can never see
+  another tenant's recordings/transcripts, only aggregate counts, by
+  design). For the rare case where actually diagnosing a bad
+  recording/transcript needs a human to hear or read it, this would add a
+  client-initiated, time-boxed grant (one call or one account, auto-expiring
+  in hours, not indefinite) rather than any standing operator override —
+  same "type to confirm" pattern the cancel/purge flows already use, logged
+  in `phi_access_log` like every other access. Not built because it's only
+  useful once a real support case actually needs it; most "recording/
+  transcript is broken" reports are diagnosable from logs and metadata
+  (did the S3 object land, what did Transcribe error with, is
+  `transcription_attempts` maxed) without needing content access at all.
 
 ## Moving to AWS
 
