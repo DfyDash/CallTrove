@@ -315,13 +315,17 @@ async function loadUsers() {
         <button data-id="${user.id}" class="link-ghl-btn">Save</button>
       </td>
       <td class="accounts-col" data-label="Accounts" ${tenantAccounts.length <= 1 ? "hidden" : ""}>${accountAccessCellHtml(user)}</td>
+      <td data-label="2FA">${user.totpEnabled ? "On" : `<span class="settings-note">Off</span>`}</td>
       <td data-label="Actions">
         <button data-id="${user.id}" class="reset-btn">Reset password</button>
+        ${user.totpEnabled ? `<button data-id="${user.id}" class="disable-mfa-btn">Disable 2FA</button>` : ""}
         <button data-id="${user.id}" class="delete-btn">Delete</button>
       </td>
     `;
     tr.querySelector(".delete-btn").addEventListener("click", () => deleteUser(user.id, user.username));
     tr.querySelector(".reset-btn").addEventListener("click", () => resetPassword(user.id, user.username));
+    const disableMfaBtn = tr.querySelector(".disable-mfa-btn");
+    if (disableMfaBtn) disableMfaBtn.addEventListener("click", () => disableUserMfa(user.id, user.username));
     tr.querySelector(".link-ghl-btn").addEventListener("click", () => {
       const select = tr.querySelector(".ghl-link-select");
       linkGhlUser(user.id, select.value || null);
@@ -371,6 +375,20 @@ async function resetPassword(id, username) {
   }
   alert(`New password for "${username}":\n\n${newPassword}\n\nSend this to them securely -- it won't be shown again.`);
   tabLoaded.activity = false;
+}
+
+async function disableUserMfa(id, username) {
+  if (!confirm(`Disable two-factor authentication for "${username}"? Only do this if they've lost access to their authenticator app and recovery codes -- they'll be able to log in with just their password again.`)) return;
+  const res = await fetch(`/api/admin/users/${id}/disable-mfa`, {
+    method: "POST",
+    headers: { "X-CSRF-Token": csrfToken },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.error || "could not disable two-factor authentication");
+    return;
+  }
+  loadUsers();
 }
 
 async function linkGhlUser(id, ghlUserId) {

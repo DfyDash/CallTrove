@@ -290,6 +290,21 @@ Beyond auth/RBAC/audit logging (covered above):
   snapshotting the database, copying the snapshot with a KMS key, and
   restoring into a new instance (`call-recording-vault-db-encrypted`)
   during a maintenance window.
+- **Authenticator-app MFA (TOTP)** — optional, self-service, from
+  `/account.html`: scan a QR code (or enter the key manually), confirm one
+  real code before it actually turns on (`totp_enabled` only flips once
+  that's proven -- see `src/db/schema.sql`), then 10 one-time recovery
+  codes are shown exactly once. Hand-rolled on Node's `crypto` (RFC 6238/
+  4226, verified against the RFC's own test vectors) rather than a
+  dependency, same reasoning as the scrypt password hashing above --
+  `src/totp.js`. Login becomes two steps once enabled: password first
+  (`req.session.user` deliberately not set yet), then the code
+  (`POST /auth/login-mfa`, its own rate limit separate from the password
+  one). The escape hatch for a lost device with no recovery codes saved
+  (there's no email-based recovery yet -- see the deferred list) is an
+  admin-only disable from Team members, logged like any other admin
+  action -- never self-service, same reasoning as every other
+  admin-override action in this app.
 
 Deliberately not done yet, and why: **Multi-AZ** would roughly double the
 RDS bill for a failure mode (an AWS data-center outage) that doesn't

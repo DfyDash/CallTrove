@@ -66,6 +66,12 @@ app.use(
 // Unauthenticated: the login page itself and what it needs to render.
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.html")));
 app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.js")));
+// Reachable pre-login same as login.html itself -- this is the second step
+// of logging in (password already checked, waiting on the TOTP code), so
+// req.session.user isn't set yet and requireAuth (mounted below) would
+// otherwise bounce it back to /login.html.
+app.get("/login-mfa.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.html")));
+app.get("/login-mfa.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));

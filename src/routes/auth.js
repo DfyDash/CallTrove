@@ -2,6 +2,7 @@ const express = require("express");
 const { randomBytes } = require("crypto");
 const rateLimit = require("express-rate-limit");
 const db = require("../db");
+const totp = require("../totp");
 const { verifyPassword, hashPassword, sessionUser } = require("../auth");
 
 const router = express.Router();
@@ -52,6 +53,32 @@ function csrfValid(req) {
 // measuring response time, no leaked list required.
 const { hash: dummyHash, salt: dummySalt } = hashPassword(randomBytes(32).toString("hex"));
 
+// Second step of a login for a user with totp_enabled -- brute-forcing a
+// 6-digit code (1M possibilities) needs its own limit, separate from the
+// password step's loginLimiter above. Keyed by the pending user id (set on
+// the session once the password already checked out), not username/IP, so
+// it can't be dodged the same way switching IPs would dodge an IP limit.
+const mfaLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.session && req.session.pendingMfaUserId) || req.ip,
+});
+
+// Shared by /login (no MFA configured) and /login-mfa (MFA step passed) --
+// the actual point at which a session becomes a real logged-in session.
+async function completeLogin(req, user) {
+  req.session.pendingMfaUserId = undefined;
+  req.session.user = sessionUser(user);
+  // accountIds is the multi-tenant permission list -- which connected GHL
+  // accounts this login can pick between (see auth.js's requireAccount).
+  // Computed here, once, rather than per-request, since it only changes
+  // when an admin edits access or a new account is connected/removed.
+  req.session.user.accountIds = (await db.listAccessibleAccounts(user.id, user.role, user.tenantId)).map((a) => a.id);
+  req.session.csrfToken = randomBytes(24).toString("hex");
+}
+
 router.post("/login", express.urlencoded({ extended: false }), loginLimiter, async (req, res) => {
   const { username, password } = req.body;
   const user = username ? await db.getUserByUsername(username) : null;
@@ -60,13 +87,43 @@ router.post("/login", express.urlencoded({ extended: false }), loginLimiter, asy
     return res.redirect("/login.html?error=1");
   }
   await loginLimiter.resetKey(limiterKey(username));
-  req.session.user = sessionUser(user);
-  // accountIds is the multi-tenant permission list -- which connected GHL
-  // accounts this login can pick between (see auth.js's requireAccount).
-  // Computed here, once, rather than per-request, since it only changes
-  // when an admin edits access or a new account is connected/removed.
-  req.session.user.accountIds = (await db.listAccessibleAccounts(user.id, user.role, user.tenantId)).map((a) => a.id);
-  req.session.csrfToken = randomBytes(24).toString("hex");
+
+  if (user.totpEnabled) {
+    // Not logged in yet -- req.session.user is deliberately not set until
+    // the second factor also checks out. This is the only thing on the
+    // session at this point, so a request that never completes the MFA
+    // step never gets any real access.
+    req.session.pendingMfaUserId = user.id;
+    return res.redirect("/login-mfa.html");
+  }
+
+  await completeLogin(req, user);
+  res.redirect("/");
+});
+
+router.post("/login-mfa", express.urlencoded({ extended: false }), mfaLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.redirect("/login.html");
+
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.totpEnabled || !user.totpSecret) {
+    // The account's MFA was disabled (e.g. by an admin) mid-flow -- don't
+    // leave the pending state around either way.
+    req.session.pendingMfaUserId = undefined;
+    return res.redirect("/login.html");
+  }
+
+  const submitted = (req.body.code || "").trim();
+  const isTotpFormat = /^\d{6}$/.test(submitted);
+  const ok = isTotpFormat
+    ? totp.verifyTotp(user.totpSecret, submitted)
+    : await db.consumeRecoveryCode(user.id, totp.hashRecoveryCode(submitted));
+
+  if (!ok) {
+    return res.redirect("/login-mfa.html?error=1");
+  }
+
+  await completeLogin(req, user);
   res.redirect("/");
 });
 

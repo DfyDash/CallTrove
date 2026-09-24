@@ -918,6 +918,25 @@ tbody tr:last-child td {
   color: #d03b3b;
 }
 
+.recovery-codes {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 0.95rem;
+  line-height: 1.8;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  white-space: pre-wrap;
+}
+
+#mfa-qr {
+  display: block;
+  margin: 10px 0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+}
+
 #cancel-confirm {
   margin-top: 12px;
   padding-top: 12px;

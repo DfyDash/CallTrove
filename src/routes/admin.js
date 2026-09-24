@@ -261,6 +261,23 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
   res.json({ status: "deleted" });
 });
 
+// The escape hatch for a lost authenticator device with no recovery codes
+// saved -- there's no self-service email-based recovery yet (see README's
+// deferred list), so without this an admin has no way to unlock a
+// teammate who's otherwise fully locked out. Same "requires an admin, not
+// self-service" shape as the password reset above; unlike a password
+// reset, this doesn't touch the person's password at all, only their MFA
+// enrollment.
+router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
+  const target = await db.getUserById(req.params.id);
+  if (!target || target.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "user not found" });
+  }
+  await db.disableUserTotp(target.id);
+  await log(req, "user_mfa_disabled", `Disabled two-factor authentication for user "${target.username}" (admin override)`);
+  res.json({ status: "disabled" });
+});
+
 // Live, admin-toggleable, no redeploy needed. Only affects calls the live
 // poller picks up after this is read (see poller.js) -- never retroactive.
 // requireAccount both resolves which account (?accountId=, validated

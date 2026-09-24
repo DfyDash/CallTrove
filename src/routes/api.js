@@ -1,8 +1,11 @@
 const express = require("express");
+const qrcode = require("qrcode-generator");
 const db = require("../db");
+const totp = require("../totp");
 const { getPlayback, getBuffer } = require("../storage");
 const transcription = require("../transcription");
-const { requireCsrf, requireAccount } = require("../auth");
+const { requireCsrf, requireAccount, verifyPassword } = require("../auth");
+const RECOVERY_CODE_COUNT = 10;
 
 const router = express.Router();
 
@@ -82,6 +85,84 @@ router.get("/me", async (req, res) => {
     // they never knew was coming.
     cancellationPending: tenant && tenant.status === "cancellation_pending" ? { purgeAt: tenant.purgeAt } : null,
   });
+});
+
+// --- Authenticator-app MFA (self-service, TOTP -- see src/totp.js) ---
+
+router.get("/account/mfa", async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  res.json({
+    enabled: Boolean(user.totpEnabled),
+    recoveryCodesRemaining: user.totpEnabled ? await db.countUnusedRecoveryCodes(user.id) : 0,
+  });
+});
+
+// Starts (or restarts) enrollment: a fresh secret, not yet confirmed. Safe
+// to call again if a user abandons the flow partway through -- it just
+// overwrites the unconfirmed secret, and totp_enabled was never true.
+router.post("/account/mfa/setup", requireCsrf, async (req, res) => {
+  const secret = totp.generateSecret();
+  await db.setUserTotpSecret(req.session.user.id, secret);
+  res.json({ manualEntryKey: secret });
+});
+
+// Same-origin image, not a data: URI -- keeps the CSP's imgSrc at 'self'
+// with no carve-out needed. Scoped to the calling user's own row; there's
+// no id in the URL to guess or leak.
+router.get("/account/mfa/qr", async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  if (!user.totpSecret) return res.status(404).end();
+
+  const qr = qrcode(0, "M");
+  qr.addData(totp.otpauthUrl({ secret: user.totpSecret, username: user.username }));
+  qr.make();
+  res.setHeader("Content-Type", "image/svg+xml");
+  res.send(qr.createSvgTag(4, 0));
+});
+
+// Proves the user actually scanned the code (not just that a secret was
+// generated) before flipping totp_enabled on -- see schema.sql's comment
+// on totp_secret. Recovery codes are generated and returned exactly once,
+// here -- only their hash is ever stored (see src/totp.js).
+router.post("/account/mfa/confirm", requireCsrf, async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  if (!user.totpSecret) return res.status(400).json({ error: "start setup first" });
+
+  const code = String((req.body || {}).code || "").trim();
+  if (!totp.verifyTotp(user.totpSecret, code)) {
+    return res.status(400).json({ error: "incorrect code" });
+  }
+
+  await db.enableUserTotp(user.id);
+  const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => totp.generateRecoveryCode());
+  await db.replaceRecoveryCodes(user.id, codes.map(totp.hashRecoveryCode));
+  res.json({ status: "enabled", recoveryCodes: codes });
+});
+
+// Re-requires the current password, same as change-password -- turning off
+// a security control is exactly the kind of action a hijacked-but-still-
+// logged-in session shouldn't be able to do on its own.
+router.post("/account/mfa/disable", requireCsrf, async (req, res) => {
+  const user = await db.getUserByUsername(req.session.user.username);
+  const password = (req.body || {}).password;
+  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(400).json({ error: "incorrect password" });
+  }
+  await db.disableUserTotp(user.id);
+  res.json({ status: "disabled" });
+});
+
+router.post("/account/mfa/recovery-codes/regenerate", requireCsrf, async (req, res) => {
+  const user = await db.getUserByUsername(req.session.user.username);
+  const password = (req.body || {}).password;
+  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(400).json({ error: "incorrect password" });
+  }
+  if (!user.totpEnabled) return res.status(400).json({ error: "MFA is not enabled" });
+
+  const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => totp.generateRecoveryCode());
+  await db.replaceRecoveryCodes(user.id, codes.map(totp.hashRecoveryCode));
+  res.json({ status: "regenerated", recoveryCodes: codes });
 });
 
 router.get("/contacts", requireAccount, async (req, res) => {

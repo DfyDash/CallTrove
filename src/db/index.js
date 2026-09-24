@@ -538,7 +538,7 @@ async function getUserByUsername(username) {
   const { rows } = await pool.query(
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
             role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
-            is_operator AS "isOperator"
+            is_operator AS "isOperator", totp_enabled AS "totpEnabled"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -547,7 +547,8 @@ async function getUserByUsername(username) {
 
 async function getUserById(id) {
   const { rows } = await pool.query(
-    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId"
+    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
+            is_operator AS "isOperator", totp_secret AS "totpSecret", totp_enabled AS "totpEnabled"
      FROM users WHERE id = $1`,
     [id]
   );
@@ -556,7 +557,8 @@ async function getUserById(id) {
 
 async function listUsers(tenantId) {
   const { rows } = await pool.query(
-    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", created_at AS "createdAt"
+    `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", created_at AS "createdAt",
+            totp_enabled AS "totpEnabled"
      FROM users WHERE tenant_id = $1 ORDER BY created_at ASC`,
     [tenantId]
   );
@@ -582,6 +584,54 @@ async function updateUser(id, { role, ghlUserId, ghlUserName, passwordHash, pass
 
 async function deleteUser(id) {
   await pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+}
+
+// --- Authenticator-app MFA (TOTP -- see src/totp.js) ---
+
+// Starting (or restarting) enrollment always resets totp_enabled to false --
+// it only flips true once the user proves they actually scanned it by
+// confirming one real code back (see routes/api.js's /mfa/confirm).
+async function setUserTotpSecret(userId, secret) {
+  await pool.query(`UPDATE users SET totp_secret = $1, totp_enabled = false WHERE id = $2`, [secret, userId]);
+}
+
+async function enableUserTotp(userId) {
+  await pool.query(`UPDATE users SET totp_enabled = true WHERE id = $1`, [userId]);
+}
+
+async function disableUserTotp(userId) {
+  await pool.query(`UPDATE users SET totp_secret = NULL, totp_enabled = false WHERE id = $1`, [userId]);
+  await pool.query(`DELETE FROM totp_recovery_codes WHERE user_id = $1`, [userId]);
+}
+
+// Regenerating replaces the whole set -- an old, unused code shouldn't stay
+// valid once a fresh batch is issued, same as every other "regenerate
+// recovery codes" flow (e.g. GitHub's).
+async function replaceRecoveryCodes(userId, codeHashes) {
+  await pool.query(`DELETE FROM totp_recovery_codes WHERE user_id = $1`, [userId]);
+  const values = codeHashes.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(", ");
+  const params = codeHashes.flatMap((hash) => [randomUUID(), userId, hash]);
+  await pool.query(`INSERT INTO totp_recovery_codes (id, user_id, code_hash) VALUES ${values}`, params);
+}
+
+// Atomic: only succeeds once per code, so two concurrent requests racing to
+// use the same recovery code can't both get in.
+async function consumeRecoveryCode(userId, codeHash) {
+  const { rows } = await pool.query(
+    `UPDATE totp_recovery_codes SET used_at = now()
+     WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
+     RETURNING id`,
+    [userId, codeHash]
+  );
+  return rows.length > 0;
+}
+
+async function countUnusedRecoveryCodes(userId) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count FROM totp_recovery_codes WHERE user_id = $1 AND used_at IS NULL`,
+    [userId]
+  );
+  return rows[0].count;
 }
 
 // --- tenants / ghl_accounts / user_account_access (multi-tenant) ---
@@ -1031,6 +1081,12 @@ module.exports = {
   listUsers,
   updateUser,
   deleteUser,
+  setUserTotpSecret,
+  enableUserTotp,
+  disableUserTotp,
+  replaceRecoveryCodes,
+  consumeRecoveryCode,
+  countUnusedRecoveryCodes,
   getLastSyncedAt,
   setLastSyncedAt,
   getAccountLastSyncedAt,

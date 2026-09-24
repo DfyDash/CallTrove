@@ -36,6 +36,53 @@
       </label>
       <button type="submit">Change password</button>
     </form>
+
+    <div class="settings-section" id="mfa-section">
+      <h2>Two-factor authentication</h2>
+      <p id="mfa-status" class="settings-note">Loading…</p>
+
+      <div id="mfa-off-panel" hidden>
+        <p class="settings-note">Adds a 6-digit code from an authenticator app (Google Authenticator, Authy, 1Password, etc.) on top of your password.</p>
+        <button type="button" id="mfa-start-btn">Enable two-factor authentication</button>
+      </div>
+
+      <div id="mfa-setup-panel" hidden>
+        <p class="settings-note">Scan this with your authenticator app, or enter the key manually if you can't scan a code.</p>
+        <img id="mfa-qr" src="" width="148" height="148" alt="QR code for authenticator app setup" />
+        <p class="settings-note">Manual entry key: <code id="mfa-manual-key"></code></p>
+        <label>
+          Enter the 6-digit code from your app to confirm
+          <input type="text" id="mfa-confirm-input" inputmode="numeric" autocomplete="one-time-code" />
+        </label>
+        <button type="button" id="mfa-confirm-btn">Confirm and enable</button>
+        <button type="button" id="mfa-setup-cancel-btn">Cancel</button>
+        <p id="mfa-setup-error" class="login-error" hidden></p>
+      </div>
+
+      <div id="mfa-recovery-codes-panel" hidden>
+        <p class="settings-note"><strong>Save these recovery codes somewhere safe.</strong> Each one can be used once, instead of your authenticator app, if you ever lose access to it. They won't be shown again.</p>
+        <pre id="mfa-recovery-codes-list" class="recovery-codes"></pre>
+        <button type="button" id="mfa-recovery-codes-download-btn">Download as a text file</button>
+        <button type="button" id="mfa-recovery-codes-done-btn">I've saved these</button>
+      </div>
+
+      <div id="mfa-on-panel" hidden>
+        <p id="mfa-recovery-remaining" class="settings-note"></p>
+        <button type="button" id="mfa-regenerate-btn">Regenerate recovery codes</button>
+        <button type="button" id="mfa-disable-btn" class="delete-btn">Disable two-factor authentication</button>
+      </div>
+
+      <div id="mfa-password-confirm" class="danger-zone" hidden>
+        <p id="mfa-password-confirm-copy" class="settings-note"></p>
+        <label>
+          Confirm your password
+          <input type="password" id="mfa-password-input" autocomplete="current-password" />
+        </label>
+        <button type="button" id="mfa-password-confirm-btn">Confirm</button>
+        <button type="button" id="mfa-password-cancel-btn">Cancel</button>
+        <p id="mfa-password-error" class="login-error" hidden></p>
+      </div>
+    </div>
   </div>
   <script src="account.js"></script>
 </body>
