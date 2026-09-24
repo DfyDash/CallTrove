@@ -84,7 +84,7 @@
           </div>
         </section>
 
-        <section id="tab-analytics" class="settings-tab-panel" hidden>
+        <section id="tab-analytics" class="settings-tab-panel viz-root" hidden>
           <h1>Analytics</h1>
           <p class="settings-note">
             Usage and estimated cost across every account. Estimated transcribe cost is
@@ -95,6 +95,21 @@
           </p>
 
           <div id="operator-analytics-summary" class="stat-grid"></div>
+
+          <div class="chart-card" data-palette="#0ca30c,#d03b3b">
+            <h2>Calls by account</h2>
+            <p class="settings-note">
+              Recordings stored vs. calls with none, per account.
+            </p>
+            <div class="chart-wrap">
+              <svg id="operator-accounts-chart" class="month-chart" role="img" aria-label="Total calls per account, stored vs no recording found"></svg>
+              <div id="operator-chart-tooltip" class="chart-tooltip" hidden></div>
+            </div>
+            <div class="chart-legend">
+              <span class="legend-item"><span class="legend-swatch legend-swatch-good"></span>Stored</span>
+              <span class="legend-item"><span class="legend-swatch legend-swatch-critical"></span>No recording found</span>
+            </div>
+          </div>
 
           <table id="operator-analytics-table">
             <thead>

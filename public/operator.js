@@ -21,6 +21,8 @@ let activityLoaded = false;
 
 const analyticsSummary = document.getElementById("operator-analytics-summary");
 const analyticsRows = document.getElementById("operator-analytics-rows");
+const accountsChartSvg = document.getElementById("operator-accounts-chart");
+const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
 let cachedTenants = [];
 
 let csrfToken = "";
@@ -105,6 +107,7 @@ function renderAnalytics() {
   if (cachedTenants.length === 0) {
     analyticsSummary.innerHTML = "";
     analyticsRows.innerHTML = `<tr><td colspan="6">No accounts yet.</td></tr>`;
+    renderAccountsChart([]);
     return;
   }
 
@@ -140,6 +143,156 @@ function renderAnalytics() {
     </tr>`
     )
     .join("");
+
+  renderAccountsChart(cachedTenants);
+}
+
+// --- Calls-by-account chart (same SVG bar-chart approach as the client
+// Coverage tab's month chart -- see settings.js -- just banded by account
+// instead of by month, since there's no per-operator time series data.) ---
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const CHART = { width: 900, height: 260, margin: { top: 10, right: 10, bottom: 34, left: 40 } };
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function topRoundedRectPath(x, y, w, h, r) {
+  const rad = Math.max(0, Math.min(r, w / 2, h));
+  if (rad === 0) return `M${x},${y} h${w} v${h} h${-w} Z`;
+  return `M${x},${y + rad} A${rad},${rad} 0 0 1 ${x + rad},${y} H${x + w - rad} A${rad},${rad} 0 0 1 ${x + w},${y + rad} V${y + h} H${x} Z`;
+}
+
+function niceMax(value) {
+  if (value <= 0) return 4;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  for (const step of [1, 2, 2.5, 5, 10]) {
+    const candidate = step * magnitude;
+    if (candidate >= value) return candidate;
+  }
+  return 10 * magnitude;
+}
+
+function truncateLabel(str, max) {
+  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
+}
+
+function renderAccountsChart(tenants) {
+  const { width, height, margin } = CHART;
+  accountsChartSvg.innerHTML = "";
+  accountsChartSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  accountsChartSvg.setAttribute("preserveAspectRatio", "none");
+  if (tenants.length === 0) return;
+
+  const plotW = width - margin.left - margin.right;
+  const plotH = height - margin.top - margin.bottom;
+  const maxVal = niceMax(Math.max(...tenants.map((t) => t.totalCalls)));
+  const baselineY = margin.top + plotH;
+  const bandW = plotW / tenants.length;
+  const barW = Math.min(48, Math.max(4, bandW - 12));
+
+  const tickCount = 4;
+  for (let i = 0; i <= tickCount; i++) {
+    const v = Math.round((maxVal / tickCount) * i);
+    const y = baselineY - (v / maxVal) * plotH;
+    accountsChartSvg.appendChild(svgEl("line", { x1: margin.left, x2: margin.left + plotW, y1: y, y2: y, class: "chart-gridline" }));
+    const label = svgEl("text", { x: margin.left - 8, y: y + 3, "text-anchor": "end", class: "chart-axis-label" });
+    label.textContent = v.toLocaleString();
+    accountsChartSvg.appendChild(label);
+  }
+
+  tenants.forEach((t, i) => {
+    const missing = Math.max(0, t.totalCalls - t.recordingsStored);
+    const x = margin.left + i * bandW + (bandW - barW) / 2;
+    const storedH = (t.recordingsStored / maxVal) * plotH;
+    const missingH = (missing / maxVal) * plotH;
+    const gap = t.recordingsStored > 0 && missing > 0 ? 2 : 0;
+
+    const group = svgEl("g", {});
+
+    if (t.recordingsStored > 0) {
+      const h = Math.max(0, storedH - gap / 2);
+      const y = baselineY - h;
+      const el =
+        missing > 0
+          ? svgEl("rect", { x, y, width: barW, height: h })
+          : svgEl("path", { d: topRoundedRectPath(x, y, barW, h, 4) });
+      el.setAttribute("class", "chart-bar-seg");
+      el.setAttribute("fill", "var(--status-good)");
+      group.appendChild(el);
+    }
+    if (missing > 0) {
+      const h = Math.max(0, missingH - gap / 2);
+      const y = baselineY - storedH - missingH + (gap - gap / 2);
+      const el = svgEl("path", { d: topRoundedRectPath(x, y, barW, h, 4) });
+      el.setAttribute("class", "chart-bar-seg");
+      el.setAttribute("fill", "var(--status-critical)");
+      group.appendChild(el);
+    }
+
+    const hit = svgEl("rect", {
+      x: margin.left + i * bandW,
+      y: margin.top,
+      width: bandW,
+      height: plotH,
+      class: "chart-bar-hit",
+      tabindex: t.totalCalls > 0 ? "0" : "-1",
+    });
+    if (t.totalCalls > 0) {
+      const move = (e) => showAccountsChartTooltip(e, t, missing, i, bandW, storedH);
+      hit.addEventListener("pointerenter", move);
+      hit.addEventListener("pointermove", move);
+      hit.addEventListener("pointerleave", hideAccountsChartTooltip);
+      hit.addEventListener("focus", move);
+      hit.addEventListener("blur", hideAccountsChartTooltip);
+    }
+    group.appendChild(hit);
+
+    const label = svgEl("text", {
+      x: margin.left + i * bandW + bandW / 2,
+      y: height - 6,
+      "text-anchor": "middle",
+      class: "chart-axis-label",
+    });
+    label.textContent = truncateLabel(t.name, Math.max(4, Math.floor(bandW / 6)));
+    group.appendChild(label);
+
+    accountsChartSvg.appendChild(group);
+  });
+}
+
+function showAccountsChartTooltip(e, t, missing, i, bandW, storedH) {
+  const rect = accountsChartSvg.getBoundingClientRect();
+  const scaleX = rect.width / CHART.width;
+  const scaleY = rect.height / CHART.height;
+  const { margin } = CHART;
+  const cx = (margin.left + i * bandW + bandW / 2) * scaleX;
+  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - storedH)) * scaleY;
+
+  accountsChartTooltip.hidden = false;
+  accountsChartTooltip.style.left = `${cx}px`;
+  accountsChartTooltip.style.top = `${Math.max(0, cy - 8)}px`;
+  accountsChartTooltip.textContent = "";
+  const nameLine = document.createElement("div");
+  nameLine.textContent = t.name;
+
+  function tooltipRow(label, value) {
+    const row = document.createElement("div");
+    const valueSpan = document.createElement("span");
+    valueSpan.className = "tooltip-value";
+    valueSpan.textContent = String(value);
+    row.append(`${label}: `, valueSpan);
+    return row;
+  }
+
+  accountsChartTooltip.append(nameLine, tooltipRow("Stored", t.recordingsStored), tooltipRow("No recording found", missing));
+}
+
+function hideAccountsChartTooltip() {
+  accountsChartTooltip.hidden = true;
 }
 
 operatorRows.addEventListener("click", async (e) => {
