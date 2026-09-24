@@ -4,6 +4,7 @@ const archiver = require("archiver");
 const db = require("../db");
 const ghlApi = require("../ghlApi");
 const ghlOAuth = require("../ghlOAuth");
+const accountCredentials = require("../accountCredentials");
 const backfill = require("../backfill");
 const { getBuffer } = require("../storage");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
@@ -15,6 +16,28 @@ router.use(requireAdmin);
 
 function log(req, action, message) {
   return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message, tenantId: req.session.user.tenantId });
+}
+
+// The GHL API client for one tenant's own connected account -- never the
+// bare `ghlApi` module default, which is the legacy single static-token
+// client shared by the whole deployment regardless of who's asking. Used
+// wherever this file needs to call GHL on a specific admin's behalf (the
+// GHL user picker below). Picks the tenant's first connected account,
+// same "no account switcher for this" default every other tenant-wide
+// (not per-account) admin feature already uses. Falls back to the bare
+// ghlApi client only when the tenant has no connected account at all --
+// isConfigured() then correctly reflects the *deployment's* legacy
+// static token, not this tenant's own connection state, but that's the
+// same fallback accountCredentials.clientForAccount already relies on for
+// the legacy default account itself.
+async function ghlApiForTenant(tenantId) {
+  // listGhlAccountsForTenant doesn't select the token fields (it's the
+  // display-only list for the GHL accounts tab) -- listActiveGhlAccountsForTenant
+  // does, which clientForAccount needs to tell a real OAuth-connected
+  // account apart from the legacy default (see its own comment).
+  const accounts = await db.listActiveGhlAccountsForTenant(tenantId);
+  if (!accounts.length) return ghlApi;
+  return accountCredentials.clientForAccount(accounts[0]);
 }
 
 // --- Account cancellation (owner-only, grace period then purge -- see
@@ -79,13 +102,13 @@ router.post("/tenant/restore", requireCsrf, async (req, res) => {
 // person's email, same as in GHL -- doesn't require manually picking
 // them from the dropdown. Only fills in users with no link yet; never
 // overrides a link an admin already set.
-async function autoLinkGhlUsers(users) {
+async function autoLinkGhlUsers(users, api) {
   const unlinked = users.filter((u) => !u.ghlUserId);
-  if (!unlinked.length || !ghlApi.isConfigured()) return users;
+  if (!unlinked.length || !api.isConfigured()) return users;
 
   let ghlUsers;
   try {
-    ghlUsers = await ghlApi.listUsers();
+    ghlUsers = await api.listUsers();
   } catch (err) {
     console.error("[admin] could not auto-link GHL users:", err);
     return users;
@@ -103,7 +126,8 @@ async function autoLinkGhlUsers(users) {
 }
 
 router.get("/users", async (req, res) => {
-  const users = await autoLinkGhlUsers(await db.listUsers(req.session.user.tenantId));
+  const api = await ghlApiForTenant(req.session.user.tenantId);
+  const users = await autoLinkGhlUsers(await db.listUsers(req.session.user.tenantId), api);
 
   // accountIds: null for an admin (they bypass the grant table and see
   // every account their tenant owns -- see db.listAccessibleAccounts),
@@ -157,9 +181,10 @@ router.put("/users/:id/account-access", requireCsrf, async (req, res) => {
 // The real GHL user list, for populating a picker in the admin UI instead
 // of requiring someone to hand-type a phoneCall.user.id value.
 router.get("/ghl-users", async (req, res) => {
-  if (!ghlApi.isConfigured()) return res.json([]);
+  const api = await ghlApiForTenant(req.session.user.tenantId);
+  if (!api.isConfigured()) return res.json([]);
   try {
-    const users = await ghlApi.listUsers();
+    const users = await api.listUsers();
     res.json(users);
   } catch (err) {
     console.error("[admin] failed to fetch GHL users:", err);
