@@ -189,10 +189,18 @@ function renderAccountsChart(tenants) {
 
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
-  const maxVal = niceMax(Math.max(...tenants.map((t) => t.totalCalls)));
+  // Grouped, not stacked -- each account gets two independent bars sharing
+  // the 0 baseline, so "Stored" is directly comparable account-to-account
+  // by height alone. A stacked "Stored" segment sits on top of "No
+  // recording" at a floating baseline, which hides its true height -- the
+  // exact "plopped two colors on top of each other" complaint that sent us
+  // back to this.
+  const maxVal = niceMax(Math.max(...tenants.map((t) => Math.max(t.recordingsStored, t.totalCalls - t.recordingsStored))));
   const baselineY = margin.top + plotH;
   const bandW = plotW / tenants.length;
-  const barW = Math.min(48, Math.max(4, bandW - 12));
+  const barGap = 3;
+  const barW = Math.min(36, Math.max(3, (bandW - 16 - barGap) / 2));
+  const pairW = barW * 2 + barGap;
 
   const tickCount = 4;
   for (let i = 0; i <= tickCount; i++) {
@@ -206,28 +214,20 @@ function renderAccountsChart(tenants) {
 
   tenants.forEach((t, i) => {
     const missing = Math.max(0, t.totalCalls - t.recordingsStored);
-    const x = margin.left + i * bandW + (bandW - barW) / 2;
+    const groupX = margin.left + i * bandW + (bandW - pairW) / 2;
     const storedH = (t.recordingsStored / maxVal) * plotH;
     const missingH = (missing / maxVal) * plotH;
-    const gap = t.recordingsStored > 0 && missing > 0 ? 2 : 0;
 
     const group = svgEl("g", {});
 
     if (t.recordingsStored > 0) {
-      const h = Math.max(0, storedH - gap / 2);
-      const y = baselineY - h;
-      const el =
-        missing > 0
-          ? svgEl("rect", { x, y, width: barW, height: h })
-          : svgEl("path", { d: topRoundedRectPath(x, y, barW, h, 4) });
+      const el = svgEl("path", { d: topRoundedRectPath(groupX, baselineY - storedH, barW, storedH, 4) });
       el.setAttribute("class", "chart-bar-seg");
       el.setAttribute("fill", "var(--status-good)");
       group.appendChild(el);
     }
     if (missing > 0) {
-      const h = Math.max(0, missingH - gap / 2);
-      const y = baselineY - storedH - missingH + (gap - gap / 2);
-      const el = svgEl("path", { d: topRoundedRectPath(x, y, barW, h, 4) });
+      const el = svgEl("path", { d: topRoundedRectPath(groupX + barW + barGap, baselineY - missingH, barW, missingH, 4) });
       el.setAttribute("class", "chart-bar-seg");
       el.setAttribute("fill", "var(--status-critical)");
       group.appendChild(el);
@@ -242,7 +242,7 @@ function renderAccountsChart(tenants) {
       tabindex: t.totalCalls > 0 ? "0" : "-1",
     });
     if (t.totalCalls > 0) {
-      const move = (e) => showAccountsChartTooltip(e, t, missing, i, bandW, storedH);
+      const move = (e) => showAccountsChartTooltip(e, t, missing, i, bandW, Math.max(storedH, missingH));
       hit.addEventListener("pointerenter", move);
       hit.addEventListener("pointermove", move);
       hit.addEventListener("pointerleave", hideAccountsChartTooltip);
@@ -264,13 +264,13 @@ function renderAccountsChart(tenants) {
   });
 }
 
-function showAccountsChartTooltip(e, t, missing, i, bandW, storedH) {
+function showAccountsChartTooltip(e, t, missing, i, bandW, tallestH) {
   const rect = accountsChartSvg.getBoundingClientRect();
   const scaleX = rect.width / CHART.width;
   const scaleY = rect.height / CHART.height;
   const { margin } = CHART;
   const cx = (margin.left + i * bandW + bandW / 2) * scaleX;
-  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - storedH)) * scaleY;
+  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - tallestH)) * scaleY;
 
   accountsChartTooltip.hidden = false;
   accountsChartTooltip.style.left = `${cx}px`;
