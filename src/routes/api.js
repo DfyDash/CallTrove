@@ -36,6 +36,7 @@ function logAccess(req, { action, callId, success, denialReason }) {
     denialReason,
     ipAddress: req.ip,
     userAgent: req.get("user-agent"),
+    tenantId: req.session.user.tenantId,
   });
 }
 

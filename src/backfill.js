@@ -86,8 +86,21 @@ async function runForAccount(account, api, totals) {
   }
 }
 
-async function run() {
-  const accounts = await db.listAllActiveGhlAccounts();
+// tenantId scopes the account list to just that tenant -- required for
+// the admin-UI-triggered path (routes/admin.js's POST /backfill), which
+// must only ever touch the calling tenant's own accounts, not every
+// account on the deployment. Omitted for the bare `node src/backfill.js`
+// CLI invocation below, which legitimately wants everything.
+//
+// Throws rather than setting process.exitCode on failure -- the latter is
+// a CLI-only concept (see src/tenantPurge.js's restoreTenant/purgeTenant
+// for the same fix and the same reasoning): this function is also called
+// from a live, long-running server process via routes/admin.js, where
+// setting the process's own exit code on a per-request failure would be
+// wrong. The CLI entry point at the bottom of this file still behaves
+// exactly as before.
+async function run({ tenantId } = {}) {
+  const accounts = tenantId ? await db.listActiveGhlAccountsForTenant(tenantId) : await db.listAllActiveGhlAccounts();
 
   const totals = {
     conversationsSeen: 0,
@@ -110,9 +123,7 @@ async function run() {
   }
 
   if (!ranAny) {
-    console.error("[backfill] no configured GHL accounts found, aborting");
-    process.exitCode = 1;
-    return;
+    throw new Error("no configured GHL accounts found, aborting");
   }
 
   console.log(
@@ -131,7 +142,7 @@ module.exports = { run };
 if (require.main === module) {
   run()
     .catch((err) => {
-      console.error("[backfill] fatal error:", err);
+      console.error("[backfill] fatal error:", err.message);
       process.exitCode = 1;
     })
     .finally(() => db.pool.end());

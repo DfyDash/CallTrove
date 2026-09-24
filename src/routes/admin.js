@@ -14,7 +14,7 @@ const router = express.Router();
 router.use(requireAdmin);
 
 function log(req, action, message) {
-  return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message });
+  return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message, tenantId: req.session.user.tenantId });
 }
 
 // --- Account cancellation (owner-only, grace period then purge -- see
@@ -103,7 +103,7 @@ async function autoLinkGhlUsers(users) {
 }
 
 router.get("/users", async (req, res) => {
-  const users = await autoLinkGhlUsers(await db.listUsers());
+  const users = await autoLinkGhlUsers(await db.listUsers(req.session.user.tenantId));
 
   // accountIds: null for an admin (they bypass the grant table and see
   // every account their tenant owns -- see db.listAccessibleAccounts),
@@ -133,7 +133,9 @@ router.put("/users/:id/account-access", requireCsrf, async (req, res) => {
     return res.status(400).json({ error: "accountIds must be an array" });
   }
   const target = await db.getUserById(req.params.id);
-  if (!target) return res.status(404).json({ error: "user not found" });
+  if (!target || target.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "user not found" });
+  }
 
   const tenantAccounts = await db.listGhlAccountsForTenant(req.session.user.tenantId);
   const allowedIds = new Set(tenantAccounts.map((a) => a.id));
@@ -182,6 +184,7 @@ router.post("/users", requireCsrf, async (req, res) => {
     role,
     ghlUserId,
     ghlUserName,
+    tenantId: req.session.user.tenantId,
   });
   await log(req, "user_created", `Created user "${username}" (role: ${role})`);
   res.status(201).json({ status: "created" });
@@ -193,6 +196,9 @@ router.put("/users/:id", requireCsrf, async (req, res) => {
     return res.status(400).json({ error: "invalid role" });
   }
   const target = await db.getUserById(req.params.id);
+  if (!target || target.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "user not found" });
+  }
   const update = { role, ghlUserId, ghlUserName };
   if (password) {
     const { hash, salt } = hashPassword(password);
@@ -222,6 +228,9 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
     return res.status(400).json({ error: "cannot delete your own account while logged in as it" });
   }
   const target = await db.getUserById(req.params.id);
+  if (!target || target.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "user not found" });
+  }
   await db.deleteUser(req.params.id);
   await log(req, "user_deleted", `Deleted user "${target ? target.username : req.params.id}"`);
   res.json({ status: "deleted" });
@@ -302,8 +311,19 @@ router.get("/ghl-oauth/callback", async (req, res) => {
 
   // Re-authorizing an already-connected location (a token refresh, or
   // reinstalling after an uninstall) updates it in place instead of
-  // creating a duplicate ghl_accounts row for the same GHL location.
+  // creating a duplicate ghl_accounts row for the same GHL location --
+  // but only when it's already this same tenant's own account. Without
+  // that check, someone with real GHL access to a location already
+  // connected to a *different* tenant could silently re-point that
+  // account's tokens onto their own session just by authorizing through
+  // this same callback, which is a tenant-boundary break even though it
+  // requires real GHL-side access to trigger.
   const existing = await db.getGhlAccountByLocationId(locationId);
+  if (existing && existing.tenantId !== req.session.user.tenantId) {
+    return res
+      .status(409)
+      .send("This GHL location is already connected to a different CallTrove account. Disconnect it there first, or contact support.");
+  }
   if (existing) {
     await db.updateGhlAccountTokens(existing.id, tokenFields);
     await log(req, "ghl_account_reconnected", `Reconnected GHL location "${locationId}"`);
@@ -329,23 +349,33 @@ router.get("/ghl-oauth/callback", async (req, res) => {
 // need to survive a restart, and a restart mid-run just means the next
 // run picks up where the last one left off (backfill skips calls it
 // already has).
-let backfillState = { running: false, lastResult: null, lastError: null, startedAt: null, finishedAt: null };
+//
+// Keyed by tenantId -- a single shared variable here would mean every
+// tenant's Settings page showed whichever tenant's backfill happened to
+// run most recently, "already running" included, regardless of whose
+// accounts it actually was.
+const backfillStateByTenant = new Map();
+function getBackfillState(tenantId) {
+  return backfillStateByTenant.get(tenantId) || { running: false, lastResult: null, lastError: null, startedAt: null, finishedAt: null };
+}
 
 router.get("/backfill", async (req, res) => {
-  res.json(backfillState);
+  res.json(getBackfillState(req.session.user.tenantId));
 });
 
 router.post("/backfill", requireCsrf, async (req, res) => {
-  if (backfillState.running) {
+  const tenantId = req.session.user.tenantId;
+  if (getBackfillState(tenantId).running) {
     return res.status(409).json({ error: "a backfill is already running" });
   }
-  backfillState = { running: true, lastResult: null, lastError: null, startedAt: new Date(), finishedAt: null };
+  const state = { running: true, lastResult: null, lastError: null, startedAt: new Date(), finishedAt: null };
+  backfillStateByTenant.set(tenantId, state);
   await log(req, "backfill_started", "Started a historical call backfill");
 
   backfill
-    .run()
+    .run({ tenantId })
     .then(async (summary) => {
-      backfillState = { ...backfillState, running: false, lastResult: summary, finishedAt: new Date() };
+      backfillStateByTenant.set(tenantId, { ...state, running: false, lastResult: summary, finishedAt: new Date() });
       await log(
         req,
         "backfill_completed",
@@ -356,11 +386,11 @@ router.post("/backfill", requireCsrf, async (req, res) => {
     })
     .catch(async (err) => {
       console.error("[admin] backfill failed:", err);
-      backfillState = { ...backfillState, running: false, lastError: err.message, finishedAt: new Date() };
+      backfillStateByTenant.set(tenantId, { ...state, running: false, lastError: err.message, finishedAt: new Date() });
       await log(req, "backfill_failed", `Backfill failed: ${err.message}`);
     });
 
-  res.status(202).json(backfillState);
+  res.status(202).json(getBackfillState(tenantId));
 });
 
 // "Call Recording Coverage" -- storage health at a glance: how many calls
@@ -369,9 +399,9 @@ router.post("/backfill", requireCsrf, async (req, res) => {
 // opposed to no-answer/busy/voicemail, which were never going to have one).
 router.get("/coverage", async (req, res) => {
   const [summary, byDisposition, byMonth] = await Promise.all([
-    db.getCoverageSummary(),
-    db.getCoverageByDisposition(),
-    db.getCoverageByMonth(),
+    db.getCoverageSummary(req.session.user.tenantId),
+    db.getCoverageByDisposition(req.session.user.tenantId),
+    db.getCoverageByMonth(req.session.user.tenantId),
   ]);
   res.json({ summary, byDisposition, byMonth });
 });
@@ -383,8 +413,8 @@ router.get("/coverage", async (req, res) => {
 router.get("/call-report", async (req, res) => {
   const { dateFrom, dateTo } = req.query;
   const [reps, trendRows] = await Promise.all([
-    db.getCallReportByRep({ dateFrom, dateTo }),
-    db.getCallReportTrend(),
+    db.getCallReportByRep(req.session.user.tenantId, { dateFrom, dateTo }),
+    db.getCallReportTrend(req.session.user.tenantId),
   ]);
 
   const days = [];
@@ -405,12 +435,12 @@ router.get("/call-report", async (req, res) => {
 });
 
 router.get("/coverage/gaps", async (req, res) => {
-  const result = await db.listCoverageGaps({ page: req.query.page, pageSize: req.query.pageSize });
+  const result = await db.listCoverageGaps(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
 });
 
 router.get("/audit-log", async (req, res) => {
-  const result = await db.listAuditLog({ page: req.query.page, pageSize: req.query.pageSize });
+  const result = await db.listAuditLog(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
 });
 
@@ -419,7 +449,7 @@ router.get("/audit-log", async (req, res) => {
 // expects this reviewed regularly, not just recorded, hence a real view
 // rather than just rows sitting in the database.
 router.get("/phi-access-log", async (req, res) => {
-  const result = await db.listPhiAccessLog({ page: req.query.page, pageSize: req.query.pageSize });
+  const result = await db.listPhiAccessLog(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
 });
 
@@ -432,7 +462,7 @@ router.get("/phi-access-log", async (req, res) => {
 // export in memory or on disk first.
 router.get("/download-all", async (req, res) => {
   const { dateFrom, dateTo } = req.query;
-  const calls = await db.listAllCallsWithRecordings({ dateFrom, dateTo });
+  const calls = await db.listAllCallsWithRecordings(req.session.user.tenantId, { dateFrom, dateTo });
 
   await log(
     req,

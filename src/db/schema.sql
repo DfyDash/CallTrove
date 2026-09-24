@@ -303,3 +303,39 @@ DROP TRIGGER IF EXISTS phi_access_log_append_only ON phi_access_log;
 CREATE TRIGGER phi_access_log_append_only
   BEFORE UPDATE OR DELETE ON phi_access_log
   FOR EACH ROW EXECUTE FUNCTION reject_log_mutation();
+
+-- audit_log/phi_access_log were never taught about tenants at all -- every
+-- admin's Activity log and PHI-access log tab showed every OTHER tenant's
+-- entries too, dormant only because this deployment has had exactly one
+-- tenant so far. Same reasoning as actor_username above (captured at write
+-- time, not joined later, so it survives the actor being deleted): a real
+-- FK to tenants(id) is safe here specifically because a tenant row is
+-- never actually deleted, even after a purge (see purgeTenantData's
+-- comment) -- only its data and logins are.
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+ALTER TABLE phi_access_log ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES tenants(id);
+CREATE INDEX IF NOT EXISTS audit_log_tenant_idx ON audit_log (tenant_id);
+CREATE INDEX IF NOT EXISTS phi_access_log_tenant_idx ON phi_access_log (tenant_id);
+
+-- Backfill existing rows best-effort: via the actor/accessing user's own
+-- tenant first, falling back (phi_access_log only) to the tenant that owns
+-- the referenced call, for the rare case the accessing user has since been
+-- deleted. Anything still unresolved (a user_id/call_id that no longer
+-- resolves at all) is left NULL rather than guessed. The append-only
+-- triggers just created above unconditionally block UPDATE, including
+-- this one-time backfill of a genuinely new column -- disabled only for
+-- the three statements below, on the same connection, then immediately
+-- re-enabled; nothing about an entry's recorded facts (action, message,
+-- timestamps) is touched, only this new column on old rows.
+ALTER TABLE audit_log DISABLE TRIGGER audit_log_append_only;
+UPDATE audit_log l SET tenant_id = u.tenant_id
+  FROM users u WHERE u.id = l.actor_id AND l.tenant_id IS NULL;
+ALTER TABLE audit_log ENABLE TRIGGER audit_log_append_only;
+
+ALTER TABLE phi_access_log DISABLE TRIGGER phi_access_log_append_only;
+UPDATE phi_access_log l SET tenant_id = u.tenant_id
+  FROM users u WHERE u.id = l.user_id AND l.tenant_id IS NULL;
+UPDATE phi_access_log l SET tenant_id = g.tenant_id
+  FROM calls c JOIN ghl_accounts g ON g.id = c.ghl_account_id
+  WHERE c.id = l.call_id AND l.tenant_id IS NULL;
+ALTER TABLE phi_access_log ENABLE TRIGGER phi_access_log_append_only;

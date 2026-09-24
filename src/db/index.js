@@ -343,29 +343,39 @@ async function listDistinctDispositions(ghlUserId, ghlAccountId) {
 // dateFrom/dateTo scope the totals to whatever preset is selected there;
 // the trailing-7-day trend (below) is intentionally on its own fixed
 // window instead.
-async function getCallReportByRep({ dateFrom, dateTo } = {}) {
-  const conditions = ["handled_by_id IS NOT NULL"];
-  const params = [];
+// Every function below this point that queries `calls` directly (rather
+// than through requireAccount's single-ghlAccountId scoping in
+// routes/api.js) takes tenantId as its first argument and joins through
+// ghl_accounts to enforce it -- these all went into routes/admin.js's
+// tenant-wide reports (coverage, call report, bulk export), which were
+// missing that scoping entirely until now: any admin could see, and the
+// bulk export could download, every OTHER tenant's calls and recordings
+// too. See schema.sql's tenant_id migration comment on audit_log for the
+// same issue in the activity/PHI-access logs.
+async function getCallReportByRep(tenantId, { dateFrom, dateTo } = {}) {
+  const conditions = ["c.handled_by_id IS NOT NULL", "g.tenant_id = $1"];
+  const params = [tenantId];
   if (dateFrom) {
     params.push(dateFrom);
-    conditions.push(`occurred_at >= $${params.length}::date`);
+    conditions.push(`c.occurred_at >= $${params.length}::date`);
   }
   if (dateTo) {
     params.push(dateTo);
-    conditions.push(`occurred_at < ($${params.length}::date + interval '1 day')`);
+    conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
   }
   const { rows } = await pool.query(
-    `SELECT handled_by_id AS id, handled_by_name AS name,
+    `SELECT c.handled_by_id AS id, c.handled_by_name AS name,
             count(*)::int AS total,
             CASE WHEN count(*) > 0
-              THEN round(100.0 * count(*) FILTER (WHERE disposition = 'completed') / count(*))::int
+              THEN round(100.0 * count(*) FILTER (WHERE c.disposition = 'completed') / count(*))::int
               ELSE 0 END AS "completionPct",
-            COALESCE(round(avg(duration_seconds) FILTER (WHERE duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
-            count(*) FILTER (WHERE direction = 'inbound')::int AS inbound,
-            count(*) FILTER (WHERE direction = 'outbound')::int AS outbound
-     FROM calls
+            COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            count(*) FILTER (WHERE c.direction = 'inbound')::int AS inbound,
+            count(*) FILTER (WHERE c.direction = 'outbound')::int AS outbound
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
      WHERE ${conditions.join(" AND ")}
-     GROUP BY handled_by_id, handled_by_name
+     GROUP BY c.handled_by_id, c.handled_by_name
      ORDER BY total DESC`,
     params
   );
@@ -374,14 +384,17 @@ async function getCallReportByRep({ dateFrom, dateTo } = {}) {
 
 // Always the trailing 7 calendar days, independent of the report's own
 // date-range preset -- a fixed short-term pulse check per rep.
-async function getCallReportTrend() {
+async function getCallReportTrend(tenantId) {
   const { rows } = await pool.query(
-    `SELECT handled_by_id AS id, to_char(date_trunc('day', occurred_at), 'YYYY-MM-DD') AS day,
+    `SELECT c.handled_by_id AS id, to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day,
             count(*)::int AS count
-     FROM calls
-     WHERE handled_by_id IS NOT NULL
-       AND occurred_at >= (current_date - interval '6 days')
-     GROUP BY handled_by_id, day`
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.handled_by_id IS NOT NULL
+       AND c.occurred_at >= (current_date - interval '6 days')
+       AND g.tenant_id = $1
+     GROUP BY c.handled_by_id, day`,
+    [tenantId]
   );
   return rows;
 }
@@ -389,9 +402,9 @@ async function getCallReportTrend() {
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
 // (routes/admin.js), which needs every matching row to stream, not one
 // page. dateFrom/dateTo are optional, same semantics as listCalls().
-async function listAllCallsWithRecordings({ dateFrom, dateTo } = {}) {
-  const conditions = ["c.storage_key IS NOT NULL"];
-  const params = [];
+async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
+  const conditions = ["c.storage_key IS NOT NULL", "g.tenant_id = $1"];
+  const params = [tenantId];
   if (dateFrom) {
     params.push(dateFrom);
     conditions.push(`c.occurred_at >= $${params.length}::date`);
@@ -404,6 +417,7 @@ async function listAllCallsWithRecordings({ dateFrom, dateTo } = {}) {
     `SELECT c.id, c.storage_key AS "storageKey", c.occurred_at AS "occurredAt",
             c.direction, ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
      WHERE ${conditions.join(" AND ")}
      ORDER BY c.occurred_at ASC NULLS LAST`,
@@ -418,25 +432,31 @@ async function listAllCallsWithRecordings({ dateFrom, dateTo } = {}) {
 // one. A call GHL disposed as anything other than "completed" (no
 // answer, busy, voicemail...) was never going to have a recording, so
 // it's not counted as a gap.
-async function getCoverageSummary() {
+async function getCoverageSummary(tenantId) {
   const { rows } = await pool.query(
     `SELECT
        count(*)::int AS total,
-       count(*) FILTER (WHERE disposition = 'completed')::int AS completed,
-       count(*) FILTER (WHERE storage_key IS NOT NULL)::int AS stored,
-       count(*) FILTER (WHERE disposition = 'completed' AND storage_key IS NULL)::int AS "completedMissing"
-     FROM calls`
+       count(*) FILTER (WHERE c.disposition = 'completed')::int AS completed,
+       count(*) FILTER (WHERE c.storage_key IS NOT NULL)::int AS stored,
+       count(*) FILTER (WHERE c.disposition = 'completed' AND c.storage_key IS NULL)::int AS "completedMissing"
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE g.tenant_id = $1`,
+    [tenantId]
   );
   return rows[0];
 }
 
-async function getCoverageByDisposition() {
+async function getCoverageByDisposition(tenantId) {
   const { rows } = await pool.query(
-    `SELECT COALESCE(disposition, '(unknown)') AS disposition, count(*)::int AS count,
-            count(*) FILTER (WHERE storage_key IS NOT NULL)::int AS stored
-     FROM calls
-     GROUP BY disposition
-     ORDER BY count DESC`
+    `SELECT COALESCE(c.disposition, '(unknown)') AS disposition, count(*)::int AS count,
+            count(*) FILTER (WHERE c.storage_key IS NOT NULL)::int AS stored
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE g.tenant_id = $1
+     GROUP BY c.disposition
+     ORDER BY count DESC`,
+    [tenantId]
   );
   return rows;
 }
@@ -445,27 +465,32 @@ async function getCoverageByDisposition() {
 // actually makes a systemic gap (like a GHL-side outage) visible: a steady
 // stored rate that drops to near-zero for a stretch of months, rather than
 // scattered one-off misses.
-async function getCoverageByMonth() {
+async function getCoverageByMonth(tenantId) {
   const { rows } = await pool.query(
-    `SELECT to_char(date_trunc('month', occurred_at), 'YYYY-MM') AS month,
-            count(*) FILTER (WHERE disposition = 'completed')::int AS completed,
-            count(*) FILTER (WHERE disposition = 'completed' AND storage_key IS NOT NULL)::int AS stored
-     FROM calls
-     WHERE occurred_at IS NOT NULL
+    `SELECT to_char(date_trunc('month', c.occurred_at), 'YYYY-MM') AS month,
+            count(*) FILTER (WHERE c.disposition = 'completed')::int AS completed,
+            count(*) FILTER (WHERE c.disposition = 'completed' AND c.storage_key IS NOT NULL)::int AS stored
+     FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.occurred_at IS NOT NULL AND g.tenant_id = $1
      GROUP BY 1
-     ORDER BY 1`
+     ORDER BY 1`,
+    [tenantId]
   );
   return rows;
 }
 
 // The real gaps: completed calls with no recording ever stored, paginated
 // the same way as listCalls().
-async function listCoverageGaps({ page = 1, pageSize = 20 } = {}) {
+async function listCoverageGaps(tenantId, { page = 1, pageSize = 20 } = {}) {
   const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 20;
   const pageNum = Math.max(1, Number(page) || 1);
 
   const { rows: countRows } = await pool.query(
-    `SELECT COUNT(*) FROM calls c WHERE c.disposition = 'completed' AND c.storage_key IS NULL`
+    `SELECT COUNT(*) FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.disposition = 'completed' AND c.storage_key IS NULL AND g.tenant_id = $1`,
+    [tenantId]
   );
   const total = Number(countRows[0].count);
 
@@ -474,11 +499,12 @@ async function listCoverageGaps({ page = 1, pageSize = 20 } = {}) {
             c.handled_by_name AS "handledByName", c.ghl_contact_id AS "contactId",
             ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
+     JOIN ghl_accounts g ON g.id = c.ghl_account_id
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
-     WHERE c.disposition = 'completed' AND c.storage_key IS NULL
+     WHERE c.disposition = 'completed' AND c.storage_key IS NULL AND g.tenant_id = $1
      ORDER BY c.occurred_at DESC NULLS LAST
-     LIMIT $1 OFFSET $2`,
-    [size, (pageNum - 1) * size]
+     LIMIT $2 OFFSET $3`,
+    [tenantId, size, (pageNum - 1) * size]
   );
   return { gaps: rows, total, page: pageNum, pageSize: size };
 }
@@ -528,10 +554,11 @@ async function getUserById(id) {
   return rows[0] || null;
 }
 
-async function listUsers() {
+async function listUsers(tenantId) {
   const { rows } = await pool.query(
     `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", created_at AS "createdAt"
-     FROM users ORDER BY created_at ASC`
+     FROM users WHERE tenant_id = $1 ORDER BY created_at ASC`,
+    [tenantId]
   );
   return rows;
 }
@@ -768,6 +795,22 @@ async function listAllActiveGhlAccounts() {
   return rows;
 }
 
+// Same shape as listAllActiveGhlAccounts, scoped to one tenant -- for
+// src/backfill.js's run() when triggered from one tenant's own admin UI
+// (POST /api/admin/backfill), which must only ever touch that tenant's own
+// accounts. The unscoped version above stays as-is for the poller and the
+// bare `node src/backfill.js` CLI invocation, both of which legitimately
+// need every account regardless of tenant.
+async function listActiveGhlAccountsForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+     FROM ghl_accounts WHERE uninstalled_at IS NULL AND tenant_id = $1`,
+    [tenantId]
+  );
+  return rows;
+}
+
 // --- sync_state (poller checkpoint) ---
 
 async function getLastSyncedAt() {
@@ -826,18 +869,26 @@ async function setAutoTranscribeEnabled(ghlAccountId, enabled) {
 
 // --- audit_log (who changed what admin setting/account, and when) ---
 
-async function logAudit({ actorId, actorUsername, action, message }) {
+// tenantId is optional purely for src/tenantPurge.js/src/routes/operator.js,
+// whose actions aren't scoped to any one tenant's own admin session --
+// every route in routes/admin.js (the only other caller) always has a real
+// tenantId from req.session.user and must pass it, so its own entries are
+// never invisible to the tenant that generated them.
+async function logAudit({ actorId, actorUsername, action, message, tenantId }) {
   await pool.query(
-    `INSERT INTO audit_log (id, actor_id, actor_username, action, message) VALUES ($1, $2, $3, $4, $5)`,
-    [randomUUID(), actorId || null, actorUsername || null, action, message]
+    `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [randomUUID(), actorId || null, actorUsername || null, action, message, tenantId || null]
   );
 }
 
-async function listAuditLog({ page = 1, pageSize = 50 } = {}) {
+// tenantId is required -- see this table's tenant_id column comment in
+// schema.sql for why every admin's own Activity log was showing every
+// other tenant's entries too before this existed.
+async function listAuditLog(tenantId, { page = 1, pageSize = 50 } = {}) {
   const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 50;
   const pageNum = Math.max(1, Number(page) || 1);
 
-  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM audit_log`);
+  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM audit_log WHERE tenant_id = $1`, [tenantId]);
   const total = Number(countRows[0].count);
 
   // COALESCE to the GHL name currently linked to the actor's user account,
@@ -848,6 +899,29 @@ async function listAuditLog({ page = 1, pageSize = 50 } = {}) {
             l.action, l.message, l.created_at AS "createdAt"
      FROM audit_log l
      LEFT JOIN users u ON u.id = l.actor_id
+     WHERE l.tenant_id = $1
+     ORDER BY l.created_at DESC
+     LIMIT $2 OFFSET $3`,
+    [tenantId, size, (pageNum - 1) * size]
+  );
+  return { entries: rows, total, page: pageNum, pageSize: size };
+}
+
+// Cross-tenant, for src/routes/operator.js only -- same reasoning as
+// listTenantsForOperator.
+async function listAuditLogForOperator({ page = 1, pageSize = 50 } = {}) {
+  const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 50;
+  const pageNum = Math.max(1, Number(page) || 1);
+
+  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM audit_log`);
+  const total = Number(countRows[0].count);
+
+  const { rows } = await pool.query(
+    `SELECT l.id, l.actor_id AS "actorId", COALESCE(u.ghl_user_name, l.actor_username) AS "actorUsername",
+            l.action, l.message, l.created_at AS "createdAt", t.name AS "tenantName"
+     FROM audit_log l
+     LEFT JOIN users u ON u.id = l.actor_id
+     LEFT JOIN tenants t ON t.id = l.tenant_id
      ORDER BY l.created_at DESC
      LIMIT $1 OFFSET $2`,
     [size, (pageNum - 1) * size]
@@ -858,20 +932,21 @@ async function listAuditLog({ page = 1, pageSize = 50 } = {}) {
 // --- phi_access_log (who accessed which call's recording/transcript,
 // when, from where, how, and whether it was allowed -- see routes/api.js) ---
 
-async function logPhiAccess({ userId, username, action, callId, success, denialReason, ipAddress, userAgent }) {
+async function logPhiAccess({ userId, username, action, callId, success, denialReason, ipAddress, userAgent, tenantId }) {
   await pool.query(
     `INSERT INTO phi_access_log
-       (id, user_id, username, action, call_id, success, denial_reason, ip_address, user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [randomUUID(), userId || null, username || null, action, callId || null, success, denialReason || null, ipAddress || null, userAgent || null]
+       (id, user_id, username, action, call_id, success, denial_reason, ip_address, user_agent, tenant_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [randomUUID(), userId || null, username || null, action, callId || null, success, denialReason || null, ipAddress || null, userAgent || null, tenantId || null]
   );
 }
 
-async function listPhiAccessLog({ page = 1, pageSize = 50 } = {}) {
+// tenantId is required -- see audit_log's listAuditLog for why.
+async function listPhiAccessLog(tenantId, { page = 1, pageSize = 50 } = {}) {
   const size = PAGE_SIZES.includes(Number(pageSize)) ? Number(pageSize) : 50;
   const pageNum = Math.max(1, Number(page) || 1);
 
-  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM phi_access_log`);
+  const { rows: countRows } = await pool.query(`SELECT COUNT(*) FROM phi_access_log WHERE tenant_id = $1`, [tenantId]);
   const total = Number(countRows[0].count);
 
   // LEFT JOINs purely for display -- which contact this call belongs to,
@@ -887,9 +962,10 @@ async function listPhiAccessLog({ page = 1, pageSize = 50 } = {}) {
      LEFT JOIN calls c ON c.id = l.call_id
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
      LEFT JOIN users u ON u.id = l.user_id
+     WHERE l.tenant_id = $1
      ORDER BY l.created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [size, (pageNum - 1) * size]
+     LIMIT $2 OFFSET $3`,
+    [tenantId, size, (pageNum - 1) * size]
   );
   return { entries: rows, total, page: pageNum, pageSize: size };
 }
@@ -912,6 +988,7 @@ module.exports = {
   listGhlAccountsForTenant,
   listAccessibleAccounts,
   listAllActiveGhlAccounts,
+  listActiveGhlAccountsForTenant,
   grantUserAccountAccess,
   revokeUserAccountAccess,
   listUserAccountAccessForTenant,
@@ -954,6 +1031,7 @@ module.exports = {
   setAutoTranscribeEnabled,
   logAudit,
   listAuditLog,
+  listAuditLogForOperator,
   logPhiAccess,
   listPhiAccessLog,
 };
