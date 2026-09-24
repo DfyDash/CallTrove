@@ -72,12 +72,6 @@ app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "publ
 // otherwise bounce it back to /login.html.
 app.get("/login-mfa.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.html")));
 app.get("/login-mfa.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.js")));
-// Same reachable-pre-login reasoning as login-mfa.html -- this is the
-// forced first-time-enrollment step for a mandatory-MFA login (an admin
-// or operator without totp_enabled yet, see routes/auth.js's
-// mfaRequiredFor), also reached before req.session.user is set.
-app.get("/login-mfa-setup.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-setup.html")));
-app.get("/login-mfa-setup.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-setup.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
