@@ -5,9 +5,16 @@ const adminNav = document.getElementById("admin-nav");
 const viewAsSelect = document.getElementById("view-as");
 const mobileNavToggle = document.getElementById("mobile-nav-toggle");
 const sidebarEl = document.querySelector(".sidebar");
+const accountSwitcherWrap = document.getElementById("account-switcher-wrap");
+const accountSwitcher = document.getElementById("account-switcher");
 mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 let csrfToken = "";
 let viewAs = "";
+// Account-scoped settings (transcription, etc.) live on the GHL account
+// itself, not globally -- this is which one the page is currently editing.
+// Same resolution as app.js: an explicit ?accountId= wins, otherwise the
+// server picks the user's first/default account.
+let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
@@ -57,7 +64,7 @@ function formatDuration(seconds) {
 let isAdmin = false;
 
 async function loadSession() {
-  const res = await fetch("/api/me");
+  const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
   isAdmin = me.role === "admin";
   csrfToken = me.csrfToken || "";
@@ -65,6 +72,24 @@ async function loadSession() {
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
   renderCancellationBanner(me);
+
+  // Same resolution/switcher pattern as app.js -- see the comment on
+  // currentAccountId's declaration above.
+  currentAccountId = me.currentAccountId || "";
+  if (me.accounts && me.accounts.length > 1) {
+    accountSwitcherWrap.hidden = false;
+    accountSwitcher.innerHTML = me.accounts
+      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || a.ghlLocationId)}</option>`)
+      .join("");
+    accountSwitcher.value = currentAccountId;
+    accountSwitcher.addEventListener("change", () => {
+      // Full navigation, not a live re-fetch -- same reasoning as app.js:
+      // switching accounts is a hard boundary, so every account-scoped
+      // setting on this page should reload fresh rather than risk mixing
+      // stale data from the previous account into the new one.
+      location.href = `${location.pathname}?accountId=${encodeURIComponent(accountSwitcher.value)}${location.hash}`;
+    });
+  }
 
   if (!isAdmin) {
     for (const name of TAB_NAMES) {
@@ -865,14 +890,14 @@ function hideChartTooltip() {
 const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
 
 async function loadTranscriptionSettings() {
-  const res = await fetch("/api/admin/settings");
+  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
   const settings = await res.json();
   autoTranscribeToggle.checked = !!settings.autoTranscribeEnabled;
 }
 
 autoTranscribeToggle.addEventListener("change", async () => {
   autoTranscribeToggle.disabled = true;
-  const res = await fetch("/api/admin/settings", {
+  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({ autoTranscribeEnabled: autoTranscribeToggle.checked }),

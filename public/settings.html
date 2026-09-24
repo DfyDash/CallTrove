@@ -29,6 +29,10 @@
         <input id="search" type="search" placeholder="Search contacts by name or phone..." autocomplete="off" />
         <ul id="search-results" class="search-results" hidden></ul>
       </div>
+      <div id="account-switcher-wrap" class="account-switcher-wrap" hidden>
+        <span class="account-switcher-label">Account</span>
+        <select id="account-switcher" class="account-switcher"></select>
+      </div>
       <nav class="sidebar-nav">
         <a href="/" class="nav-link">Dashboard</a>
         <a href="/contacts.html" class="nav-link">Contacts</a>
@@ -292,6 +296,10 @@
               Only affects calls picked up from now on -- turning this on never
               transcribes existing recordings. Anyone can still transcribe an
               individual past call on demand from the dashboard.
+            </p>
+            <p class="settings-note">
+              This only applies to the account selected above (top left) --
+              other connected GHL accounts keep their own setting unchanged.
             </p>
           </div>
         </section>

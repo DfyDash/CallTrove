@@ -778,15 +778,20 @@ async function setAccountLastSyncedAt(ghlAccountId, date) {
 
 // --- app_settings (live, admin-toggleable -- see src/poller.js) ---
 
-async function getAutoTranscribeEnabled() {
+// Per-account, not global (see schema.sql's migration comment for why this
+// moved off app_settings) -- a call ingested for one GHL account must never
+// be able to trigger auto-transcription because some *other* account has
+// it turned on.
+async function getAutoTranscribeEnabled(ghlAccountId) {
   const { rows } = await pool.query(
-    `SELECT auto_transcribe_enabled AS "autoTranscribeEnabled" FROM app_settings WHERE id = 1`
+    `SELECT auto_transcribe_enabled AS "autoTranscribeEnabled" FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
   );
   return rows[0] ? rows[0].autoTranscribeEnabled : false;
 }
 
-async function setAutoTranscribeEnabled(enabled) {
-  await pool.query(`UPDATE app_settings SET auto_transcribe_enabled = $1 WHERE id = 1`, [enabled]);
+async function setAutoTranscribeEnabled(ghlAccountId, enabled) {
+  await pool.query(`UPDATE ghl_accounts SET auto_transcribe_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
 }
 
 // --- audit_log (who changed what admin setting/account, and when) ---

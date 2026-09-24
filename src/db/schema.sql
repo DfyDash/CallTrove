@@ -94,8 +94,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
 -- historical recordings are never swept into auto-transcription by turning
 -- this on.
 CREATE TABLE IF NOT EXISTS app_settings (
-  id                       INT PRIMARY KEY DEFAULT 1,
-  auto_transcribe_enabled  BOOLEAN NOT NULL DEFAULT false,
+  id  INT PRIMARY KEY DEFAULT 1,
   CONSTRAINT app_settings_single_row CHECK (id = 1)
 );
 INSERT INTO app_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
@@ -194,6 +193,23 @@ INSERT INTO tenants (id, name)
 INSERT INTO ghl_accounts (id, tenant_id, ghl_location_id, name)
   SELECT '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'default', 'Default account'
   WHERE NOT EXISTS (SELECT 1 FROM ghl_accounts WHERE id = '00000000-0000-0000-0000-000000000001');
+
+-- auto_transcribe_enabled used to live as a single global row on
+-- app_settings -- meaning turning it on/off for one connected account
+-- silently applied to every account on the deployment. Moved onto
+-- ghl_accounts itself, same as account_sync_state below, so it's actually
+-- per-account. The backfill preserves whatever today's single global value
+-- already was, applied to every existing account, so nobody's current
+-- behavior silently changes the moment this migration runs.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS auto_transcribe_enabled BOOLEAN NOT NULL DEFAULT false;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'app_settings' AND column_name = 'auto_transcribe_enabled') THEN
+    UPDATE ghl_accounts SET auto_transcribe_enabled = true
+      WHERE EXISTS (SELECT 1 FROM app_settings WHERE id = 1 AND auto_transcribe_enabled = true);
+    ALTER TABLE app_settings DROP COLUMN auto_transcribe_enabled;
+  END IF;
+END $$;
 
 UPDATE users SET tenant_id = '00000000-0000-0000-0000-000000000001' WHERE tenant_id IS NULL;
 UPDATE contacts SET ghl_account_id = '00000000-0000-0000-0000-000000000001' WHERE ghl_account_id IS NULL;

@@ -101,7 +101,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     await db.markCallStored(callRowId, key, durationSeconds);
     console.log(`[poller] stored recording for call ${message.id}`);
 
-    if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled())) {
+    if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled(ghlAccountId))) {
       try {
         await transcription.startJob(callRowId, taggedBuffer, extension);
         await db.markTranscriptionPending(callRowId);

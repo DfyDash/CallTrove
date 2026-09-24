@@ -6,7 +6,7 @@ const ghlApi = require("../ghlApi");
 const ghlOAuth = require("../ghlOAuth");
 const backfill = require("../backfill");
 const { getBuffer } = require("../storage");
-const { hashPassword, requireAdmin, requireCsrf } = require("../auth");
+const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
 
 const router = express.Router();
@@ -229,14 +229,19 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
 
 // Live, admin-toggleable, no redeploy needed. Only affects calls the live
 // poller picks up after this is read (see poller.js) -- never retroactive.
-router.get("/settings", async (req, res) => {
-  res.json({ autoTranscribeEnabled: await db.getAutoTranscribeEnabled() });
+// requireAccount both resolves which account (?accountId=, validated
+// against the admin's own accountIds) and rejects one they don't have
+// access to -- the same boundary every other account-scoped route uses, so
+// an admin on one tenant can never read or flip this for an account that
+// isn't theirs.
+router.get("/settings", requireAccount, async (req, res) => {
+  res.json({ autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId) });
 });
 
-router.put("/settings", requireCsrf, async (req, res) => {
+router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
   const enabled = Boolean((req.body || {}).autoTranscribeEnabled);
-  await db.setAutoTranscribeEnabled(enabled);
-  await log(req, "auto_transcribe_toggled", `Turned automatic transcription ${enabled ? "ON" : "OFF"}`);
+  await db.setAutoTranscribeEnabled(req.ghlAccountId, enabled);
+  await log(req, "auto_transcribe_toggled", `Turned automatic transcription ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
   res.json({ autoTranscribeEnabled: enabled });
 });
 
