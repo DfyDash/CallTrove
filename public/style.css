@@ -1518,11 +1518,19 @@ body {
     min-height: auto;
   }
 
+  /* Sticky so the operator page's dark navy/badge cue (the whole point of
+     .sidebar--operator) doesn't scroll out of view the moment you look at
+     the actual account data -- which is every time, since that's the page's
+     content. Sticks relative to the page's own scroll container; nothing
+     else on the page uses position:fixed/sticky at a higher z-index. */
   .sidebar {
     width: 100%;
     border-right: none;
     border-bottom: 1px solid var(--border);
     padding: 12px 14px;
+    position: sticky;
+    top: 0;
+    z-index: 20;
   }
 
   .sidebar-brand {
