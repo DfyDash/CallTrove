@@ -74,15 +74,15 @@ async function loadTenants() {
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
-      <td>${escapeHtml(t.name)}</td>
-      <td>${escapeHtml(t.status)}</td>
-      <td>${escapeHtml(t.ownerUsername || "-")}</td>
-      <td>${t.ghlAccountCount}</td>
-      <td>${t.totalCalls}</td>
-      <td>${t.recordingsStored}</td>
-      <td>${t.transcribedMinutes}</td>
-      <td>${formatMoney(t.estimatedTranscribeCost)}</td>
-      <td>${actionsForTenant(t)}</td>
+      <td data-label="Account">${escapeHtml(t.name)}</td>
+      <td data-label="Status">${escapeHtml(t.status)}</td>
+      <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
+      <td data-label="GHL accounts">${t.ghlAccountCount}</td>
+      <td data-label="Total calls">${t.totalCalls}</td>
+      <td data-label="Recordings stored">${t.recordingsStored}</td>
+      <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
+      <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
+      <td data-label="Actions">${actionsForTenant(t)}</td>
     </tr>`
     )
     .join("");
