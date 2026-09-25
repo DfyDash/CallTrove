@@ -63,6 +63,20 @@ app.use(
   })
 );
 
+// Unauthenticated: the marketing homepage, privacy policy, and terms --
+// reachable whether or not there's a session, since a logged-out visitor
+// hitting "/" needs something other than a bounce to /login.html. Placed
+// ahead of requireAuth so a logged-in session isn't blocked from these
+// either; "/" specifically falls through to the real dashboard (served by
+// the static middleware's default-index behavior after requireAuth) once
+// a session exists, rather than always showing the marketing page.
+app.get("/", (req, res, next) => {
+  if (req.session.user) return next();
+  res.sendFile(path.join(__dirname, "..", "public", "home.html"));
+});
+app.get("/privacy.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "privacy.html")));
+app.get("/terms.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "terms.html")));
+
 // Unauthenticated: the login page itself and what it needs to render.
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.html")));
 app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.js")));

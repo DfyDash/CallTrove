@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CallTrove Privacy Policy</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="alternate icon" href="favicon-32.png" type="image/png" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<style>
+  /* Self-hosted (see server.js's CSP comment: no third-party fonts/CDNs). */
+  @font-face {
+    font-family: "Cormorant Garamond";
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url("fonts/cormorant-garamond-600.woff2") format("woff2");
+  }
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url("fonts/inter-variable.woff2") format("woff2");
+  }
+  :root { --ink: #141312; --page-bg: #f7f4ec; --border: #e6ddc9; --muted: #726b5d; --accent: #b1502f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--page-bg); color: var(--ink); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { color: #8f3f24; }
+  nav { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid var(--border); background: rgba(247, 244, 236, 0.92); backdrop-filter: blur(6px); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-name { font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 1.35rem; letter-spacing: 0.01em; color: var(--ink); }
+  .brand-name .accent { color: var(--accent); }
+  .back-link { font-size: 0.9rem; font-weight: 500; color: var(--muted); }
+  main { display: flex; justify-content: center; padding: 56px 24px 88px; }
+  .doc { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 36px; }
+  .doc h1 { margin: 0 0 10px; font-family: "Cormorant Garamond", serif; font-weight: 600; font-size: 40px; color: var(--ink); }
+  .doc .updated { margin: 0; font-size: 14.5px; color: var(--muted); }
+  .doc section h2 { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--ink); }
+  .doc section p { margin: 0 0 12px; font-size: 15.5px; line-height: 1.75; color: #3a362f; }
+  .doc section p:last-child { margin-bottom: 0; }
+  footer { padding: 28px 24px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer .copyright { font-size: 13px; color: var(--muted); }
+  footer .footer-links { display: flex; align-items: center; gap: 20px; }
+  footer .footer-links a { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="brand" href="/">
+    <svg viewBox="19 3 64 123" width="17" height="33" aria-hidden="true">
+      <path d="M38 78 V62 A12 12 0 0 1 62 62 V78" style="fill: none; stroke: #b1502f; stroke-width: 6.5;" />
+      <path d="M34 78 H66 L74 92 V114 L50 126 L26 114 V92 Z" style="fill: #b1502f;" />
+      <path d="M50 96 L57 102 L54 112 H46 L43 102 Z" style="fill: #f7f4ec;" />
+      <path transform="translate(14 4) scale(3.1)" d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z" style="fill: #141312;" />
+    </svg>
+    <span class="brand-name">Call<span class="accent">Trove</span></span>
+  </a>
+  <a class="back-link" href="/">&larr; Back to home</a>
+</nav>
+
+<main>
+  <div class="doc">
+    <div>
+      <h1>Privacy Policy</h1>
+      <p class="updated">Last updated September 25, 2026</p>
+    </div>
+
+    <section>
+      <p>This Privacy Policy explains how CallTrove ("CallTrove," "we," "us") collects, uses, and protects information in connection with the CallTrove call-recording and compliance dashboard (the "Service"). It applies to the agencies and organizations that hold a CallTrove account ("Customer") and to the individual users a Customer authorizes to access the Service ("Users").</p>
+    </section>
+
+    <section>
+      <h2>1. Your organization's responsibilities</h2>
+      <p>CallTrove is a tool your organization ("Customer") uses to store, organize, and review calls handled through your connected GoHighLevel account. If those calls involve your own patients, clients, or customers (including anyone whose information may be protected health information under HIPAA), your organization remains responsible for obtaining any consent required to record those calls and for determining what compliance obligations apply to your use of the Service. If your organization needs a Business Associate Agreement, contact <a href="mailto:support@calltrove.com">support@calltrove.com</a>.</p>
+    </section>
+
+    <section>
+      <h2>2. Information we collect</h2>
+      <p><strong>Account information:</strong> username, a securely hashed password, account role, and the GoHighLevel user your account is linked to.</p>
+      <p><strong>Call data:</strong> recordings, call metadata (timestamps, phone numbers, disposition, duration), and, where your organization enables it, AI-generated transcripts, all ingested from your connected GoHighLevel account.</p>
+      <p><strong>Access and security logs:</strong> each time a recording or transcript is viewed or downloaded, we log who accessed it, when, and whether the request succeeded, consistent with HIPAA's audit-control requirements.</p>
+      <p><strong>Technical information:</strong> IP address and browser user-agent, collected at sign-in and at PHI-access events for security and abuse prevention.</p>
+      <p><strong>Two-factor authentication data:</strong> if you enable it, a secret used to verify authenticator-app codes and hashed recovery codes, never the content of your recordings.</p>
+    </section>
+
+    <section>
+      <h2>3. How we use information</h2>
+      <p>To provide the Service: storing, organizing, and displaying your organization's calls, transcripts, and reports. To secure your account: authentication, abuse prevention, and the access audit log described above. To operate and maintain CallTrove: troubleshooting and reliability.</p>
+      <p>We do not use call recordings, transcripts, or account information for advertising, and we do not sell personal information.</p>
+    </section>
+
+    <section>
+      <h2>4. How we share information</h2>
+      <p><strong>Amazon Web Services (AWS):</strong> recordings and transcripts are stored on AWS infrastructure; optional transcription runs through AWS Transcribe; account emails, where applicable, are sent through Amazon SES. AWS acts as our infrastructure provider under its own security commitments.</p>
+      <p><strong>GoHighLevel:</strong> CallTrove connects to your GoHighLevel account, using credentials you provide, to ingest calls already recorded there. We don't share CallTrove account or audit data back to GoHighLevel beyond what's needed to display your own calls to you.</p>
+      <p>We do not sell, rent, or share information with data brokers or advertisers, and one Customer's recordings and transcripts are never visible to another Customer; each organization's data is isolated from every other's.</p>
+    </section>
+
+    <section>
+      <h2>5. Data retention and deletion</h2>
+      <p>Your organization's data is retained for as long as your CallTrove account is active. If an account is canceled, we hold its data for a grace period before permanent deletion (shown in your account's cancellation flow), so you have time to change your mind or export what you need. After that period, your organization's recordings, transcripts, and account data are permanently purged from our systems.</p>
+    </section>
+
+    <section>
+      <h2>6. Your rights and choices</h2>
+      <p>Users can review and update their own account information, enable or disable two-factor authentication, and change their password at any time from Account settings. Requests to access, correct, or delete information beyond what's available in-product can be sent to <a href="mailto:support@calltrove.com">support@calltrove.com</a>. Because CallTrove holds this data on behalf of your organization, individual requests are generally directed to the Customer organization that controls the account.</p>
+    </section>
+
+    <section>
+      <h2>7. Cookies and tracking</h2>
+      <p>CallTrove uses a single, essential session cookie to keep you signed in. We don't use advertising or analytics cookies, and we don't run third-party trackers on the Service.</p>
+    </section>
+
+    <section>
+      <h2>8. Children's privacy</h2>
+      <p>The Service is intended for business use by adults working at our Customer organizations. It is not directed at children, and we do not knowingly collect information from them.</p>
+    </section>
+
+    <section>
+      <h2>9. Changes to this policy</h2>
+      <p>We'll update the date at the top of this page whenever this policy changes, and post the updated version here. Material changes will be communicated to account administrators.</p>
+    </section>
+
+    <section>
+      <h2>10. Contact us</h2>
+      <p>Questions about this policy or how CallTrove handles information: <a href="mailto:support@calltrove.com">support@calltrove.com</a>.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span class="copyright">&copy; 2026 CallTrove. All rights reserved.</span>
+  <div class="footer-links">
+    <a href="/terms.html">Terms &amp; conditions</a>
+    <a href="/">Back to home</a>
+  </div>
+</footer>
+
+</body>
+</html>
