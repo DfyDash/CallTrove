@@ -350,6 +350,15 @@ a:hover {
   font-size: 0.9rem;
 }
 
+/* The unconditional display: block above wins over the browser's own
+   [hidden] { display: none } rule (equal specificity, but author CSS
+   always beats the UA stylesheet) -- without this, JS setting .hidden on
+   a nav link (e.g. app.js hiding the Operator link for non-operators)
+   has no visible effect at all. */
+.nav-link[hidden] {
+  display: none;
+}
+
 .nav-link:hover {
   background: rgba(127, 127, 127, 0.12);
 }
