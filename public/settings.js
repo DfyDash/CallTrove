@@ -219,7 +219,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "backfill", "activity", "access"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "backfill", "activity", "access", "danger"];
 const tabLoaded = {};
 
 function activateTab(tab) {
