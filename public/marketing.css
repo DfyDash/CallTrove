@@ -52,7 +52,6 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
 
 /* Feature grid */
 .features { padding: 0 24px 88px; max-width: 1040px; margin: 0 auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
-@media (max-width: 720px) { .features { grid-template-columns: 1fr; } .hero h1 { font-size: 38px; } }
 .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
 .feature-card svg { margin-bottom: 16px; }
 .feature-card h3 { margin: 0 0 10px; font-size: 18px; font-weight: 600; color: var(--ink); }
@@ -65,7 +64,6 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
 .security-intro h2 { margin: 0; font-weight: 600; font-size: 34px; color: var(--page-bg); }
 .security-intro p { margin: 0; font-size: 17px; line-height: 1.7; color: #bcb2a0; }
 .safeguards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 36px; }
-@media (max-width: 720px) { .safeguards { grid-template-columns: 1fr; } }
 .safeguard { display: flex; gap: 16px; }
 .safeguard svg { flex-shrink: 0; margin-top: 2px; }
 .safeguard h3 { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: var(--page-bg); }
@@ -89,3 +87,42 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
 .doc section h2 { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--ink); }
 .doc section p { margin: 0 0 12px; font-size: 15.5px; line-height: 1.75; color: #3a362f; }
 .doc section p:last-child { margin-bottom: 0; }
+
+/* Tablet: 2-column grids collapse to 1 */
+@media (max-width: 720px) {
+  .features { grid-template-columns: 1fr; }
+  .safeguards { grid-template-columns: 1fr; }
+  .hero h1 { font-size: 38px; }
+}
+
+/* Phone */
+@media (max-width: 560px) {
+  .site-nav { padding: 14px 16px; }
+  .nav-links { gap: 14px; }
+  .nav-link { display: none; }
+  .brand-name { font-size: 1.15rem; }
+  .signin-btn { padding: 8px 14px; font-size: 0.85rem; }
+
+  .hero { padding: 44px 16px 40px; }
+  .hero h1 { font-size: 28px; line-height: 1.2; margin-bottom: 16px; }
+  .hero p { font-size: 16px; margin-bottom: 24px; }
+  .hero-actions { flex-direction: column; align-items: stretch; gap: 10px; }
+  .cta-btn, .cta-secondary { text-align: center; }
+  .cta-btn { padding: 14px 20px; }
+
+  .features { padding: 0 16px 56px; gap: 14px; }
+  .feature-card { padding: 20px; }
+  .feature-card h3 { font-size: 16.5px; }
+
+  .security-section { padding: 44px 16px; }
+  .security-intro h2 { font-size: 26px; }
+  .safeguards { gap: 24px; }
+  .email-practices { padding-top: 24px; }
+
+  .site-footer { padding: 20px 16px; flex-direction: column; align-items: flex-start; gap: 14px; }
+  .footer-links { flex-wrap: wrap; row-gap: 8px; }
+
+  .doc-main { padding: 32px 16px 56px; }
+  .doc { gap: 28px; }
+  .doc h1 { font-size: 30px; }
+}
