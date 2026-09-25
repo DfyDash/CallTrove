@@ -766,6 +766,14 @@ async function createTenant({ id, name, ownerUserId }) {
   await pool.query(`INSERT INTO tenants (id, name, owner_user_id) VALUES ($1, $2, $3)`, [id, name, ownerUserId || null]);
 }
 
+// Fills in owner_user_id after the fact -- needed because the owner's user
+// row has a tenant_id FK pointing back at this same tenant, so the tenant
+// has to exist (with owner_user_id still null) before that user can be
+// created at all. See routes/auth.js's /signup for the actual sequencing.
+async function updateTenantOwner(tenantId, ownerUserId) {
+  await pool.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [ownerUserId, tenantId]);
+}
+
 async function getTenantById(id) {
   const { rows } = await pool.query(
     `SELECT id, name, owner_user_id AS "ownerUserId", status,
@@ -1174,6 +1182,7 @@ module.exports = {
   DEFAULT_TENANT_ID,
   DEFAULT_GHL_ACCOUNT_ID,
   createTenant,
+  updateTenantOwner,
   getTenantById,
   requestTenantCancellation,
   restoreTenant,

@@ -1,5 +1,5 @@
 const express = require("express");
-const { randomBytes } = require("crypto");
+const { randomBytes, randomUUID } = require("crypto");
 const rateLimit = require("express-rate-limit");
 const db = require("../db");
 const totp = require("../totp");
@@ -217,6 +217,88 @@ router.post("/login-mfa-email/resend", emailOtpResendLimiter, async (req, res) =
 
   await sendLoginEmailOtp(user);
   res.redirect("/login-mfa-email.html?sent=1");
+});
+
+// Scoped to signup specifically -- creating a tenant is a real action (new
+// tenant + user rows, a welcome email), so this caps how many one IP can
+// create in a window. Keyed by IP rather than username: an abuser just
+// picks a fresh username every attempt, so there's no stable identity to
+// key against before the account exists.
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const SIGNUP_EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Not linked from anywhere public yet -- reachable only by URL while this
+// is still being tested (see public/signup.html). Creates a brand-new
+// tenant with this account as its admin, owning it outright (no invite,
+// no approval step). The tenant has to exist before the owning user can
+// (tenant_id is a real FK on users), and the user has to exist before the
+// tenant's owner_user_id can point at them (same FK the other direction) --
+// so the sequence is: tenant with no owner yet, then the user, then link
+// the two (db.updateTenantOwner).
+router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, async (req, res) => {
+  const businessName = ((req.body || {}).businessName || "").trim();
+  const username = ((req.body || {}).username || "").trim();
+  const address = ((req.body || {}).email || "").trim().toLowerCase();
+  const { password, confirmPassword } = req.body || {};
+
+  if (!businessName || !username || !address || !password) {
+    return res.redirect("/signup.html?error=missing");
+  }
+  if (!SIGNUP_EMAIL_FORMAT.test(address)) {
+    return res.redirect("/signup.html?error=email");
+  }
+  if (password !== confirmPassword) {
+    return res.redirect("/signup.html?error=mismatch");
+  }
+  if (password.length < 8) {
+    return res.redirect("/signup.html?error=tooshort");
+  }
+
+  const existing = await db.getUserByUsername(username);
+  if (existing) {
+    return res.redirect("/signup.html?error=taken");
+  }
+
+  const tenantId = randomUUID();
+  const userId = randomUUID();
+  const { hash, salt } = hashPassword(password);
+
+  await db.createTenant({ id: tenantId, name: businessName });
+  await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId });
+  await db.updateTenantOwner(tenantId, userId);
+  // Stored as-provided, unverified -- same shape as the self-service
+  // "start email verification" flow (db.setUserPendingEmail). Proving it
+  // (and optionally turning it into an MFA method) happens later, in
+  // Account settings, the same way for every user regardless of how their
+  // account was created.
+  await db.setUserPendingEmail(userId, address);
+  await db.logAudit({
+    actorId: userId,
+    actorUsername: username,
+    action: "tenant_signup",
+    message: `Signed up "${businessName}"`,
+    tenantId,
+  });
+
+  try {
+    await email.sendEmail({
+      to: address,
+      subject: "Welcome to CallTrove",
+      text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with the username you chose (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
+    });
+  } catch (err) {
+    console.error("[signup] failed to send welcome email:", err);
+  }
+
+  const user = await db.getUserById(userId);
+  await completeLogin(req, user);
+  res.redirect("/");
 });
 
 router.post("/logout", express.urlencoded({ extended: false }), (req, res) => {

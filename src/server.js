@@ -89,6 +89,11 @@ app.get("/login-mfa.html", (req, res) => res.sendFile(path.join(__dirname, "..",
 app.get("/login-mfa.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.js")));
 app.get("/login-mfa-email.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-email.html")));
 app.get("/login-mfa-email.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-email.js")));
+// Not linked from anywhere public yet -- reachable only by direct URL
+// while self-serve signup is still being tested (see routes/auth.js's
+// /signup and the user-facing note this was scoped down to).
+app.get("/signup.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "signup.html")));
+app.get("/signup.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "signup.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
