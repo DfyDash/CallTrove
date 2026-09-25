@@ -2,6 +2,8 @@ const express = require("express");
 const qrcode = require("qrcode-generator");
 const db = require("../db");
 const totp = require("../totp");
+const emailOtp = require("../emailOtp");
+const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
 const transcription = require("../transcription");
 const { requireCsrf, requireAccount, verifyPassword } = require("../auth");
@@ -94,13 +96,25 @@ router.get("/account/mfa", async (req, res) => {
   res.json({
     enabled: Boolean(user.totpEnabled),
     recoveryCodesRemaining: user.totpEnabled ? await db.countUnusedRecoveryCodes(user.id) : 0,
+    email: {
+      enabled: Boolean(user.emailOtpEnabled),
+      address: user.email || null,
+      verified: Boolean(user.emailVerifiedAt),
+    },
   });
 });
 
 // Starts (or restarts) enrollment: a fresh secret, not yet confirmed. Safe
 // to call again if a user abandons the flow partway through -- it just
 // overwrites the unconfirmed secret, and totp_enabled was never true.
+// Blocked while email OTP is the account's active method -- the two are
+// mutually exclusive (see db/schema.sql's comment on email_otp_enabled),
+// so the login flow never has to ask which one to use.
 router.post("/account/mfa/setup", requireCsrf, async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  if (user.emailOtpEnabled) {
+    return res.status(400).json({ error: "Disable email sign-in codes first" });
+  }
   const secret = totp.generateSecret();
   await db.setUserTotpSecret(req.session.user.id, secret);
   res.json({ manualEntryKey: secret });
@@ -163,6 +177,89 @@ router.post("/account/mfa/recovery-codes/regenerate", requireCsrf, async (req, r
   const codes = Array.from({ length: RECOVERY_CODE_COUNT }, () => totp.generateRecoveryCode());
   await db.replaceRecoveryCodes(user.id, codes.map(totp.hashRecoveryCode));
   res.json({ status: "regenerated", recoveryCodes: codes });
+});
+
+// --- Email-based MFA (self-service -- see src/email.js) ---
+
+const EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Starts (or restarts) verification of a new address: sends a code, and
+// resets email_verified_at/email_otp_enabled (see db's setUserPendingEmail)
+// so a stale, never-confirmed address can't linger as if it were active.
+// Safe to call again for the same address -- that's just "resend".
+// Blocked while TOTP is the account's active method, same mutual-
+// exclusivity rule /account/mfa/setup enforces the other way around.
+router.post("/account/email/start", requireCsrf, async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  if (user.totpEnabled) {
+    return res.status(400).json({ error: "Disable authenticator app two-factor authentication first" });
+  }
+  const address = String((req.body || {}).email || "").trim().toLowerCase();
+  if (!EMAIL_FORMAT.test(address)) {
+    return res.status(400).json({ error: "Enter a valid email address" });
+  }
+  if (!email.isEnabled()) {
+    return res.status(503).json({ error: "Email sign-in codes are not available right now" });
+  }
+
+  const recentCount = await db.countRecentEmailOtpCodes(user.id, "verify_email", 15);
+  if (recentCount >= 5) {
+    return res.status(429).json({ error: "Too many codes requested -- try again in a few minutes" });
+  }
+
+  await db.setUserPendingEmail(user.id, address);
+  const code = emailOtp.generateCode();
+  await db.createEmailOtpCode(user.id, "verify_email", emailOtp.hashCode(code), emailOtp.expiresAt());
+  try {
+    await email.sendEmail({
+      to: address,
+      subject: "Confirm your CallTrove email address",
+      text: `Your CallTrove verification code is: ${code}\n\nEnter this code in CallTrove to confirm this email address. This code expires in 10 minutes.\n\nIf you didn't request this, you can ignore this email.`,
+    });
+  } catch (err) {
+    console.error("[email-otp] failed to send verification code:", err);
+    return res.status(502).json({ error: "Could not send the verification email -- try again shortly" });
+  }
+  res.json({ status: "sent" });
+});
+
+// Proves the user actually received the code at that address before
+// flipping email_verified_at and email_otp_enabled on -- same
+// prove-possession-before-enabling shape as /account/mfa/confirm above.
+router.post("/account/email/confirm", requireCsrf, async (req, res) => {
+  const user = await db.getUserById(req.session.user.id);
+  if (!user.email || user.emailVerifiedAt) {
+    return res.status(400).json({ error: "start verification first" });
+  }
+  if (user.totpEnabled) {
+    return res.status(400).json({ error: "Disable authenticator app two-factor authentication first" });
+  }
+
+  const code = String((req.body || {}).code || "").trim();
+  const ok = /^\d{6}$/.test(code) && (await db.consumeEmailOtpCode(user.id, "verify_email", emailOtp.hashCode(code)));
+  if (!ok) {
+    return res.status(400).json({ error: "incorrect code" });
+  }
+
+  const verified = await db.verifyUserEmail(user.id);
+  if (!verified) {
+    return res.status(409).json({ error: "This email is already verified on another account" });
+  }
+  await db.enableUserEmailOtp(user.id);
+  res.json({ status: "enabled" });
+});
+
+// Re-requires the current password, same as /account/mfa/disable -- turning
+// off a security control is exactly the kind of action a hijacked-but-
+// still-logged-in session shouldn't be able to do on its own.
+router.post("/account/email/disable", requireCsrf, async (req, res) => {
+  const user = await db.getUserByUsername(req.session.user.username);
+  const password = (req.body || {}).password;
+  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+    return res.status(400).json({ error: "incorrect password" });
+  }
+  await db.disableUserEmailOtp(user.id);
+  res.json({ status: "disabled" });
 });
 
 router.get("/contacts", requireAccount, async (req, res) => {

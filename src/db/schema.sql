@@ -365,3 +365,43 @@ CREATE TABLE IF NOT EXISTS totp_recovery_codes (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS totp_recovery_codes_user_idx ON totp_recovery_codes (user_id);
+
+-- Email-based MFA (self-service, see src/email.js) -- additive to the TOTP
+-- columns above, not a replacement. A user can turn on one or the other,
+-- never both, so the login flow never has to ask which second factor to
+-- use (see routes/auth.js's /login). email_verified_at stays NULL until
+-- the pending address is proven via a code sent to it, the same
+-- prove-possession-before-enabling shape as totp_secret/totp_enabled
+-- above; setting a new pending email always clears both it and
+-- email_otp_enabled, so a stale unverified address can never silently
+-- become the MFA delivery address.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_otp_enabled BOOLEAN NOT NULL DEFAULT false;
+-- Scoped to verified emails only: an unverified, just-typed-in address
+-- shouldn't block anyone else from attempting to verify the same one (that
+-- would both leak "is this email already in use" and let one abandoned,
+-- never-confirmed entry permanently squat an address nobody ever proved
+-- they own). Enforced again at verification time in application code
+-- (db/index.js's verifyUserEmail), since this index alone can't stop two
+-- users from separately reaching a legitimately-verified collision.
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_verified_unique_idx ON users (email) WHERE email_verified_at IS NOT NULL;
+
+-- One-time codes for both proving a new email address and for the login
+-- step itself. purpose keeps the two apart, so a code issued to confirm
+-- an email change can't double as a login code and vice versa. Numeric
+-- and short-lived, unlike totp_recovery_codes' high-entropy tokens above
+-- (an email OTP is conventionally a 6-digit code); brute-force protection
+-- is the route-level rate limiter (routes/auth.js's mfaLimiter), the same
+-- backstop the TOTP/recovery-code login step above already relies on,
+-- rather than a per-row attempt counter.
+CREATE TABLE IF NOT EXISTS email_otp_codes (
+  id          UUID PRIMARY KEY,
+  user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose     TEXT NOT NULL CHECK (purpose IN ('verify_email', 'login')),
+  code_hash   TEXT NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  used_at     TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS email_otp_codes_user_idx ON email_otp_codes (user_id, purpose);

@@ -83,6 +83,52 @@
         <p id="mfa-password-error" class="login-error" hidden></p>
       </div>
     </div>
+
+    <div class="settings-section" id="email-otp-section">
+      <h2>Email sign-in codes</h2>
+      <p id="email-otp-status" class="settings-note">Loading…</p>
+
+      <div id="email-otp-unavailable-panel" hidden>
+        <p class="settings-note">Email sign-in codes are an alternative to the authenticator app above -- turn that off first to use this instead.</p>
+      </div>
+
+      <div id="email-otp-off-panel" hidden>
+        <p class="settings-note">Get a 6-digit code by email each time you sign in, instead of using an authenticator app.</p>
+        <label>
+          Email address
+          <input type="email" id="email-otp-address-input" autocomplete="email" />
+        </label>
+        <button type="button" id="email-otp-start-btn">Send verification code</button>
+      </div>
+
+      <div id="email-otp-confirm-panel" hidden>
+        <p id="email-otp-confirm-copy" class="settings-note"></p>
+        <label>
+          Enter the 6-digit code we emailed you
+          <input type="text" id="email-otp-confirm-input" inputmode="numeric" autocomplete="one-time-code" />
+        </label>
+        <button type="button" id="email-otp-confirm-btn">Confirm and enable</button>
+        <button type="button" id="email-otp-resend-btn">Resend code</button>
+        <button type="button" id="email-otp-setup-cancel-btn">Cancel</button>
+        <p id="email-otp-setup-error" class="login-error" hidden></p>
+      </div>
+
+      <div id="email-otp-on-panel" hidden>
+        <p id="email-otp-address-display" class="settings-note"></p>
+        <button type="button" id="email-otp-disable-btn" class="delete-btn">Disable email sign-in codes</button>
+      </div>
+
+      <div id="email-otp-password-confirm" class="danger-zone" hidden>
+        <p class="settings-note">Disabling email sign-in codes removes this second-factor option -- your password alone will be enough again.</p>
+        <label>
+          Confirm your password
+          <input type="password" id="email-otp-password-input" autocomplete="current-password" />
+        </label>
+        <button type="button" id="email-otp-password-confirm-btn">Confirm</button>
+        <button type="button" id="email-otp-password-cancel-btn">Cancel</button>
+        <p id="email-otp-password-error" class="login-error" hidden></p>
+      </div>
+    </div>
   </div>
   <script src="account.js"></script>
 </body>

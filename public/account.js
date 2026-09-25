@@ -82,6 +82,7 @@ async function refreshMfaStatus() {
     mfaStatus.textContent = "Two-factor authentication is off.";
     mfaOffPanel.hidden = false;
   }
+  refreshEmailOtpStatus(data);
 }
 
 document.getElementById("mfa-start-btn").addEventListener("click", async () => {
@@ -177,4 +178,129 @@ document.getElementById("mfa-password-confirm-btn").addEventListener("click", as
     refreshMfaStatus();
   }
   pendingPasswordAction = null;
+});
+
+// --- Email sign-in codes (mutually exclusive with the authenticator app above) ---
+
+const emailOtpStatus = document.getElementById("email-otp-status");
+const emailOtpUnavailablePanel = document.getElementById("email-otp-unavailable-panel");
+const emailOtpOffPanel = document.getElementById("email-otp-off-panel");
+const emailOtpConfirmPanel = document.getElementById("email-otp-confirm-panel");
+const emailOtpOnPanel = document.getElementById("email-otp-on-panel");
+const emailOtpAddressInput = document.getElementById("email-otp-address-input");
+const emailOtpConfirmCopy = document.getElementById("email-otp-confirm-copy");
+const emailOtpConfirmInput = document.getElementById("email-otp-confirm-input");
+const emailOtpSetupError = document.getElementById("email-otp-setup-error");
+const emailOtpAddressDisplay = document.getElementById("email-otp-address-display");
+const emailOtpPasswordConfirm = document.getElementById("email-otp-password-confirm");
+const emailOtpPasswordInput = document.getElementById("email-otp-password-input");
+const emailOtpPasswordError = document.getElementById("email-otp-password-error");
+
+let pendingEmailAddress = null;
+
+function hideEmailOtpPanels() {
+  emailOtpUnavailablePanel.hidden = true;
+  emailOtpOffPanel.hidden = true;
+  emailOtpConfirmPanel.hidden = true;
+  emailOtpOnPanel.hidden = true;
+  emailOtpPasswordConfirm.hidden = true;
+}
+
+// Driven by the same GET /api/account/mfa response refreshMfaStatus already
+// fetched, so the authenticator-app status and this section never
+// disagree with each other.
+function refreshEmailOtpStatus(data) {
+  hideEmailOtpPanels();
+  if (data.enabled) {
+    // TOTP is the account's active method -- mutually exclusive, see
+    // db/schema.sql's comment on email_otp_enabled.
+    emailOtpStatus.textContent = "Email sign-in codes are off.";
+    emailOtpUnavailablePanel.hidden = false;
+    return;
+  }
+  if (data.email.enabled) {
+    emailOtpStatus.textContent = "Email sign-in codes are on.";
+    emailOtpAddressDisplay.textContent = `Codes are sent to ${data.email.address}.`;
+    emailOtpOnPanel.hidden = false;
+  } else if (data.email.address && !data.email.verified) {
+    pendingEmailAddress = data.email.address;
+    emailOtpStatus.textContent = "Confirm your email to finish turning on email sign-in codes.";
+    emailOtpConfirmCopy.textContent = `Enter the code we sent to ${data.email.address}.`;
+    emailOtpConfirmInput.value = "";
+    emailOtpSetupError.hidden = true;
+    emailOtpConfirmPanel.hidden = false;
+  } else {
+    emailOtpStatus.textContent = "Email sign-in codes are off.";
+    emailOtpAddressInput.value = "";
+    emailOtpOffPanel.hidden = false;
+  }
+}
+
+document.getElementById("email-otp-start-btn").addEventListener("click", async () => {
+  const res = await fetch("/api/account/email/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ email: emailOtpAddressInput.value.trim() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || "Could not send a verification code.");
+  refreshMfaStatus();
+});
+
+document.getElementById("email-otp-setup-cancel-btn").addEventListener("click", refreshMfaStatus);
+
+document.getElementById("email-otp-resend-btn").addEventListener("click", async () => {
+  if (!pendingEmailAddress) return refreshMfaStatus();
+  const res = await fetch("/api/account/email/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ email: pendingEmailAddress }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    emailOtpSetupError.textContent = data.error || "Could not send a new code.";
+    emailOtpSetupError.hidden = false;
+    return;
+  }
+  refreshMfaStatus();
+});
+
+document.getElementById("email-otp-confirm-btn").addEventListener("click", async () => {
+  const res = await fetch("/api/account/email/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ code: emailOtpConfirmInput.value.trim() }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    emailOtpSetupError.textContent = data.error || "Could not confirm that code.";
+    emailOtpSetupError.hidden = false;
+    return;
+  }
+  refreshMfaStatus();
+});
+
+document.getElementById("email-otp-disable-btn").addEventListener("click", () => {
+  hideEmailOtpPanels();
+  emailOtpPasswordInput.value = "";
+  emailOtpPasswordError.hidden = true;
+  emailOtpPasswordConfirm.hidden = false;
+  emailOtpPasswordInput.focus();
+});
+
+document.getElementById("email-otp-password-cancel-btn").addEventListener("click", refreshMfaStatus);
+
+document.getElementById("email-otp-password-confirm-btn").addEventListener("click", async () => {
+  const res = await fetch("/api/account/email/disable", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ password: emailOtpPasswordInput.value }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    emailOtpPasswordError.textContent = data.error || "Could not confirm your password.";
+    emailOtpPasswordError.hidden = false;
+    return;
+  }
+  refreshMfaStatus();
 });

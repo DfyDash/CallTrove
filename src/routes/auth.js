@@ -3,6 +3,8 @@ const { randomBytes } = require("crypto");
 const rateLimit = require("express-rate-limit");
 const db = require("../db");
 const totp = require("../totp");
+const emailOtp = require("../emailOtp");
+const email = require("../email");
 const { verifyPassword, hashPassword, sessionUser } = require("../auth");
 
 const router = express.Router();
@@ -66,6 +68,49 @@ const mfaLimiter = rateLimit({
   keyGenerator: (req) => (req.session && req.session.pendingMfaUserId) || req.ip,
 });
 
+// Scoped to the "send me another code" button specifically -- tighter than
+// mfaLimiter above (which governs guessing the code, not requesting a new
+// one), so a user mashing resend can't run up the shared attempt budget.
+// This is a fast, request-level backstop; countRecentEmailOtpCodes (see
+// sendLoginEmailOtp below) is the real, DB-backed cap that also covers the
+// initial /login-triggered send, which can't be keyed by a rate limiter at
+// all (there's no pendingMfaUserId yet on that first request).
+const emailOtpResendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.session && req.session.pendingMfaUserId) || req.ip,
+});
+
+// Generates and emails a fresh login code, unless this account has already
+// hit the send cap in the last 15 minutes -- the actual defense against a
+// bug or an abusive retry loop flooding someone's inbox (see the user-
+// facing note this was added for). Silently no-ops past the cap rather
+// than erroring: a code sent earlier in the window is very likely still
+// sitting in the user's inbox and still valid, so there's nothing wrong to
+// report back.
+// A transient SES failure (network blip, throttling, misconfiguration)
+// shouldn't crash the whole login request with an unhandled rejection --
+// the user just lands on the code-entry page without an email in their
+// inbox yet and can hit "send a new code" once whatever was wrong clears
+// up, rather than getting a raw 500 instead of a clean redirect.
+async function sendLoginEmailOtp(user) {
+  try {
+    const recentCount = await db.countRecentEmailOtpCodes(user.id, "login", 15);
+    if (recentCount >= 5) return;
+    const code = emailOtp.generateCode();
+    await db.createEmailOtpCode(user.id, "login", emailOtp.hashCode(code), emailOtp.expiresAt());
+    await email.sendEmail({
+      to: user.email,
+      subject: "Your CallTrove sign-in code",
+      text: `Your CallTrove sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to sign in, you can ignore this email -- your account is still secure.`,
+    });
+  } catch (err) {
+    console.error("[email-otp] failed to send login code:", err);
+  }
+}
+
 // Shared by /login (no MFA configured) and /login-mfa (MFA step passed) --
 // the actual point at which a session becomes a real logged-in session.
 async function completeLogin(req, user) {
@@ -97,6 +142,16 @@ router.post("/login", express.urlencoded({ extended: false }), loginLimiter, asy
     return res.redirect("/login-mfa.html");
   }
 
+  // Email OTP is the other self-service MFA option (see src/email.js) --
+  // mutually exclusive with TOTP above by construction (enabling one
+  // requires the other to already be off, see routes/api.js), so this
+  // never has to ask which second factor to use.
+  if (user.emailOtpEnabled) {
+    req.session.pendingMfaUserId = user.id;
+    await sendLoginEmailOtp(user);
+    return res.redirect("/login-mfa-email.html");
+  }
+
   await completeLogin(req, user);
   res.redirect("/");
 });
@@ -125,6 +180,43 @@ router.post("/login-mfa", express.urlencoded({ extended: false }), mfaLimiter, a
 
   await completeLogin(req, user);
   res.redirect("/");
+});
+
+router.post("/login-mfa-email", express.urlencoded({ extended: false }), mfaLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.redirect("/login.html");
+
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.emailOtpEnabled || !user.email) {
+    // The account's MFA was disabled (e.g. by an admin) mid-flow -- don't
+    // leave the pending state around either way.
+    req.session.pendingMfaUserId = undefined;
+    return res.redirect("/login.html");
+  }
+
+  const submitted = (req.body.code || "").trim();
+  const ok = /^\d{6}$/.test(submitted) && (await db.consumeEmailOtpCode(user.id, "login", emailOtp.hashCode(submitted)));
+
+  if (!ok) {
+    return res.redirect("/login-mfa-email.html?error=1");
+  }
+
+  await completeLogin(req, user);
+  res.redirect("/");
+});
+
+router.post("/login-mfa-email/resend", emailOtpResendLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingMfaUserId;
+  if (!pendingUserId) return res.redirect("/login.html");
+
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.emailOtpEnabled || !user.email) {
+    req.session.pendingMfaUserId = undefined;
+    return res.redirect("/login.html");
+  }
+
+  await sendLoginEmailOtp(user);
+  res.redirect("/login-mfa-email.html?sent=1");
 });
 
 router.post("/logout", express.urlencoded({ extended: false }), (req, res) => {

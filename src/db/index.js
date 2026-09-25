@@ -583,7 +583,8 @@ async function getUserByUsername(username) {
   const { rows } = await pool.query(
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
             role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
-            is_operator AS "isOperator", totp_enabled AS "totpEnabled"
+            is_operator AS "isOperator", totp_enabled AS "totpEnabled",
+            email_otp_enabled AS "emailOtpEnabled"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -593,7 +594,8 @@ async function getUserByUsername(username) {
 async function getUserById(id) {
   const { rows } = await pool.query(
     `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
-            is_operator AS "isOperator", totp_secret AS "totpSecret", totp_enabled AS "totpEnabled"
+            is_operator AS "isOperator", totp_secret AS "totpSecret", totp_enabled AS "totpEnabled",
+            email, email_verified_at AS "emailVerifiedAt", email_otp_enabled AS "emailOtpEnabled"
      FROM users WHERE id = $1`,
     [id]
   );
@@ -675,6 +677,85 @@ async function countUnusedRecoveryCodes(userId) {
   const { rows } = await pool.query(
     `SELECT count(*)::int AS count FROM totp_recovery_codes WHERE user_id = $1 AND used_at IS NULL`,
     [userId]
+  );
+  return rows[0].count;
+}
+
+// --- Email-based MFA (self-service, additive to TOTP above -- see src/email.js) ---
+
+// Starting (or restarting) verification always clears both email_verified_at
+// and email_otp_enabled -- same reset-on-restart shape as
+// setUserTotpSecret above, so a stale unverified address can never end up
+// as the account's active MFA delivery address.
+async function setUserPendingEmail(userId, email) {
+  await pool.query(
+    `UPDATE users SET email = $1, email_verified_at = NULL, email_otp_enabled = false WHERE id = $2`,
+    [email, userId]
+  );
+}
+
+// Returns false (and verifies nothing) if this exact address is already
+// verified on a different account -- the schema's unique index would also
+// catch this at the SQL level, but checking here first gives the route a
+// clean way to report "someone else already verified this" instead of a
+// raw constraint-violation error.
+async function verifyUserEmail(userId) {
+  const { rows: user } = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
+  if (!user[0] || !user[0].email) return false;
+  const { rows: conflict } = await pool.query(
+    `SELECT id FROM users WHERE email = $1 AND email_verified_at IS NOT NULL AND id != $2`,
+    [user[0].email, userId]
+  );
+  if (conflict.length > 0) return false;
+  await pool.query(`UPDATE users SET email_verified_at = now() WHERE id = $1`, [userId]);
+  return true;
+}
+
+async function enableUserEmailOtp(userId) {
+  await pool.query(
+    `UPDATE users SET email_otp_enabled = true WHERE id = $1 AND email_verified_at IS NOT NULL`,
+    [userId]
+  );
+}
+
+async function disableUserEmailOtp(userId) {
+  await pool.query(`UPDATE users SET email_otp_enabled = false WHERE id = $1`, [userId]);
+}
+
+async function createEmailOtpCode(userId, purpose, codeHash, expiresAt) {
+  await pool.query(
+    `INSERT INTO email_otp_codes (id, user_id, purpose, code_hash, expires_at) VALUES ($1, $2, $3, $4, $5)`,
+    [randomUUID(), userId, purpose, codeHash, expiresAt]
+  );
+}
+
+// Atomic and scoped to purpose, so a code issued to confirm an email
+// change can't double as a login code (or vice versa) even if the hashes
+// somehow matched. Expired or already-used codes never match.
+async function consumeEmailOtpCode(userId, purpose, codeHash) {
+  const { rows } = await pool.query(
+    `UPDATE email_otp_codes SET used_at = now()
+     WHERE user_id = $1 AND purpose = $2 AND code_hash = $3 AND used_at IS NULL AND expires_at > now()
+     RETURNING id`,
+    [userId, purpose, codeHash]
+  );
+  return rows.length > 0;
+}
+
+// The hard backstop against spamming someone's inbox -- checked fresh from
+// the DB immediately before every send, rather than relying solely on a
+// route-level rate limiter (express-rate-limit's in-memory store has no
+// way to key a request that hasn't resolved a user id yet, e.g. /login's
+// first hit, and a login retry loop -- a client bug or someone hammering
+// the form with a known password -- shouldn't be able to fire an
+// unbounded stream of emails just because each individual request "looks"
+// like a fresh, allowed one). Counts codes issued in the window regardless
+// of whether they were ever used.
+async function countRecentEmailOtpCodes(userId, purpose, sinceMinutes) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count FROM email_otp_codes
+     WHERE user_id = $1 AND purpose = $2 AND created_at > now() - ($3 || ' minutes')::interval`,
+    [userId, purpose, sinceMinutes]
   );
   return rows[0].count;
 }
@@ -1148,6 +1229,13 @@ module.exports = {
   replaceRecoveryCodes,
   consumeRecoveryCode,
   countUnusedRecoveryCodes,
+  setUserPendingEmail,
+  verifyUserEmail,
+  enableUserEmailOtp,
+  disableUserEmailOtp,
+  createEmailOtpCode,
+  consumeEmailOtpCode,
+  countRecentEmailOtpCodes,
   getLastSyncedAt,
   setLastSyncedAt,
   getAccountLastSyncedAt,

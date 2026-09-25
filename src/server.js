@@ -87,6 +87,8 @@ app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "..", "publ
 // otherwise bounce it back to /login.html.
 app.get("/login-mfa.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.html")));
 app.get("/login-mfa.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa.js")));
+app.get("/login-mfa-email.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-email.html")));
+app.get("/login-mfa-email.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login-mfa-email.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
