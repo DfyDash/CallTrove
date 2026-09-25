@@ -76,6 +76,7 @@ app.get("/", (req, res, next) => {
 });
 app.get("/privacy.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "privacy.html")));
 app.get("/terms.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "terms.html")));
+app.get("/marketing.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "marketing.css")));
 
 // Unauthenticated: the login page itself and what it needs to render.
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.html")));
