@@ -967,6 +967,13 @@ async function updateGhlAccountTokens(id, { accessToken, refreshToken, tokenExpi
   );
 }
 
+// Only called with a real fetched name (see src/routes/admin.js's OAuth
+// callback) -- never overwrites an existing name with null on a failed
+// GHL lookup.
+async function updateGhlAccountName(id, name) {
+  await pool.query(`UPDATE ghl_accounts SET name = $2 WHERE id = $1`, [id, name]);
+}
+
 async function listGhlAccountsForTenant(tenantId) {
   const { rows } = await pool.query(
     `SELECT id, ghl_location_id AS "ghlLocationId", name
@@ -1263,6 +1270,7 @@ module.exports = {
   createGhlAccount,
   getGhlAccountByLocationId,
   updateGhlAccountTokens,
+  updateGhlAccountName,
   listGhlAccountsForTenant,
   listAccessibleAccounts,
   listAllActiveGhlAccounts,

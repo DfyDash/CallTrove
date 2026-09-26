@@ -151,6 +151,22 @@ function forAccount({ apiToken, locationId } = {}) {
     return timezone;
   }
 
+  // The location's actual business name (GHL's OAuth token exchange
+  // doesn't include this at all -- only the raw locationId -- so
+  // src/routes/admin.js's OAuth callback calls this right after connecting
+  // a new account, so "GHL accounts" in Settings shows a real name instead
+  // of the bare location ID).
+  async function getLocationName() {
+    const url = `${GHL_API_BASE}/locations/${location}`;
+    const res = await fetch(url, { headers: headers() });
+    if (!res.ok) {
+      console.warn(`[ghlApi] could not fetch location name, status ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    return (data.location && data.location.name) || data.name || null;
+  }
+
   // Fetches the sub-account's GHL user list, trimmed to just what the admin
   // UI needs to map a login account to the identity that appears on their
   // calls -- not the full response, which includes each user's entire GHL
@@ -189,6 +205,7 @@ function forAccount({ apiToken, locationId } = {}) {
     downloadRecording,
     getUserName,
     getAccountTimezone,
+    getLocationName,
     listUsers,
     addContactNote,
   };

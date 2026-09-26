@@ -365,6 +365,14 @@ router.get("/oauth/callback", async (req, res) => {
     tokenExpiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
   };
 
+  // GHL's OAuth token exchange never includes a friendly business name --
+  // only the raw locationId -- so this is fetched separately, right after
+  // getting a working access token for this specific location. Best
+  // effort: a lookup failure here shouldn't block the connection itself,
+  // just falls back to the raw ID same as before.
+  const locationClient = ghlApi.forAccount({ apiToken: tokens.access_token, locationId });
+  const locationName = await locationClient.getLocationName().catch(() => null);
+
   // Re-authorizing an already-connected location (a token refresh, or
   // reinstalling after an uninstall) updates it in place instead of
   // creating a duplicate ghl_accounts row for the same GHL location --
@@ -382,13 +390,14 @@ router.get("/oauth/callback", async (req, res) => {
   }
   if (existing) {
     await db.updateGhlAccountTokens(existing.id, tokenFields);
+    if (locationName) await db.updateGhlAccountName(existing.id, locationName);
     await log(req, "ghl_account_reconnected", `Reconnected GHL location "${locationId}"`);
   } else {
     await db.createGhlAccount({
       id: randomUUID(),
       tenantId: req.session.user.tenantId,
       ghlLocationId: locationId,
-      name: tokens.locationName || locationId,
+      name: locationName || locationId,
       ...tokenFields,
     });
     await log(req, "ghl_account_connected", `Connected GHL location "${locationId}"`);
