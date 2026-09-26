@@ -256,7 +256,7 @@ function transcriptCell(call) {
                 <p class="transcript-text">Loading…</p>
               </details>`;
     case "pending":
-      return `<span class="transcript-pending">Transcribing…</span>`;
+      return `<span class="transcript-pending" data-call="${call.id}">Transcribing…</span>`;
     case "failed":
       return `<span class="transcript-failed">Transcription failed</span>` +
         (canTranscribe ? ` <button class="transcribe-btn" data-call="${call.id}">Retry</button>` : "");
@@ -428,7 +428,7 @@ callRows.addEventListener("click", async (e) => {
     headers: { "X-CSRF-Token": csrfToken },
   });
   if (res.ok) {
-    btn.closest("td").innerHTML = `<span class="transcript-pending">Transcribing…</span>`;
+    btn.closest("td").innerHTML = `<span class="transcript-pending" data-call="${btn.dataset.call}">Transcribing…</span>`;
   } else {
     const data = await res.json().catch(() => ({}));
     alert(data.error || "Failed to start transcription");
@@ -436,6 +436,44 @@ callRows.addEventListener("click", async (e) => {
     btn.textContent = "Transcribe";
   }
 });
+
+// Auto-refreshes a row's transcript status once the background job
+// finishes, so "Transcribing…" doesn't just sit there until someone
+// reloads the page. Purely a read (GET .../transcript, the same
+// lazy-load endpoint the <details> toggle above already uses) -- it never
+// touches POST .../transcribe, so this can't itself start a second
+// transcription job. Keys off whatever ".transcript-pending" spans are
+// actually in the DOM right now (both an initial page load showing a
+// still-running job and the click handler above immediately produce one),
+// so a completed/failed row drops out and is never checked again; a
+// per-call in-flight guard just prevents two overlapping checks for the
+// same call if a tick starts before the previous one's fetch returns.
+const TRANSCRIPT_POLL_INTERVAL_MS = 10000;
+const transcriptPollInFlight = new Set();
+
+async function pollPendingTranscripts() {
+  const pendingCells = callRows.querySelectorAll(".transcript-pending[data-call]");
+  for (const cell of pendingCells) {
+    const callId = cell.dataset.call;
+    if (transcriptPollInFlight.has(callId)) continue;
+    transcriptPollInFlight.add(callId);
+    try {
+      const res = await fetch(`/api/calls/${callId}/transcript`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data.status === "completed" || data.status === "failed") {
+        const td = cell.closest("td");
+        if (td) td.innerHTML = transcriptCell({ id: callId, transcriptionStatus: data.status, hasRecording: true });
+      }
+    } catch {
+      // Transient fetch failure -- leave the row as "Transcribing…" and
+      // just try again on the next tick.
+    } finally {
+      transcriptPollInFlight.delete(callId);
+    }
+  }
+}
+setInterval(pollPendingTranscripts, TRANSCRIPT_POLL_INTERVAL_MS);
 
 // Minimal play/pause pill instead of the full native <audio controls>
 // widget, matching the artifact's compact design. Only one recording
