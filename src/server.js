@@ -108,6 +108,11 @@ app.get("/login-mfa-email.js", (req, res) => res.sendFile(path.join(__dirname, "
 // /signup and the user-facing note this was scoped down to).
 app.get("/signup.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "signup.html")));
 app.get("/signup.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "signup.js")));
+// Reachable pre-login: activates an account created by routes/admin.js's
+// POST /users/invite (see routes/auth.js's /set-password/validate and
+// /set-password) -- there's no session yet at this point either.
+app.get("/set-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.html")));
+app.get("/set-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));

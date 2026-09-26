@@ -1,5 +1,5 @@
 const express = require("express");
-const { randomBytes, randomUUID } = require("crypto");
+const { randomBytes, randomUUID, createHash } = require("crypto");
 const rateLimit = require("express-rate-limit");
 const db = require("../db");
 const totp = require("../totp");
@@ -122,6 +122,13 @@ async function completeLogin(req, user) {
 router.post("/login", express.urlencoded({ extended: false }), loginLimiter, async (req, res) => {
   const { username, password } = req.body;
   const user = username ? await db.getUserByUsername(username) : null;
+  // A user invited via routes/admin.js's POST /users/invite has no
+  // password yet (null hash/salt) until they redeem their link -- calling
+  // verifyPassword on that would throw (scrypt needs a real salt), and
+  // "wrong password" would be a misleading message anyway.
+  if (user && !user.passwordHash) {
+    return res.redirect("/login.html?error=pending");
+  }
   const valid = password ? verifyPassword(password, user ? user.passwordHash : dummyHash, user ? user.passwordSalt : dummySalt) : false;
   if (!user || !valid) {
     return res.redirect("/login.html?error=1");
@@ -294,6 +301,50 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const user = await db.getUserById(userId);
   await completeLogin(req, user);
   res.redirect("/");
+});
+
+// Same brute-force shape as mfaLimiter above -- keyed by the token itself
+// (unguessable, 192 bits of randomness) rather than IP, so it can't be
+// dodged by switching IPs, and multiple invitees redeeming links from the
+// same office IP never share a budget.
+const setPasswordLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.body && req.body.token) || req.ip,
+});
+
+// Read-only check the set-password page calls on load (public/set-password.js)
+// so someone with an already-used or expired link finds out immediately,
+// rather than typing a password just to be told "invalid" on submit.
+router.get("/set-password/validate", async (req, res) => {
+  const token = req.query.token;
+  if (!token) return res.json({ valid: false });
+  const user = await db.getUserByInviteTokenHash(createHash("sha256").update(token).digest("hex"));
+  res.json({ valid: !!user, username: user ? user.username : null });
+});
+
+// Activates an account created by routes/admin.js's POST /users/invite --
+// the token stands in for a password on this one request only (there's no
+// session yet), and db.redeemInviteToken re-checks its hash and expiry
+// itself so the same link can never be redeemed twice even under a race.
+router.post("/set-password", express.urlencoded({ extended: false }), setPasswordLimiter, async (req, res) => {
+  const { token, password, confirmPassword } = req.body || {};
+  if (!token) return res.redirect("/login.html?error=1");
+  if (!password || password !== confirmPassword) {
+    return res.redirect(`/set-password.html?token=${encodeURIComponent(token)}&error=mismatch`);
+  }
+  if (password.length < 8) {
+    return res.redirect(`/set-password.html?token=${encodeURIComponent(token)}&error=tooshort`);
+  }
+
+  const { hash, salt } = hashPassword(password);
+  const ok = await db.redeemInviteToken(createHash("sha256").update(token).digest("hex"), hash, salt);
+  if (!ok) {
+    return res.redirect("/set-password.html?error=invalid");
+  }
+  res.redirect("/login.html?activated=1");
 });
 
 router.post("/logout", express.urlencoded({ extended: false }), (req, res) => {

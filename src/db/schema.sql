@@ -442,3 +442,20 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_analysis JSONB;
 -- re-running Bedrock just to retry the note write.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS ghl_note_written_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS email_otp_codes_user_idx ON email_otp_codes (user_id, purpose);
+
+-- Lets an admin invite a GHL team member straight from Settings ("GHL
+-- team" list, src/routes/admin.js's POST /users/invite) instead of always
+-- hand-typing a username and password. The row is created immediately
+-- (so ghl_user_id linking and account access grants exist right away),
+-- but with no usable password until the invite is redeemed -- hence
+-- password_hash/password_salt dropping NOT NULL. invite_token_hash mirrors
+-- email_otp_codes/totp recovery codes: only a sha256 hash is ever stored,
+-- the raw token lives solely in the emailed link and is compared at
+-- redemption (src/routes/auth.js's POST /set-password), and it's cleared
+-- the moment a real password is set so a used or expired link can never
+-- be replayed.
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN password_salt DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_expires_at TIMESTAMPTZ;
+CREATE UNIQUE INDEX IF NOT EXISTS users_invite_token_hash_idx ON users (invite_token_hash) WHERE invite_token_hash IS NOT NULL;

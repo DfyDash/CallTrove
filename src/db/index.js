@@ -623,6 +623,44 @@ async function createUser({ id, username, passwordHash, passwordSalt, role, ghlU
   );
 }
 
+// Created straight from the "GHL team" invite list (routes/admin.js's
+// POST /users/invite) with no usable password yet -- only invite_token_hash
+// lets them in, via getUserByInviteTokenHash/redeemInviteToken below.
+async function createInvitedUser({ id, username, role, ghlUserId, ghlUserName, tenantId, inviteTokenHash, inviteTokenExpiresAt }) {
+  await pool.query(
+    `INSERT INTO users (id, username, role, ghl_user_id, ghl_user_name, tenant_id, invite_token_hash, invite_token_expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [id, username, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID, inviteTokenHash, inviteTokenExpiresAt]
+  );
+}
+
+// Looked up by the token's hash alone (see schema.sql's
+// users_invite_token_hash_idx) -- the set-password page has nothing else
+// to identify the user by until the link is actually clicked. Expired
+// rows are excluded here rather than left for the caller to check, so a
+// stale link reads the same as "no such invite" everywhere it's used.
+async function getUserByInviteTokenHash(tokenHash) {
+  const { rows } = await pool.query(
+    `SELECT id, username, invite_token_expires_at AS "inviteTokenExpiresAt"
+     FROM users WHERE invite_token_hash = $1 AND invite_token_expires_at > now()`,
+    [tokenHash]
+  );
+  return rows[0] || null;
+}
+
+// Sets the real password and clears the invite token in one statement --
+// re-checks the hash and expiry itself rather than trusting the caller
+// already did (getUserByInviteTokenHash above), so a token can never be
+// redeemed twice even under a race between two requests for the same link.
+async function redeemInviteToken(tokenHash, passwordHash, passwordSalt) {
+  const { rowCount } = await pool.query(
+    `UPDATE users SET password_hash = $2, password_salt = $3, invite_token_hash = NULL, invite_token_expires_at = NULL
+     WHERE invite_token_hash = $1 AND invite_token_expires_at > now()`,
+    [tokenHash, passwordHash, passwordSalt]
+  );
+  return rowCount > 0;
+}
+
 async function getUserByUsername(username) {
   const { rows } = await pool.query(
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
@@ -1311,6 +1349,9 @@ module.exports = {
   listCoverageGaps,
   getCall,
   createUser,
+  createInvitedUser,
+  getUserByInviteTokenHash,
+  redeemInviteToken,
   getUserByUsername,
   getUserById,
   listUsers,

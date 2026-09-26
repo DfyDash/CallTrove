@@ -420,6 +420,67 @@ async function deleteUser(id, username) {
   loadUsers();
 }
 
+// --- GHL team (invite list) ---
+
+const invitableRows = document.getElementById("invitable-rows");
+const invitableEmpty = document.getElementById("invitable-empty");
+
+async function loadInvitableGhlUsers() {
+  const res = await fetch("/api/admin/ghl-users/invitable");
+  if (!res.ok) {
+    invitableRows.innerHTML = "";
+    invitableEmpty.hidden = false;
+    invitableEmpty.textContent = "Could not load your GHL team.";
+    return;
+  }
+  const invitable = await res.json();
+  invitableRows.innerHTML = "";
+  invitableEmpty.textContent = "Everyone on your GHL team already has a login.";
+  invitableEmpty.hidden = invitable.length !== 0;
+  for (const u of invitable) {
+    const tr = document.createElement("tr");
+    const label = `${u.name || "(no name)"}${u.email ? ` — ${u.email}` : ""}`;
+    tr.innerHTML = `
+      <td data-label="Name">${escapeHtml(label)}</td>
+      <td data-label="Role">
+        <select class="invite-role-select">
+          <option value="user" ${u.suggestedRole === "user" ? "selected" : ""}>user</option>
+          <option value="admin" ${u.suggestedRole === "admin" ? "selected" : ""}>admin</option>
+        </select>
+      </td>
+      <td><button type="button" class="invite-btn">Add</button></td>
+    `;
+    tr.querySelector(".invite-btn").addEventListener("click", (e) => {
+      inviteGhlUser(u, tr.querySelector(".invite-role-select").value, e.target);
+    });
+    invitableRows.appendChild(tr);
+  }
+}
+
+async function inviteGhlUser(u, role, button) {
+  if (!u.email) {
+    alert("This GHL user has no email on file, so an invite link can't be sent.");
+    return;
+  }
+  button.disabled = true;
+  const res = await fetch("/api/admin/users/invite", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ ghlUserId: u.ghlUserId, ghlUserName: u.name, email: u.email, role }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert(body.error || "could not invite this user");
+    button.disabled = false;
+    return;
+  }
+  if (!body.emailSent) {
+    prompt(`Could not send the invite email. Share this link with ${u.email} directly:`, body.inviteUrl);
+  }
+  loadInvitableGhlUsers();
+  loadUsers();
+}
+
 addUserForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   addUserError.hidden = true;
@@ -459,6 +520,7 @@ async function loadTeam() {
 
   await loadGhlUsers();
   await loadUsers();
+  await loadInvitableGhlUsers();
 }
 
 // --- GHL accounts (multi-tenant: connected locations) ---

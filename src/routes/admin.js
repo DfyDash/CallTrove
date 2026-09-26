@@ -1,11 +1,12 @@
 const express = require("express");
-const { randomUUID, randomBytes } = require("crypto");
+const { randomUUID, randomBytes, createHash } = require("crypto");
 const archiver = require("archiver");
 const db = require("../db");
 const ghlApi = require("../ghlApi");
 const ghlOAuth = require("../ghlOAuth");
 const accountCredentials = require("../accountCredentials");
 const backfill = require("../backfill");
+const email = require("../email");
 const { getBuffer } = require("../storage");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
@@ -190,6 +191,92 @@ router.get("/ghl-users", async (req, res) => {
     console.error("[admin] failed to fetch GHL users:", err);
     res.status(502).json({ error: "could not fetch GHL user list" });
   }
+});
+
+// 7 days -- long enough that someone invited on a Friday isn't locked out
+// by Monday, short enough that a stale, unclicked invite link doesn't sit
+// valid indefinitely.
+const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+// GHL team members not yet linked to a CallTrove login -- backs the "GHL
+// team" list in Settings, next to the existing manual "Add user" form.
+// Suggests a role from GHL's own admin/user flag, but POST /users/invite
+// below never grants it without an admin confirming per person first --
+// being a GHL admin is a different judgment call than "should see every
+// recording in this account."
+router.get("/ghl-users/invitable", async (req, res) => {
+  const api = await ghlApiForTenant(req.session.user.tenantId);
+  if (!api.isConfigured()) return res.json([]);
+  let ghlUsers;
+  try {
+    ghlUsers = await api.listUsers();
+  } catch (err) {
+    console.error("[admin] failed to fetch GHL users for invite list:", err);
+    return res.status(502).json({ error: "could not fetch GHL user list" });
+  }
+  const existing = await db.listUsers(req.session.user.tenantId);
+  const takenGhlUserIds = new Set(existing.map((u) => u.ghlUserId).filter(Boolean));
+  const invitable = ghlUsers
+    .filter((u) => !takenGhlUserIds.has(u.id))
+    .map((u) => ({
+      ghlUserId: u.id,
+      name: u.name,
+      email: u.email,
+      suggestedRole: u.role === "admin" ? "admin" : "user",
+    }));
+  res.json(invitable);
+});
+
+// Creates the login immediately (so the ghlUserId link and account-access
+// grant exist right away) but with no usable password -- an emailed,
+// one-time link is how they actually activate it (see set-password.html /
+// POST /set-password in routes/auth.js), same "set your own credential,
+// never have an admin invent and relay one" shape as everything else
+// account-security-related in this app. The username is fixed to their
+// GHL email rather than left editable, matching the existing auto-link
+// convention (routes/admin.js's autoLinkGhlUsers) that a login's username
+// being the same address as their GHL account is how the two get matched.
+router.post("/users/invite", requireCsrf, async (req, res) => {
+  const { ghlUserId, ghlUserName, email: inviteEmail, role } = req.body || {};
+  if (!ghlUserId || !inviteEmail || !["admin", "user"].includes(role)) {
+    return res.status(400).json({ error: "ghlUserId, email, and a valid role are required" });
+  }
+  if (await db.getUserByUsername(inviteEmail)) {
+    return res.status(409).json({ error: "a user with that email already exists" });
+  }
+
+  const accounts = await db.listActiveGhlAccountsForTenant(req.session.user.tenantId);
+  if (!accounts.length) return res.status(400).json({ error: "no connected GHL account to invite them into" });
+  const account = accounts[0];
+
+  const rawToken = randomBytes(24).toString("hex");
+  const userId = randomUUID();
+  await db.createInvitedUser({
+    id: userId,
+    username: inviteEmail,
+    role,
+    ghlUserId,
+    ghlUserName: ghlUserName || null,
+    tenantId: req.session.user.tenantId,
+    inviteTokenHash: createHash("sha256").update(rawToken).digest("hex"),
+    inviteTokenExpiresAt: new Date(Date.now() + INVITE_TOKEN_TTL_MS),
+  });
+  await db.grantUserAccountAccess(userId, account.id);
+  await log(req, "user_invited", `Invited "${inviteEmail}" (role: ${role}, linked to GHL user ${ghlUserId})`);
+
+  const inviteUrl = `${req.protocol}://${req.get("host")}/set-password.html?token=${rawToken}`;
+  let emailSent = false;
+  try {
+    await email.sendEmail({
+      to: inviteEmail,
+      subject: "You've been added to CallTrove",
+      text: `You've been added to CallTrove for ${account.name || "your team"}.\n\nSet your password to finish activating your account:\n${inviteUrl}\n\nThis link expires in 7 days.`,
+    });
+    emailSent = true;
+  } catch (err) {
+    console.error("[admin] failed to send invite email:", err);
+  }
+  res.status(201).json({ status: "invited", emailSent, inviteUrl });
 });
 
 router.post("/users", requireCsrf, async (req, res) => {

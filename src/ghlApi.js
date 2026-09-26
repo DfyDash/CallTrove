@@ -171,14 +171,22 @@ function forAccount({ apiToken, locationId } = {}) {
   // UI needs to map a login account to the identity that appears on their
   // calls -- not the full response, which includes each user's entire GHL
   // permission-scope list and other internal detail with no reason to leave
-  // this server.
+  // this server. role comes along too (see routes/admin.js's "GHL team"
+  // invite list), to suggest a CallTrove role -- the query is already
+  // scoped to this locationId, so every user returned here (agency-level
+  // logins included) genuinely has access to this specific sub-account.
   async function listUsers() {
     const url = new URL(`${GHL_API_BASE}/users/`);
     url.searchParams.set("locationId", location);
     const res = await fetch(url, { headers: headers() });
     if (!res.ok) throw new Error(`users list failed with status ${res.status}`);
     const data = await res.json();
-    return (data.users || []).map((u) => ({ id: u.id, name: u.name, email: u.email }));
+    return (data.users || []).map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: (u.roles && u.roles.role) || null,
+    }));
   }
 
   // The one write call this client makes -- everything else above is

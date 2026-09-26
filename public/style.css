@@ -873,6 +873,11 @@ tbody tr:last-child td {
   font-size: 0.85rem;
 }
 
+.login-notice {
+  color: #1a7f37;
+  font-size: 0.85rem;
+}
+
 .cancel-card {
   width: 340px;
 }
