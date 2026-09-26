@@ -165,6 +165,22 @@ function forAccount({ apiToken, locationId } = {}) {
     return (data.users || []).map((u) => ({ id: u.id, name: u.name, email: u.email }));
   }
 
+  // The one write call this client makes -- everything else above is
+  // read-only. Requires the contacts.write scope (src/ghlOAuth.js's SCOPES
+  // list), separate from the readonly scopes needed for call ingestion
+  // itself. Used by src/callSummaryPoller.js to post the AI-generated call
+  // summary as a note on the contact.
+  async function addContactNote(contactId, body) {
+    const url = `${GHL_API_BASE}/contacts/${contactId}/notes`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { ...headers(), "Content-Type": "application/json" },
+      body: JSON.stringify({ body }),
+    });
+    if (!res.ok) throw new Error(`contacts/notes create failed with status ${res.status}`);
+    return res.json();
+  }
+
   return {
     isConfigured,
     searchConversations,
@@ -174,6 +190,7 @@ function forAccount({ apiToken, locationId } = {}) {
     getUserName,
     getAccountTimezone,
     listUsers,
+    addContactNote,
   };
 }
 

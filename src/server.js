@@ -11,6 +11,7 @@ const operatorRouter = require("./routes/operator");
 const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
+const callSummaryPoller = require("./callSummaryPoller");
 
 const app = express();
 
@@ -122,6 +123,7 @@ app.listen(port, () => {
 // workflow/webhook -- see src/poller.js for why.
 poller.start();
 transcriptionPoller.start();
+callSummaryPoller.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand

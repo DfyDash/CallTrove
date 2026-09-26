@@ -404,4 +404,27 @@ CREATE TABLE IF NOT EXISTS email_otp_codes (
   used_at     TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- AI call summary + structured analytics (Bedrock/Claude), generated from
+-- a call's transcript once transcription completes -- see
+-- src/callSummary.js / src/callSummaryPoller.js. Deliberately its own
+-- status column, independent of transcription_status: transcription can
+-- succeed while summarization is still pending, failed, or (for calls
+-- transcribed before this feature existed) never attempted at all.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary_status TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_ai_summary_status_check;
+ALTER TABLE calls ADD CONSTRAINT calls_ai_summary_status_check
+  CHECK (ai_summary_status IN ('none', 'pending', 'completed', 'failed'));
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary TEXT;
+-- sentiment, outcome, topics, followUpNeeded, followUpDetails -- see
+-- src/callSummary.js's prompt for the exact shape. JSONB rather than
+-- separate columns since this is analytics output, not something queried
+-- by individual field yet; the "Call report" analytics views can pull
+-- specific keys out with ->> once there's a real reason to.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_analysis JSONB;
+-- Set once the summary is actually posted as a GHL contact note --
+-- distinct from ai_summary_status = 'completed' (summary generated) so a
+-- GHL API failure after a successful Bedrock call doesn't require
+-- re-running Bedrock just to retry the note write.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ghl_note_written_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS email_otp_codes_user_idx ON email_otp_codes (user_id, purpose);

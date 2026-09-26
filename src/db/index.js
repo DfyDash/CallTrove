@@ -137,9 +137,15 @@ async function markTranscriptionPending(callId) {
   );
 }
 
+// ai_summary_status always moves to 'pending' here, same as
+// transcription_status itself does regardless of TRANSCRIPTION_ENABLED --
+// src/callSummaryPoller.js simply never picks these up if the feature
+// isn't configured, same as transcriptionPoller.js already does for
+// transcription. Keeps this module free of any dependency on
+// src/callSummary.js.
 async function markTranscriptionComplete(callId, transcript) {
   await pool.query(
-    `UPDATE calls SET transcription_status = 'completed', transcript = $2 WHERE id = $1`,
+    `UPDATE calls SET transcription_status = 'completed', transcript = $2, ai_summary_status = 'pending' WHERE id = $1`,
     [callId, transcript]
   );
 }
@@ -151,6 +157,31 @@ async function markTranscriptionFailed(callId) {
 async function listPendingTranscriptions() {
   const { rows } = await pool.query(`SELECT id FROM calls WHERE transcription_status = 'pending'`);
   return rows;
+}
+
+// --- AI call summary (Bedrock/Claude) ---
+
+async function listPendingCallSummaries() {
+  const { rows } = await pool.query(
+    `SELECT id, transcript, ghl_contact_id AS "contactId", ghl_account_id AS "ghlAccountId"
+     FROM calls WHERE ai_summary_status = 'pending'`
+  );
+  return rows;
+}
+
+async function markSummaryComplete(callId, summary, analysis) {
+  await pool.query(
+    `UPDATE calls SET ai_summary_status = 'completed', ai_summary = $2, ai_analysis = $3 WHERE id = $1`,
+    [callId, summary, analysis ? JSON.stringify(analysis) : null]
+  );
+}
+
+async function markSummaryFailed(callId) {
+  await pool.query(`UPDATE calls SET ai_summary_status = 'failed' WHERE id = $1`, [callId]);
+}
+
+async function markGhlNoteWritten(callId) {
+  await pool.query(`UPDATE calls SET ghl_note_written_at = now() WHERE id = $1`, [callId]);
 }
 
 // GHL's Messages API reliably includes who handled a call (unlike the
@@ -1010,6 +1041,20 @@ async function listActiveGhlAccountsForTenant(tenantId) {
   return rows;
 }
 
+// Same credential shape as listAllActiveGhlAccounts, for one account by
+// its own row id -- src/callSummaryPoller.js needs this to resolve a
+// single call's account (via accountCredentials.clientForAccount) rather
+// than looping every active account like the ingestion poller does.
+async function getGhlAccountById(id) {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+     FROM ghl_accounts WHERE id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
 // --- sync_state (poller checkpoint) ---
 
 async function getLastSyncedAt() {
@@ -1211,6 +1256,11 @@ module.exports = {
   markTranscriptionComplete,
   markTranscriptionFailed,
   listPendingTranscriptions,
+  listPendingCallSummaries,
+  markSummaryComplete,
+  markSummaryFailed,
+  markGhlNoteWritten,
+  getGhlAccountById,
   updateCallHandler,
   listContacts,
   listAllContacts,

@@ -11,10 +11,19 @@
 const GHL_OAUTH_AUTHORIZE_URL = "https://marketplace.gohighlevel.com/oauth/chooselocation";
 const GHL_OAUTH_TOKEN_URL = "https://services.leadconnectorhq.com/oauth/token";
 
-// The minimum scopes for what CallTrove actually reads today (see
+// The minimum scopes for what CallTrove actually does today (see
 // src/ghlApi.js) -- conversations/call messages, the location's user
-// list, and the location record itself (for its name/timezone).
-const SCOPES = ["conversations.readonly", "conversations/message.readonly", "locations.readonly", "users.readonly"].join(" ");
+// list, and the location record itself (for its name/timezone), plus
+// contacts.write for the one write call this app makes: posting an
+// AI-generated call summary as a note on the contact (src/callSummary.js /
+// src/callSummaryPoller.js).
+const SCOPES = [
+  "conversations.readonly",
+  "conversations/message.readonly",
+  "locations.readonly",
+  "users.readonly",
+  "contacts.write",
+].join(" ");
 
 function isConfigured() {
   return Boolean(process.env.GHL_OAUTH_CLIENT_ID && process.env.GHL_OAUTH_CLIENT_SECRET && process.env.GHL_OAUTH_REDIRECT_URI);
