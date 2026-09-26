@@ -834,9 +834,18 @@ tbody tr:last-child td {
 
 .transcript-edit-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   margin-top: 4px;
+}
+
+/* Full-width on its own line rather than squeezing in next to Save/Cancel
+   -- on a narrow phone card (see the ~860px table-to-card breakpoint
+   below) there's no room left beside two buttons for an error message
+   too. */
+.transcript-edit-error {
+  flex-basis: 100%;
 }
 
 .transcript-edit-textarea {
