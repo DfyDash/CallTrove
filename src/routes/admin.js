@@ -286,14 +286,28 @@ router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
 // an admin on one tenant can never read or flip this for an account that
 // isn't theirs.
 router.get("/settings", requireAccount, async (req, res) => {
-  res.json({ autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId) });
+  res.json({
+    autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId),
+    aiSummaryEnabled: await db.getAiSummaryEnabled(req.ghlAccountId),
+  });
 });
 
 router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
-  const enabled = Boolean((req.body || {}).autoTranscribeEnabled);
-  await db.setAutoTranscribeEnabled(req.ghlAccountId, enabled);
-  await log(req, "auto_transcribe_toggled", `Turned automatic transcription ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
-  res.json({ autoTranscribeEnabled: enabled });
+  const body = req.body || {};
+  const result = {};
+  if ("autoTranscribeEnabled" in body) {
+    const enabled = Boolean(body.autoTranscribeEnabled);
+    await db.setAutoTranscribeEnabled(req.ghlAccountId, enabled);
+    await log(req, "auto_transcribe_toggled", `Turned automatic transcription ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
+    result.autoTranscribeEnabled = enabled;
+  }
+  if ("aiSummaryEnabled" in body) {
+    const enabled = Boolean(body.aiSummaryEnabled);
+    await db.setAiSummaryEnabled(req.ghlAccountId, enabled);
+    await log(req, "ai_summary_toggled", `Turned per-call AI summary ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
+    result.aiSummaryEnabled = enabled;
+  }
+  res.json(result);
 });
 
 // --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---

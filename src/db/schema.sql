@@ -418,6 +418,14 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary_status TEXT NOT NULL DEFAU
 -- 'pending' forever, and src/callSummaryPoller.js would keep re-billing
 -- the same call every poll cycle indefinitely.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary_attempts INTEGER NOT NULL DEFAULT 0;
+
+-- Per-account opt-in, same pattern and same reasoning as
+-- ghl_accounts.auto_transcribe_enabled: this is a billed, per-call feature
+-- (see the $0.02/min + $0.01/call metered pricing this was designed
+-- around), so it must default OFF and be turned on explicitly per
+-- account, never enabled account-wide just because transcription itself
+-- is on.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ai_summary_enabled BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_ai_summary_status_check;
 ALTER TABLE calls ADD CONSTRAINT calls_ai_summary_status_check
   CHECK (ai_summary_status IN ('none', 'pending', 'completed', 'failed'));

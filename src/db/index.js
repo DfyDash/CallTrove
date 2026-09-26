@@ -137,15 +137,20 @@ async function markTranscriptionPending(callId) {
   );
 }
 
-// ai_summary_status always moves to 'pending' here, same as
-// transcription_status itself does regardless of TRANSCRIPTION_ENABLED --
-// src/callSummaryPoller.js simply never picks these up if the feature
-// isn't configured, same as transcriptionPoller.js already does for
-// transcription. Keeps this module free of any dependency on
-// src/callSummary.js.
+// ai_summary_status only moves to 'pending' when the call's own account has
+// explicitly opted into ai_summary_enabled -- this is a billed, per-call
+// feature (see schema.sql's comment on ai_summary_enabled), so it must
+// never run just because transcription itself is on for the account.
+// Checked with a subquery rather than a JOIN so this stays a single-call
+// UPDATE regardless of caller.
 async function markTranscriptionComplete(callId, transcript) {
   await pool.query(
-    `UPDATE calls SET transcription_status = 'completed', transcript = $2, ai_summary_status = 'pending' WHERE id = $1`,
+    `UPDATE calls SET transcription_status = 'completed', transcript = $2,
+       ai_summary_status = CASE
+         WHEN (SELECT ai_summary_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
+         ELSE 'none'
+       END
+     WHERE id = $1`,
     [callId, transcript]
   );
 }
@@ -1119,6 +1124,18 @@ async function setAutoTranscribeEnabled(ghlAccountId, enabled) {
   await pool.query(`UPDATE ghl_accounts SET auto_transcribe_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
 }
 
+async function getAiSummaryEnabled(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT ai_summary_enabled AS "aiSummaryEnabled" FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] ? rows[0].aiSummaryEnabled : false;
+}
+
+async function setAiSummaryEnabled(ghlAccountId, enabled) {
+  await pool.query(`UPDATE ghl_accounts SET ai_summary_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
+}
+
 // --- audit_log (who changed what admin setting/account, and when) ---
 
 // tenantId is optional purely for src/tenantPurge.js/src/routes/operator.js,
@@ -1310,6 +1327,8 @@ module.exports = {
   setAccountLastSyncedAt,
   getAutoTranscribeEnabled,
   setAutoTranscribeEnabled,
+  getAiSummaryEnabled,
+  setAiSummaryEnabled,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

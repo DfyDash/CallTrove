@@ -1036,11 +1036,13 @@ function hideRepTrendTooltip() {
 // --- Transcription ---
 
 const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
+const aiSummaryToggle = document.getElementById("ai-summary-toggle");
 
 async function loadTranscriptionSettings() {
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
   const settings = await res.json();
   autoTranscribeToggle.checked = !!settings.autoTranscribeEnabled;
+  aiSummaryToggle.checked = !!settings.aiSummaryEnabled;
 }
 
 autoTranscribeToggle.addEventListener("change", async () => {
@@ -1055,6 +1057,21 @@ autoTranscribeToggle.addEventListener("change", async () => {
     autoTranscribeToggle.checked = !autoTranscribeToggle.checked;
   }
   autoTranscribeToggle.disabled = false;
+  tabLoaded.activity = false;
+});
+
+aiSummaryToggle.addEventListener("change", async () => {
+  aiSummaryToggle.disabled = true;
+  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ aiSummaryEnabled: aiSummaryToggle.checked }),
+  });
+  if (!res.ok) {
+    alert("Could not update the setting");
+    aiSummaryToggle.checked = !aiSummaryToggle.checked;
+  }
+  aiSummaryToggle.disabled = false;
   tabLoaded.activity = false;
 });
 
