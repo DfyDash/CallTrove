@@ -24,11 +24,10 @@ function verifyPassword(password, hash, salt) {
 }
 
 // Session payload is the full set of fields access-control checks need, so
-// routes never have to hit the DB just to find out who's asking.
-// accountIds is filled in separately by the login handler (routes/auth.js)
-// since it needs an async DB lookup (db.listAccessibleAccounts) this
-// function can't do on its own -- see requireAccount below for how it's
-// enforced.
+// routes never have to hit the DB just to find out who's asking. Which GHL
+// accounts a login can reach is deliberately NOT in here -- see
+// getAccessibleAccountIds below for why that has to be looked up fresh
+// instead of cached on the session.
 function sessionUser(user) {
   return {
     id: user.id,
@@ -36,9 +35,20 @@ function sessionUser(user) {
     role: user.role,
     ghlUserId: user.ghlUserId,
     tenantId: user.tenantId,
-    accountIds: [],
     isOperator: Boolean(user.isOperator),
   };
+}
+
+// Which GHL accounts this login can reach right now. Looked up fresh from
+// the DB on every call rather than cached at login -- a cached list went
+// stale the moment a new account was OAuth-connected or an admin
+// granted/revoked someone's access, since nothing invalidated it until
+// that user's next login (the bug that made a freshly-connected account's
+// calls invisible until sign-out/sign-in). GET /me already did this fresh
+// lookup for the account-switcher dropdown; this just makes every other
+// access check consistent with it.
+async function getAccessibleAccountIds(user) {
+  return (await db.listAccessibleAccounts(user.id, user.role, user.tenantId)).map((a) => a.id);
 }
 
 // Checks the tenant's status fresh from the DB on every request (not
@@ -89,11 +99,12 @@ function requireAdmin(req, res, next) {
 // "all accounts the user can see" -- that's what keeps different
 // locations' recordings from ever appearing mixed together in one
 // response. ?accountId= picks which one; omitted defaults to the first
-// account on the user's list (accountIds is populated at login -- see
-// routes/auth.js) rather than silently querying across every account.
-function requireAccount(req, res, next) {
+// account on the user's list, looked up fresh (see getAccessibleAccountIds
+// above) rather than silently querying across every account.
+async function requireAccount(req, res, next) {
   const user = req.session && req.session.user;
-  const allowed = (user && user.accountIds) || [];
+  if (!user) return res.status(401).json({ error: "not logged in" });
+  const allowed = await getAccessibleAccountIds(user);
   if (!allowed.length) {
     return res.status(403).json({ error: "no GHL account access" });
   }
@@ -131,4 +142,4 @@ function requireCsrf(req, res, next) {
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf };
+module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf, getAccessibleAccountIds };

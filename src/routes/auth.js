@@ -116,11 +116,6 @@ async function sendLoginEmailOtp(user) {
 async function completeLogin(req, user) {
   req.session.pendingMfaUserId = undefined;
   req.session.user = sessionUser(user);
-  // accountIds is the multi-tenant permission list -- which connected GHL
-  // accounts this login can pick between (see auth.js's requireAccount).
-  // Computed here, once, rather than per-request, since it only changes
-  // when an admin edits access or a new account is connected/removed.
-  req.session.user.accountIds = (await db.listAccessibleAccounts(user.id, user.role, user.tenantId)).map((a) => a.id);
   req.session.csrfToken = randomBytes(24).toString("hex");
 }
 

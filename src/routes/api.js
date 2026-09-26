@@ -6,7 +6,7 @@ const emailOtp = require("../emailOtp");
 const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
 const transcription = require("../transcription");
-const { requireCsrf, requireAccount, verifyPassword } = require("../auth");
+const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
 const router = express.Router();
@@ -66,11 +66,11 @@ router.get("/tenant/status", async (req, res) => {
 });
 
 router.get("/me", async (req, res) => {
-  const { username, role, ghlUserId, tenantId, accountIds, isOperator } = req.session.user;
+  const { username, role, ghlUserId, tenantId, isOperator } = req.session.user;
   // The switcher's own data: every account this login can pick between,
-  // with names (accountIds on the session is just the id list used for
-  // fast per-request validation in requireAccount).
+  // with names -- looked up fresh (see auth.js's getAccessibleAccountIds).
   const accounts = await db.listAccessibleAccounts(req.session.user.id, role, tenantId);
+  const accountIds = accounts.map((a) => a.id);
   const tenant = await db.getTenantById(tenantId);
   res.json({
     username,
@@ -338,7 +338,7 @@ router.get("/calls/:id/recording", async (req, res) => {
   // it's the multi-tenant boundary (which GHL account this call belongs
   // to), not the within-account ghlUserId one.
   const download = req.query.download !== undefined;
-  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+  if (!(await getAccessibleAccountIds(req.session.user)).includes(call.ghlAccountId)) {
     await logAccess(req, {
       action: download ? "recording_downloaded" : "recording_played",
       callId: call.id,
@@ -382,7 +382,7 @@ router.get("/calls/:id/transcript", async (req, res) => {
   if (!call) return res.status(404).json({ error: "call not found" });
 
   // Same access boundaries as the recording itself.
-  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+  if (!(await getAccessibleAccountIds(req.session.user)).includes(call.ghlAccountId)) {
     await logAccess(req, { action: "transcript_viewed", callId: call.id, success: false, denialReason: "not_your_account" });
     return res.status(403).json({ error: "not your account" });
   }
@@ -407,7 +407,7 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   if (!call || !call.storageKey) {
     return res.status(404).json({ error: "recording not found" });
   }
-  if (!(req.session.user.accountIds || []).includes(call.ghlAccountId)) {
+  if (!(await getAccessibleAccountIds(req.session.user)).includes(call.ghlAccountId)) {
     await logAccess(req, { action: "transcription_requested", callId: call.id, success: false, denialReason: "not_your_account" });
     return res.status(403).json({ error: "not your account" });
   }
