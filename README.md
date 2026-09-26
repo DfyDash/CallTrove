@@ -455,7 +455,7 @@ runs is unrecoverable.
   can't do anything with yet is actually get a *second* real account
   connected — that's the GHL OAuth piece directly below.
 - Formal GHL Marketplace app packaging / OAuth. **Built**: the connect
-  flow itself (`src/ghlOAuth.js`, the `/api/admin/ghl-oauth/*` routes,
+  flow itself (`src/ghlOAuth.js`, the `/api/admin/oauth/*` routes,
   the Settings → "GHL accounts" tab) — but it can't actually be used yet.
   It requires registering CallTrove as an app in GHL's Marketplace
   developer portal first (an external, one-time action on GHL's site, not

@@ -307,7 +307,7 @@ router.get("/ghl-accounts", async (req, res) => {
 // The random state is stashed on the session and checked back on the
 // callback below -- standard OAuth CSRF protection (stops a forged
 // callback from linking an attacker-chosen account into this tenant).
-router.get("/ghl-oauth/connect", (req, res) => {
+router.get("/oauth/connect", (req, res) => {
   if (!ghlOAuth.isConfigured()) {
     return res.status(400).json({ error: "GHL OAuth is not configured on this deployment yet" });
   }
@@ -322,7 +322,7 @@ router.get("/ghl-oauth/connect", (req, res) => {
 // account belongs to, not anything GHL itself reports (see the design
 // discussion this followed: GHL's own login/account structure is
 // irrelevant here, only the CallTrove session that started the flow).
-router.get("/ghl-oauth/callback", async (req, res) => {
+router.get("/oauth/callback", async (req, res) => {
   const { code, state } = req.query;
   if (!state || state !== req.session.ghlOAuthState) {
     return res.status(400).send("This connection request has expired or is invalid. Please try connecting again from Settings.");

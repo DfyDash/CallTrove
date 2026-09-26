@@ -481,7 +481,7 @@ async function loadGhlAccountsTab() {
 }
 
 connectGhlAccountBtn.addEventListener("click", () => {
-  location.href = "/api/admin/ghl-oauth/connect";
+  location.href = "/api/admin/oauth/connect";
 });
 
 // --- Call report ---
