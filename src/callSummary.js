@@ -41,12 +41,28 @@ const SYSTEM_PROMPT = `You summarize business phone call transcripts. Respond wi
 }
 Base everything strictly on the transcript text given. Do not invent details it doesn't support.`;
 
-// Throws on any failure (network, malformed JSON, missing fields) rather
-// than returning a partial/guessed result -- src/callSummaryPoller.js
-// treats a thrown error as "mark this call's summary failed, try again
-// next time it's picked up", same retry posture as
-// src/transcriptionPoller.js already has for Transcribe job failures.
+// Bounds the cost of any single pathologically long call -- but a
+// *truncated* summary would be actively misleading (it could miss the
+// call's actual resolution, which often happens near the end), worse than
+// no summary at all. So a transcript over this length just isn't
+// summarized, rather than silently summarizing part of it. ~100k
+// characters is already far beyond any realistic phone call transcript
+// (multiple hours of speech), so this never affects normal usage.
+const MAX_TRANSCRIPT_CHARS = 100_000;
+
+// Throws on any failure (network, malformed JSON, missing fields, or a
+// transcript too long to summarize completely) rather than returning a
+// partial/guessed result -- src/callSummaryPoller.js treats a thrown error
+// as "mark this call's summary failed, don't retry past the attempts cap",
+// same posture as src/transcriptionPoller.js already has for Transcribe
+// job failures.
 async function summarizeTranscript(transcriptText) {
+  if (transcriptText.length > MAX_TRANSCRIPT_CHARS) {
+    throw new Error(
+      `transcript too long to summarize completely (${transcriptText.length} chars) -- skipping rather than summarizing a partial transcript`
+    );
+  }
+
   const { InvokeModelCommand } = require("@aws-sdk/client-bedrock-runtime");
 
   const body = JSON.stringify({

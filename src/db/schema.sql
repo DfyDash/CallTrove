@@ -412,6 +412,12 @@ CREATE TABLE IF NOT EXISTS email_otp_codes (
 -- succeed while summarization is still pending, failed, or (for calls
 -- transcribed before this feature existed) never attempted at all.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary_status TEXT NOT NULL DEFAULT 'none';
+-- Mirrors transcription_attempts' exact purpose: bounds how many times a
+-- call can be (re)submitted to Bedrock. Without this, a DB write failure
+-- right after a successful (billable) Bedrock call would leave the row
+-- 'pending' forever, and src/callSummaryPoller.js would keep re-billing
+-- the same call every poll cycle indefinitely.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_summary_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_ai_summary_status_check;
 ALTER TABLE calls ADD CONSTRAINT calls_ai_summary_status_check
   CHECK (ai_summary_status IN ('none', 'pending', 'completed', 'failed'));

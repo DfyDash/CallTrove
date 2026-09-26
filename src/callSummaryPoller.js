@@ -9,12 +9,24 @@ const accountCredentials = require("./accountCredentials");
 // staying separate from the main call-ingestion poller.
 const POLL_INTERVAL_MS = 30 * 1000;
 
+// Same purpose as transcription_attempts/MAX_TRANSCRIPTION_ATTEMPTS: bounds
+// the worst case (a DB write failing right after a successful, billable
+// Bedrock call, which would otherwise leave the row 'pending' and get
+// re-billed every cycle) to at most this many Bedrock calls per call, ever.
+const MAX_SUMMARY_ATTEMPTS = 3;
+
 async function pollOnce() {
   if (!callSummary.isEnabled()) return;
 
   const pending = await db.listPendingCallSummaries();
   for (const call of pending) {
+    if (call.attempts >= MAX_SUMMARY_ATTEMPTS) {
+      await db.markSummaryFailed(call.id);
+      console.error(`[callSummary] call ${call.id} hit ${call.attempts} attempts -- giving up, not retrying`);
+      continue;
+    }
     try {
+      await db.incrementSummaryAttempts(call.id);
       const { summary, analysis } = await callSummary.summarizeTranscript(call.transcript);
       await db.markSummaryComplete(call.id, summary, analysis);
       console.log(`[callSummary] summarized call ${call.id}`);

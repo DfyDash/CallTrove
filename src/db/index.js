@@ -163,10 +163,18 @@ async function listPendingTranscriptions() {
 
 async function listPendingCallSummaries() {
   const { rows } = await pool.query(
-    `SELECT id, transcript, ghl_contact_id AS "contactId", ghl_account_id AS "ghlAccountId"
+    `SELECT id, transcript, ghl_contact_id AS "contactId", ghl_account_id AS "ghlAccountId",
+            ai_summary_attempts AS "attempts"
      FROM calls WHERE ai_summary_status = 'pending'`
   );
   return rows;
+}
+
+// Incremented before the (billable) Bedrock call is made, not after --
+// same ordering as markTranscriptionPending, so an attempt is counted
+// even if everything after it fails.
+async function incrementSummaryAttempts(callId) {
+  await pool.query(`UPDATE calls SET ai_summary_attempts = ai_summary_attempts + 1 WHERE id = $1`, [callId]);
 }
 
 async function markSummaryComplete(callId, summary, analysis) {
@@ -1257,6 +1265,7 @@ module.exports = {
   markTranscriptionFailed,
   listPendingTranscriptions,
   listPendingCallSummaries,
+  incrementSummaryAttempts,
   markSummaryComplete,
   markSummaryFailed,
   markGhlNoteWritten,
