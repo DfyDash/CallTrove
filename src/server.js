@@ -55,12 +55,25 @@ app.use(
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// COOKIE_DOMAIN widens the session cookie to cover both the bare domain
+// and every subdomain (e.g. ".calltrove.com" covers calltrove.com AND
+// app.calltrove.com) -- without it, a session created on one host is
+// invisible on the other, which silently breaks anything that redirects
+// across hosts, like the GHL OAuth callback (redirect_uri is pinned to
+// app.calltrove.com regardless of which host the flow started on).
+// Left unset in local/dev, where there's only ever one host anyway.
 app.use(
   session({
     secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, secure: true, sameSite: "lax", maxAge: 12 * 60 * 60 * 1000 },
+    cookie: {
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      maxAge: 12 * 60 * 60 * 1000,
+      domain: process.env.COOKIE_DOMAIN || undefined,
+    },
   })
 );
 
