@@ -253,7 +253,9 @@ function transcriptCell(call) {
     case "completed":
       return `<details class="transcript-details" data-call="${call.id}">
                 <summary>View transcript</summary>
-                <p class="transcript-text">Loading…</p>
+                <div class="transcript-body">
+                  <p class="transcript-text">Loading…</p>
+                </div>
               </details>`;
     case "pending":
       return `<span class="transcript-pending" data-call="${call.id}">Transcribing…</span>`;
@@ -401,18 +403,113 @@ function renderCalls(data) {
   nextPageBtn.disabled = page >= totalPages;
 }
 
-// Transcript text is fetched lazily, only when a row's <details> is opened
-// -- capture phase because "toggle" doesn't bubble in every browser.
+// Below this, Transcribe itself was essentially guessing -- flagging it
+// beats presenting every word as equally trustworthy. Chosen to catch
+// clear misses (like a misheard "want"/"went") without lighting up so
+// much of a normal phone-quality transcript that the flag stops meaning
+// anything.
+const LOW_CONFIDENCE_THRESHOLD = 0.5;
+
+// Reconstructs the transcript from Transcribe's per-word items (see
+// db.markTranscriptionComplete's transcript_words) instead of the plain
+// joined text, so individual low-confidence words can be wrapped and
+// flagged. Punctuation items attach directly to the previous word (no
+// leading space); confidence is null for those, so they're never flagged.
+function renderTranscriptWordsHtml(words) {
+  let html = "";
+  let needsSpace = false;
+  for (const w of words) {
+    if (w.type === "punctuation") {
+      html += escapeHtml(w.content);
+      continue;
+    }
+    if (needsSpace) html += " ";
+    needsSpace = true;
+    const flagged = typeof w.confidence === "number" && w.confidence < LOW_CONFIDENCE_THRESHOLD;
+    html = flagged
+      ? html + `<span class="low-confidence-word" title="${Math.round(w.confidence * 100)}% confidence">${escapeHtml(w.content)}</span>`
+      : html + escapeHtml(w.content);
+  }
+  return html;
+}
+
+function transcriptEditedNoteHtml(data) {
+  if (!data.editedAt) return "";
+  const when = new Date(data.editedAt).toLocaleString();
+  return `<p class="transcript-edited-note">Edited by ${escapeHtml(data.editedBy || "someone")} on ${escapeHtml(when)}</p>`;
+}
+
+// Renders the read (not editing) view of a transcript into its
+// .transcript-body -- shared by the initial lazy-load, "Cancel" out of
+// edit mode, and right after a successful save.
+function renderTranscriptView(body, callId, data) {
+  const textHtml = data.words && data.words.length
+    ? renderTranscriptWordsHtml(data.words)
+    : escapeHtml(data.transcript || "(empty transcript)");
+  body.innerHTML = `
+    <p class="transcript-text">${textHtml}</p>
+    ${transcriptEditedNoteHtml(data)}
+    <button type="button" class="transcript-edit-btn" data-call="${callId}">Edit</button>
+  `;
+  body.querySelector(".transcript-edit-btn").addEventListener("click", () => renderTranscriptEditor(body, callId, data));
+}
+
+// Switches a transcript's body into a plain-text editor -- see
+// PUT /api/calls/:id/transcript for why this is whole-transcript replace
+// rather than per-word editing.
+function renderTranscriptEditor(body, callId, data) {
+  body.innerHTML = `
+    <textarea class="transcript-edit-textarea">${escapeHtml(data.transcript || "")}</textarea>
+    <div class="transcript-edit-actions">
+      <button type="button" class="transcript-save-btn">Save</button>
+      <button type="button" class="transcript-cancel-btn">Cancel</button>
+      <span class="transcript-edit-error login-error" hidden></span>
+    </div>
+  `;
+  body.querySelector(".transcript-cancel-btn").addEventListener("click", () => renderTranscriptView(body, callId, data));
+  body.querySelector(".transcript-save-btn").addEventListener("click", async (e) => {
+    const textarea = body.querySelector(".transcript-edit-textarea");
+    const errorEl = body.querySelector(".transcript-edit-error");
+    const newText = textarea.value.trim();
+    if (!newText) {
+      errorEl.textContent = "Transcript cannot be empty.";
+      errorEl.hidden = false;
+      return;
+    }
+    e.target.disabled = true;
+    const res = await fetch(`/api/calls/${callId}/transcript`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ transcript: newText }),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      errorEl.textContent = errBody.error || "Could not save the transcript.";
+      errorEl.hidden = false;
+      e.target.disabled = false;
+      return;
+    }
+    // Saved -- re-fetch rather than assuming the shape, since the server
+    // just cleared transcript_words and set the edited-by/at fields.
+    const refreshed = await fetch(`/api/calls/${callId}/transcript`);
+    const refreshedData = await refreshed.json();
+    renderTranscriptView(body, callId, refreshedData);
+  });
+}
+
+// Transcript content is fetched lazily, only when a row's <details> is
+// opened -- capture phase because "toggle" doesn't bubble in every browser.
 callRows.addEventListener(
   "toggle",
   async (e) => {
     const details = e.target.closest(".transcript-details");
     if (!details || !details.open || details.dataset.loaded) return;
     details.dataset.loaded = "1";
-    const textEl = details.querySelector(".transcript-text");
-    const res = await fetch(`/api/calls/${details.dataset.call}/transcript`);
+    const callId = details.dataset.call;
+    const body = details.querySelector(".transcript-body");
+    const res = await fetch(`/api/calls/${callId}/transcript`);
     const data = await res.json();
-    textEl.textContent = data.transcript || "(empty transcript)";
+    renderTranscriptView(body, callId, data);
   },
   true
 );

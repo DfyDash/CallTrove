@@ -392,7 +392,46 @@ router.get("/calls/:id/transcript", async (req, res) => {
   }
 
   await logAccess(req, { action: "transcript_viewed", callId: call.id, success: true });
-  res.json({ status: call.transcriptionStatus, transcript: call.transcript });
+  res.json({
+    status: call.transcriptionStatus,
+    transcript: call.transcript,
+    words: call.transcriptWords,
+    editedAt: call.transcriptEditedAt,
+    editedBy: call.transcriptEditedBy,
+  });
+});
+
+// Lets the person who handled the call (or an admin -- same boundary as
+// viewing it above) correct a word Transcribe got wrong. Whole-transcript
+// replace rather than per-word editing -- far simpler, and per-word
+// editing would need to keep transcript_words's boundaries in sync with
+// arbitrary free-text changes, which isn't worth it just to fix the
+// occasional misheard word. See db.updateCallTranscript for why this
+// clears the confidence highlighting rather than trying to preserve it.
+router.put("/calls/:id/transcript", requireCsrf, async (req, res) => {
+  const call = await db.getCall(req.params.id);
+  if (!call) return res.status(404).json({ error: "call not found" });
+
+  if (!(await getAccessibleAccountIds(req.session.user)).includes(call.ghlAccountId)) {
+    await logAccess(req, { action: "transcript_edited", callId: call.id, success: false, denialReason: "not_your_account" });
+    return res.status(403).json({ error: "not your account" });
+  }
+  if (req.session.user.role !== "admin" && call.handledById !== req.session.user.ghlUserId) {
+    await logAccess(req, { action: "transcript_edited", callId: call.id, success: false, denialReason: "not_your_call" });
+    return res.status(403).json({ error: "not your call" });
+  }
+  if (call.transcriptionStatus !== "completed") {
+    return res.status(409).json({ error: "no transcript to edit yet" });
+  }
+
+  const transcript = typeof req.body.transcript === "string" ? req.body.transcript.trim() : "";
+  if (!transcript) {
+    return res.status(400).json({ error: "transcript cannot be empty" });
+  }
+
+  await db.updateCallTranscript(call.id, transcript, req.session.user.username);
+  await logAccess(req, { action: "transcript_edited", callId: call.id, success: true });
+  res.json({ status: "updated" });
 });
 
 // On-demand only -- nothing calls this automatically (see src/poller.js and

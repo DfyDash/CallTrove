@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS phi_access_log (
   id             UUID PRIMARY KEY,
   user_id        UUID,
   username       TEXT,
-  action         TEXT NOT NULL,   -- recording_played | recording_downloaded | transcript_viewed | transcription_requested
+  action         TEXT NOT NULL,   -- recording_played | recording_downloaded | transcript_viewed | transcription_requested | transcript_edited
   call_id        UUID,
   success        BOOLEAN NOT NULL,
   denial_reason  TEXT,
@@ -442,6 +442,27 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS ai_analysis JSONB;
 -- re-running Bedrock just to retry the note write.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS ghl_note_written_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS email_otp_codes_user_idx ON email_otp_codes (user_id, purpose);
+
+-- Per-word confidence from Transcribe's own output (the plain `transcript`
+-- column above only keeps the joined text -- this is Transcribe's
+-- item-level breakdown, ordered, {type, content, confidence}, confidence
+-- null for punctuation items). Lets the transcript view flag individual
+-- low-confidence words instead of presenting the whole transcript as
+-- equally reliable -- see public/app.js's renderTranscriptBody. Cleared
+-- the moment someone edits the transcript by hand (below): a free-text
+-- edit can't be reliably re-mapped to Transcribe's original word
+-- boundaries, so there's nothing left to highlight against.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_words JSONB;
+
+-- Set once the person who handled the call (or an admin -- same boundary
+-- as viewing it, see routes/api.js's PUT /calls/:id/transcript) corrects
+-- the transcript by hand. Denormalized here for display right next to
+-- the transcript; the real, tamper-evident audit trail is the
+-- "transcript_edited" row this same request adds to phi_access_log,
+-- which -- unlike this column -- can't be silently overwritten by a
+-- second edit.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_edited_at TIMESTAMPTZ;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_edited_by TEXT;
 
 -- Lets an admin invite a GHL team member straight from Settings ("GHL
 -- team" list, src/routes/admin.js's POST /users/invite) instead of always

@@ -143,15 +143,29 @@ async function markTranscriptionPending(callId) {
 // never run just because transcription itself is on for the account.
 // Checked with a subquery rather than a JOIN so this stays a single-call
 // UPDATE regardless of caller.
-async function markTranscriptionComplete(callId, transcript) {
+async function markTranscriptionComplete(callId, transcript, words) {
   await pool.query(
-    `UPDATE calls SET transcription_status = 'completed', transcript = $2,
+    `UPDATE calls SET transcription_status = 'completed', transcript = $2, transcript_words = $3,
        ai_summary_status = CASE
          WHEN (SELECT ai_summary_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
          ELSE 'none'
        END
      WHERE id = $1`,
-    [callId, transcript]
+    [callId, transcript, words ? JSON.stringify(words) : null]
+  );
+}
+
+// The person who handled the call correcting Transcribe's output by hand
+// (or an admin -- see routes/api.js's PUT /calls/:id/transcript for the
+// permission check, same boundary as viewing it). Clears transcript_words
+// since a free-text edit can no longer be mapped back to Transcribe's
+// original word boundaries -- there's nothing left to highlight against.
+async function updateCallTranscript(callId, transcript, editedByUsername) {
+  await pool.query(
+    `UPDATE calls SET transcript = $2, transcript_words = NULL,
+       transcript_edited_at = now(), transcript_edited_by = $3
+     WHERE id = $1`,
+    [callId, transcript, editedByUsername]
   );
 }
 
@@ -604,7 +618,9 @@ async function getCall(callId) {
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
             c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
             c.transcription_attempts AS "transcriptionAttempts",
-            c.transcript, c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
+            c.transcript, c.transcript_words AS "transcriptWords",
+            c.transcript_edited_at AS "transcriptEditedAt", c.transcript_edited_by AS "transcriptEditedBy",
+            c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
      WHERE c.id = $1`,
@@ -1325,6 +1341,7 @@ module.exports = {
   listRetryableFailedCalls,
   markTranscriptionPending,
   markTranscriptionComplete,
+  updateCallTranscript,
   markTranscriptionFailed,
   listPendingTranscriptions,
   listPendingCallSummaries,

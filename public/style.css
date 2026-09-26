@@ -805,6 +805,54 @@ tbody tr:last-child td {
   color: var(--muted);
 }
 
+.low-confidence-word {
+  text-decoration: underline dotted var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.transcript-edited-note {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.transcript-edit-btn,
+.transcript-save-btn,
+.transcript-cancel-btn {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.transcript-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.transcript-edit-textarea {
+  width: 100%;
+  max-width: 320px;
+  min-height: 80px;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: inherit;
+  resize: vertical;
+}
+
 .login-page {
   min-height: 100vh;
   display: flex;

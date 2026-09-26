@@ -1247,6 +1247,7 @@ const ACTION_LABELS = {
   recording_downloaded: "Downloaded recording",
   transcript_viewed: "Viewed transcript",
   transcription_requested: "Requested transcription",
+  transcript_edited: "Edited transcript",
 };
 
 // "Name (phone)" -- but when the "name" on file is really just the phone

@@ -92,7 +92,15 @@ async function checkJob(callId) {
   const res = await fetch(job.Transcript.TranscriptFileUri);
   const data = await res.json();
   const text = data.results.transcripts.map((t) => t.transcript).join(" ");
-  return { status: "completed", text };
+  // Kept alongside the joined text so the UI can flag individual
+  // low-confidence words (see db.markTranscriptionComplete) -- Transcribe
+  // computes this per word regardless, this just stops throwing it away.
+  const words = data.results.items.map((it) => ({
+    type: it.type,
+    content: it.alternatives[0].content,
+    confidence: it.type === "pronunciation" ? Number(it.alternatives[0].confidence) : null,
+  }));
+  return { status: "completed", text, words };
 }
 
 async function cleanupInput(job) {

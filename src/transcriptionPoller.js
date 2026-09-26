@@ -14,7 +14,7 @@ async function pollOnce() {
     try {
       const result = await transcription.checkJob(call.id);
       if (result.status === "completed") {
-        await db.markTranscriptionComplete(call.id, result.text);
+        await db.markTranscriptionComplete(call.id, result.text, result.words);
         console.log(`[transcription] completed for call ${call.id}`);
       } else if (result.status === "failed") {
         await db.markTranscriptionFailed(call.id);
