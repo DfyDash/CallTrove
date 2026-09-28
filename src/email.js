@@ -1,39 +1,96 @@
-// Transactional email via Amazon SES -- account-security mail only (email
-// verification, OTP login codes, and similar), never marketing. See
-// .env.example's comment: uses the standard AWS SDK credential chain (an
-// IAM role on the instance in production), no access key stored here.
+// Transactional email via Resend -- account-security mail only (email
+// verification, OTP login codes, and similar), never marketing. Switched
+// from Amazon SES: SES's production-access request was denied with no
+// actionable reason given, leaving it stuck in sandbox mode (verified
+// recipients only) and unusable for real user logins. Resend's free tier
+// works for real recipients immediately, no approval process -- see
+// .env.example's comment for the account/plan reasoning.
 
-const REGION = process.env.SES_REGION;
+const API_KEY = process.env.RESEND_API_KEY;
 const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS;
 
+// CallTrove brand tokens, same values used throughout the pricing deck/doc
+// this session -- kept here rather than imported from anywhere, since
+// there's no shared frontend/email token file and email HTML can't load
+// external CSS reliably anyway (every value below is inlined into the
+// markup itself, the only thing most email clients render consistently).
+const BRAND = {
+  dark: "#171512",
+  light: "#FAF8F3",
+  cardBorder: "#E6DDC9",
+  accent: "#B1502F",
+  muted: "#726B5D",
+};
+
 function isEnabled() {
-  return !!REGION && !!FROM_ADDRESS;
+  return !!API_KEY && !!FROM_ADDRESS;
 }
 
-let sesClient;
-function getClient() {
-  if (!sesClient) {
-    const { SESClient } = require("@aws-sdk/client-ses");
-    sesClient = new SESClient({ region: REGION });
-  }
-  return sesClient;
+// A 6-digit code as individual boxed digits, CallTrove-branded -- same idea
+// as the Google OTP-email layout this was modeled on. No "copy" button:
+// virtually every email client (Gmail, Outlook, Apple Mail) strips
+// JavaScript entirely, so a button that looked clickable would just be
+// dead weight that quietly does nothing. Gmail's own copy-code chip isn't
+// an exception to this -- it's not embedded in the email at all, it's a
+// Gmail client-side feature (an "Information Card" iframe Gmail draws in
+// its own UI, granted clipboard-write on google.com's origin) that appears
+// when Gmail's parser matches a verification-code pattern in the message
+// text. It only shows in Gmail, and only needs the plain-text body to read
+// naturally (e.g. "code is: 123456", see routes/auth.js) -- nothing to
+// build here. Table-based layout and every style inlined, since email
+// clients routinely ignore <style> blocks and modern CSS (flexbox, grid)
+// -- this is the one layout approach that renders consistently across all
+// of them.
+function otpCodeEmailHtml(code, { heading, intro }) {
+  const digits = String(code)
+    .split("")
+    .map(
+      (d) => `<td style="width:44px; height:56px; background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; text-align:center; vertical-align:middle; font-family:'Courier New', monospace; font-size:28px; font-weight:700; color:${BRAND.dark};">${d}</td>`
+    )
+    .join(`<td style="width:8px;"></td>`);
+
+  return `<!doctype html>
+<html>
+<body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
+<tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">${heading}</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">${intro}</td></tr>
+<tr><td>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>${digits}</tr></table>
+</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:24px;">This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
 }
 
-async function sendEmail({ to, subject, text }) {
+async function sendEmail({ to, subject, text, html }) {
   if (!isEnabled()) {
-    throw new Error("Email sending is not configured (SES_REGION / EMAIL_FROM_ADDRESS)");
+    throw new Error("Email sending is not configured (RESEND_API_KEY / EMAIL_FROM_ADDRESS)");
   }
-  const { SendEmailCommand } = require("@aws-sdk/client-ses");
-  await getClient().send(
-    new SendEmailCommand({
-      Source: FROM_ADDRESS,
-      Destination: { ToAddresses: [to] },
-      Message: {
-        Subject: { Data: subject, Charset: "UTF-8" },
-        Body: { Text: { Data: text, Charset: "UTF-8" } },
-      },
-    })
-  );
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: FROM_ADDRESS,
+      to: [to],
+      subject,
+      text,
+      ...(html ? { html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Resend send failed with status ${res.status}: ${body}`);
+  }
 }
 
-module.exports = { isEnabled, sendEmail };
+module.exports = { isEnabled, sendEmail, otpCodeEmailHtml };

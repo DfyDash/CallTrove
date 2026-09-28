@@ -215,6 +215,10 @@ router.post("/account/email/start", requireCsrf, async (req, res) => {
       to: address,
       subject: "Confirm your CallTrove email address",
       text: `Your CallTrove verification code is: ${code}\n\nEnter this code in CallTrove to confirm this email address. This code expires in 10 minutes.\n\nIf you didn't request this, you can ignore this email.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Confirm your email",
+        intro: "Enter this code in CallTrove to confirm this email address.",
+      }),
     });
   } catch (err) {
     console.error("[email-otp] failed to send verification code:", err);

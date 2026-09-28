@@ -113,6 +113,12 @@ app.get("/signup.js", (req, res) => res.sendFile(path.join(__dirname, "..", "pub
 // /set-password) -- there's no session yet at this point either.
 app.get("/set-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.html")));
 app.get("/set-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.js")));
+// Self-service password reset (routes/auth.js's /forgot-password and
+// /reset-password) -- reachable pre-login same as the pages above, since
+// this is specifically for someone who can't log in yet.
+app.get("/forgot-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "forgot-password.html")));
+app.get("/reset-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.html")));
+app.get("/reset-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));

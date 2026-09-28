@@ -83,6 +83,40 @@ const emailOtpResendLimiter = rateLimit({
   keyGenerator: (req) => (req.session && req.session.pendingMfaUserId) || req.ip,
 });
 
+// Same brute-force target as loginLimiter above (a forgot-password request
+// is unauthenticated too), keyed the same way -- by username, not IP, for
+// the identical reasoning: an attacker just switches IPs to dodge an IP
+// limit, and IP-keying would let one mistaken/malicious requester lock out
+// everyone else on the same network from resetting their own password.
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.body && req.body.username ? limiterKey(req.body.username) : req.ip),
+});
+
+// Guessing protection on the reset code itself -- same shape as mfaLimiter
+// above (a 6-digit code, keyed by the pending user id so switching IPs
+// doesn't reset the budget), reused rather than sharing mfaLimiter's key
+// space: a password-reset attempt and a login-MFA attempt are different
+// actions and shouldn't share one attempt budget against the same user id.
+const resetPasswordLimiter = rateLimit({
+  windowMs: 30 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.session && req.session.pendingPasswordResetUserId) || req.ip,
+});
+
+const resetPasswordResendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 3,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.session && req.session.pendingPasswordResetUserId) || req.ip,
+});
+
 // Generates and emails a fresh login code, unless this account has already
 // hit the send cap in the last 15 minutes -- the actual defense against a
 // bug or an abusive retry loop flooding someone's inbox (see the user-
@@ -105,9 +139,38 @@ async function sendLoginEmailOtp(user) {
       to: user.email,
       subject: "Your CallTrove sign-in code",
       text: `Your CallTrove sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to sign in, you can ignore this email -- your account is still secure.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Your sign-in code",
+        intro: "Enter this code to finish signing in.",
+      }),
     });
   } catch (err) {
     console.error("[email-otp] failed to send login code:", err);
+  }
+}
+
+// Same shape as sendLoginEmailOtp above (own DB-backed send cap, own purpose
+// so a reset code can never double as a login code, swallows a transient
+// send failure rather than breaking the request) -- separate function
+// because the two happen on different unauthenticated flows with different
+// wording, not because the mechanics differ.
+async function sendPasswordResetEmailOtp(user) {
+  try {
+    const recentCount = await db.countRecentEmailOtpCodes(user.id, "password_reset", 15);
+    if (recentCount >= 5) return;
+    const code = emailOtp.generateCode();
+    await db.createEmailOtpCode(user.id, "password_reset", emailOtp.hashCode(code), emailOtp.expiresAt());
+    await email.sendEmail({
+      to: user.email,
+      subject: "Your CallTrove password reset code",
+      text: `Your CallTrove password reset code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email -- your password hasn't changed.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Reset your password",
+        intro: "Enter this code to choose a new password.",
+      }),
+    });
+  } catch (err) {
+    console.error("[email-otp] failed to send password reset code:", err);
   }
 }
 
@@ -219,6 +282,64 @@ router.post("/login-mfa-email/resend", emailOtpResendLimiter, async (req, res) =
 
   await sendLoginEmailOtp(user);
   res.redirect("/login-mfa-email.html?sent=1");
+});
+
+// Self-service password reset, entry point. Deliberately gives the same
+// response (redirect to the code-entry page) whether or not the username
+// exists or has a verified email on file -- an attacker probing for valid
+// usernames via this form learns nothing from the response either way,
+// same anti-enumeration reasoning as the dummy-hash comparison on /login
+// above. If the account doesn't qualify, this just silently doesn't send
+// anything and pendingPasswordResetUserId is left unset, so a follow-up
+// code submission fails the same way an expired/wrong one would.
+router.post("/forgot-password", express.urlencoded({ extended: false }), forgotPasswordLimiter, async (req, res) => {
+  const username = ((req.body || {}).username || "").trim();
+  if (username) {
+    const user = await db.getUserByUsername(username);
+    if (user && user.email && user.emailVerifiedAt) {
+      req.session.pendingPasswordResetUserId = user.id;
+      await sendPasswordResetEmailOtp(user);
+    }
+  }
+  res.redirect("/reset-password.html?sent=1");
+});
+
+router.post("/reset-password", express.urlencoded({ extended: false }), resetPasswordLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingPasswordResetUserId;
+  if (!pendingUserId) return res.redirect("/forgot-password.html");
+
+  const { code, password, confirmPassword } = req.body || {};
+  if (!password || password !== confirmPassword) {
+    return res.redirect("/reset-password.html?error=mismatch");
+  }
+  if (password.length < 8) {
+    return res.redirect("/reset-password.html?error=tooshort");
+  }
+
+  const submitted = (code || "").trim();
+  const ok = /^\d{6}$/.test(submitted) && (await db.consumeEmailOtpCode(pendingUserId, "password_reset", emailOtp.hashCode(submitted)));
+  if (!ok) {
+    return res.redirect("/reset-password.html?error=code");
+  }
+
+  const { hash, salt } = hashPassword(password);
+  await db.updateUser(pendingUserId, { passwordHash: hash, passwordSalt: salt });
+  req.session.pendingPasswordResetUserId = undefined;
+  res.redirect("/login.html?reset=1");
+});
+
+router.post("/reset-password/resend", resetPasswordResendLimiter, async (req, res) => {
+  const pendingUserId = req.session.pendingPasswordResetUserId;
+  if (!pendingUserId) return res.redirect("/forgot-password.html");
+
+  const user = await db.getUserById(pendingUserId);
+  if (!user || !user.email) {
+    req.session.pendingPasswordResetUserId = undefined;
+    return res.redirect("/forgot-password.html");
+  }
+
+  await sendPasswordResetEmailOtp(user);
+  res.redirect("/reset-password.html?sent=1");
 });
 
 // Scoped to signup specifically -- creating a tenant is a real action (new

@@ -480,3 +480,11 @@ ALTER TABLE users ALTER COLUMN password_salt DROP NOT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_hash TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS invite_token_expires_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS users_invite_token_hash_idx ON users (invite_token_hash) WHERE invite_token_hash IS NOT NULL;
+
+-- Self-service "forgot password" (routes/auth.js's POST /forgot-password and
+-- /reset-password), reusing email_otp_codes rather than a new table -- same
+-- shape (a 6-digit code, short expiry, single use) as the login/verify_email
+-- purposes already there, just a third value for the same column.
+ALTER TABLE email_otp_codes DROP CONSTRAINT IF EXISTS email_otp_codes_purpose_check;
+ALTER TABLE email_otp_codes ADD CONSTRAINT email_otp_codes_purpose_check
+  CHECK (purpose IN ('verify_email', 'login', 'password_reset'));

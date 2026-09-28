@@ -7,3 +7,6 @@ if (params.get("error") === "pending") {
 if (params.get("activated")) {
   document.getElementById("login-activated").hidden = false;
 }
+if (params.get("reset")) {
+  document.getElementById("login-reset").hidden = false;
+}
