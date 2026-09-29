@@ -26,6 +26,18 @@ function isEnabled() {
   return !!API_KEY && !!FROM_ADDRESS;
 }
 
+// accountName comes from the GHL account record, not something CallTrove
+// controls -- escape it before it lands in HTML. inviteUrl is server-built
+// (this host + a random hex token, see routes/admin.js) but gets the same
+// treatment since it's still interpolated into markup.
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 // The 6-digit code as ONE selectable text node, CallTrove-branded, styled
 // with letter-spacing to read like the boxed-digit layout it replaced. No
 // "copy" button: virtually every email client (Gmail, Outlook, Apple Mail)
@@ -72,6 +84,35 @@ function otpCodeEmailHtml(code, { heading }) {
 </html>`;
 }
 
+// Same card as otpCodeEmailHtml, but the thing to act on is a link, not a
+// code -- and unlike a JS "copy" button, a plain <a href> button is real:
+// every client renders and follows it, no script required. accountName is
+// optional (falls back to "your team") since a GHL account can be unnamed.
+function inviteEmailHtml(inviteUrl, { accountName }) {
+  const team = accountName ? escapeHtml(accountName) : "your team";
+  const safeUrl = escapeHtml(inviteUrl);
+  return `<!doctype html>
+<html>
+<body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
+<tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You've been added to CallTrove</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">You're joining ${team}. Set a password to activate your account.</td></tr>
+<tr><td align="center">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BRAND.accent}; border-radius:8px;">
+<a href="${safeUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Set your password</a>
+</td></tr></table>
+</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:20px;">This link expires in 7 days. If you weren't expecting this, you can ignore this email.</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
 async function sendEmail({ to, subject, text, html }) {
   if (!isEnabled()) {
     throw new Error("Email sending is not configured (RESEND_API_KEY / EMAIL_FROM_ADDRESS)");
@@ -96,4 +137,4 @@ async function sendEmail({ to, subject, text, html }) {
   }
 }
 
-module.exports = { isEnabled, sendEmail, otpCodeEmailHtml };
+module.exports = { isEnabled, sendEmail, otpCodeEmailHtml, inviteEmailHtml };
