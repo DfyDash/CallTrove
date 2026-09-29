@@ -403,12 +403,20 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   await db.createTenant({ id: tenantId, name: businessName });
   await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
   await db.updateTenantOwner(tenantId, userId);
-  // Stored as-provided, unverified -- same shape as the self-service
-  // "start email verification" flow (db.setUserPendingEmail). Proving it
-  // (and optionally turning it into an MFA method) happens later, in
-  // Account settings, the same way for every user regardless of how their
-  // account was created.
+  // Stored via the same setUserPendingEmail() an email change in Account
+  // settings uses, but immediately marked verified here -- unlike a later
+  // change, there's no "did the attacker swap this mid-flight" risk to
+  // guard against at the moment of account creation: this is the address
+  // the user themselves just typed into a form only they're submitting,
+  // and it's the same one the welcome email below goes to unconfirmed
+  // regardless. Self-service password reset (routes/auth.js's
+  // /forgot-password) requires a verified email before it'll send a code,
+  // so leaving this unverified until an opt-in Account-settings step
+  // meant password reset silently didn't work for any self-service
+  // signup -- the exact account that needs the "forgot password" escape
+  // hatch most, since these are the users an admin can't reset for them.
   await db.setUserPendingEmail(userId, address);
+  await db.verifyUserEmail(userId);
   await db.logAudit({
     actorId: userId,
     actorUsername: username,
