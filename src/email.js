@@ -91,28 +91,29 @@ function formatRequestMeta(requestIp) {
   return requestIp ? `Requested from ${escapeHtml(requestIp)} at ${stamp}` : `Requested at ${stamp}`;
 }
 
-// The real brand mark (public/apple-touch-icon.png -- same phone-over-trove
-// icon as the favicon and app icon), not a substitute drawn in CSS. Sized
-// at 180x180 so it stays sharp at 2x/3x pixel density despite rendering at
-// 40px. Embedded as a base64 data: URI read once at startup, rather than a
-// hosted <img src="{baseUrl}/apple-touch-icon.png">: the hosted version
-// depended on the recipient's mail provider being able to fetch that exact
-// URL back from our server at render time, and in production that fetch
-// was failing (Gmail showed a broken-image icon, not just an
-// images-blocked placeholder) -- a data: URI has no separate fetch to
-// fail, so the logo renders unconditionally, the same way the code and
-// text already do. Every mainstream client we need (Gmail, Apple Mail,
-// the Outlook web/mobile apps) renders data: URI images fine; only
-// legacy desktop Outlook's Word engine is unreliable with them, and that
-// client already can't render this table-based layout well.
+// The full brand lockup (public/email-logo.png -- the phone-over-trove icon
+// plus the "CallTrove" wordmark, same design as everywhere else in the app),
+// not just the bare icon and not text redrawn in CSS. Source art is
+// 948x282 (3.36:1) at high resolution so it stays sharp at 2x/3x pixel
+// density despite rendering at 36px tall. Embedded as a base64 data: URI
+// read once at startup, rather than a hosted <img src="{baseUrl}/...">:
+// the hosted version depended on the recipient's mail provider being able
+// to fetch that exact URL back from our server at render time, and in
+// production that fetch was failing (Gmail showed a broken-image icon, not
+// just an images-blocked placeholder) -- a data: URI has no separate fetch
+// to fail, so the logo renders unconditionally, the same way the code and
+// text already do. Every mainstream client we need (Gmail, Apple Mail, the
+// Outlook web/mobile apps) renders data: URI images fine; only legacy
+// desktop Outlook's Word engine is unreliable with them, and that client
+// already can't render this table-based layout well.
 const LOGO_DATA_URI = (() => {
-  const bytes = fs.readFileSync(path.join(__dirname, "..", "public", "apple-touch-icon.png"));
+  const bytes = fs.readFileSync(path.join(__dirname, "..", "public", "email-logo.png"));
   return `data:image/png;base64,${bytes.toString("base64")}`;
 })();
 
 function brandHeaderHtml() {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="padding-bottom:4px;"><tr>
-<td style="vertical-align:middle;"><img src="${LOGO_DATA_URI}" width="40" height="40" alt="CallTrove" style="display:block; border-radius:9px;"></td>
+<td style="vertical-align:middle;"><img src="${LOGO_DATA_URI}" width="121" height="36" alt="CallTrove" style="display:block;"></td>
 </tr></table>`;
 }
 
