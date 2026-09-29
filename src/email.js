@@ -56,15 +56,16 @@ function escapeHtml(s) {
 // miss a digit at the boundary -- annoying on the one interaction (select
 // + copy) this element exists for. Keeping the whole code in a single text
 // node makes a triple-click or one drag grab exactly the six digits, no
-// more, every time. Deliberately no intro paragraph or "how to copy"
-// caption either -- every extra line is something to skim past before
-// reaching the one thing this email is for, and the code being large,
-// boxed, and alone on its own row is already the cue that it's the
-// selectable part. Table-based layout and every style inlined, since email
-// clients routinely ignore <style> blocks and modern CSS (flexbox, grid)
-// -- this is the one layout approach that renders consistently across all
-// of them.
-function otpCodeEmailHtml(code, { heading }) {
+// more, every time. explain is one line, always about *why the recipient
+// is getting this email* (security context: who/what triggered it), not
+// *how to use the code* -- the earlier version's "Enter this code to
+// finish signing in" and "tap and hold to copy" lines got cut for saying
+// the obvious; this is a different, load-bearing line: without it there's
+// nothing here to tell a wary recipient this wasn't a phishing attempt.
+// Table-based layout and every style inlined, since email clients
+// routinely ignore <style> blocks and modern CSS (flexbox, grid) -- this
+// is the one layout approach that renders consistently across all of them.
+function otpCodeEmailHtml(code, { heading, explain }) {
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -72,7 +73,8 @@ function otpCodeEmailHtml(code, { heading }) {
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
 <tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
-<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:20px;">${heading}</td></tr>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:6px;">${heading}</td></tr>
+<tr><td style="font-size:14px; color:${BRAND.muted}; line-height:1.5; padding-bottom:20px;">${explain}</td></tr>
 <tr><td>
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 12px 14px 22px; text-align:center; font-family:'Courier New', monospace; font-size:28px; font-weight:700; letter-spacing:10px; color:${BRAND.dark};">${code}</td></tr></table>
 </td></tr>
