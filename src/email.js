@@ -62,6 +62,17 @@ function escapeHtml(s) {
 // finish signing in" and "tap and hold to copy" lines got cut for saying
 // the obvious; this is a different, load-bearing line: without it there's
 // nothing here to tell a wary recipient this wasn't a phishing attempt.
+// "Never share this code with anyone" is fixed rather than per-caller --
+// it's the standard line against someone phoning a user and asking them
+// to read the code back (see GitHub/Postmark examples), true for all three
+// send sites the same way. securityNote is the one thing that genuinely
+// differs per site: what to do if this wasn't you. For the reset and
+// verify codes that's "nothing, ignore it" -- accurate, since no change
+// happens without the code. For the login code it's NOT accurate: an
+// unrequested sign-in code means someone already has the password, so
+// that call site passes a "change your password" note instead, matching
+// GitHub's own device-verification email
+// (docs.github.com/en/authentication/keeping-your-account-and-data-secure/verifying-new-devices-when-signing-in).
 // Table-based layout and every style inlined, since email clients
 // routinely ignore <style> blocks and modern CSS (flexbox, grid) -- this
 // is the one layout approach that renders consistently across all of them.
@@ -77,7 +88,7 @@ function formatRequestMeta(requestIp) {
   return requestIp ? `Requested from ${escapeHtml(requestIp)} at ${stamp}` : `Requested at ${stamp}`;
 }
 
-function otpCodeEmailHtml(code, { heading, explain, requestIp }) {
+function otpCodeEmailHtml(code, { heading, explain, securityNote, requestIp }) {
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -90,7 +101,7 @@ function otpCodeEmailHtml(code, { heading, explain, requestIp }) {
 <tr><td>
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 12px 14px 22px; text-align:center; font-family:'Courier New', monospace; font-size:28px; font-weight:700; letter-spacing:10px; color:${BRAND.dark};">${code}</td></tr></table>
 </td></tr>
-<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:16px;">Expires in 10 minutes. Didn't request this? Ignore this email.</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; line-height:1.5; padding-top:16px;">Expires in 10 minutes. Never share this code with anyone. ${securityNote}</td></tr>
 <tr><td style="font-size:12px; color:${BRAND.muted}; padding-top:14px; border-top:1px solid ${BRAND.cardBorder};">
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="padding-top:14px; font-family:'Courier New', monospace;">${formatRequestMeta(requestIp)}</td></tr></table>
 </td></tr>

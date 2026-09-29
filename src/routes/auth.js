@@ -138,10 +138,11 @@ async function sendLoginEmailOtp(user, requestIp) {
     await email.sendEmail({
       to: user.email,
       subject: "Your CallTrove sign-in code",
-      text: `Your CallTrove sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to sign in, you can ignore this email -- your account is still secure.`,
+      text: `Your CallTrove sign-in code is: ${code}\n\nThis code expires in 10 minutes. Never share it with anyone. If you didn't try to sign in, your password may be compromised -- change it as soon as you can.`,
       html: email.otpCodeEmailHtml(code, {
         heading: "Your sign-in code",
-        explain: "Someone signed in to this CallTrove account with your email address and password, and needs this code to finish.",
+        explain: "Someone used your email address and password to sign in to CallTrove, and needs this code to finish.",
+        securityNote: "Didn't try to sign in? Your password may be compromised -- change it as soon as you can.",
         requestIp,
       }),
     });
@@ -164,10 +165,11 @@ async function sendPasswordResetEmailOtp(user, requestIp) {
     await email.sendEmail({
       to: user.email,
       subject: "Your CallTrove password reset code",
-      text: `Your CallTrove password reset code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email -- your password hasn't changed.`,
+      text: `Your CallTrove password reset code is: ${code}\n\nThis code expires in 10 minutes. Never share it with anyone. Didn't request this? You don't need to do anything -- your password won't change unless this code is used.`,
       html: email.otpCodeEmailHtml(code, {
         heading: "Reset your password",
-        explain: "Someone asked to reset the password on this CallTrove account. Your current password still works until this code is used.",
+        explain: "You or someone else asked to reset the password on this CallTrove account.",
+        securityNote: "Didn't request this? You don't need to do anything -- your password won't change unless this code is used.",
         requestIp,
       }),
     });
