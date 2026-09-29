@@ -220,6 +220,7 @@ router.post("/account/email/start", requireCsrf, async (req, res) => {
         explain: "Someone requested to use this email address for a CallTrove account. If that's you, enter the code below to confirm it.",
         securityNote: "Didn't request this? No change happens unless this code is entered.",
         requestIp: req.ip,
+        baseUrl: `${req.protocol}://${req.get("host")}`,
       }),
     });
   } catch (err) {

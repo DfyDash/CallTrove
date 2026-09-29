@@ -88,14 +88,35 @@ function formatRequestMeta(requestIp) {
   return requestIp ? `Requested from ${escapeHtml(requestIp)} at ${stamp}` : `Requested at ${stamp}`;
 }
 
-function otpCodeEmailHtml(code, { heading, explain, securityNote, requestIp }) {
+// The real brand mark (public/apple-touch-icon.png -- same phone-over-trove
+// icon as the favicon and app icon), not a substitute drawn in CSS. Sized
+// at 180x180 so it stays sharp at 2x/3x pixel density despite rendering at
+// 28px. Referenced by absolute URL rather than inlined (data: URI or
+// inline <svg>): Outlook's Word rendering engine is unreliable with both,
+// while a plain hosted <img> is the one image approach every client
+// supports. baseUrl is built the same way routes/admin.js already builds
+// inviteUrl (`${req.protocol}://${req.get("host")}`), so this works
+// against whatever host actually served the request -- staging or prod --
+// instead of a hardcoded domain. The wordmark text stays alongside the
+// icon rather than being replaced by it, so the brand still reads if the
+// client has images off by default (most webmail does, until the
+// recipient clicks "show images").
+function brandHeaderHtml(baseUrl) {
+  const logoUrl = `${baseUrl}/apple-touch-icon.png`;
+  return `<table role="presentation" cellpadding="0" cellspacing="0" style="padding-bottom:4px;"><tr>
+<td style="vertical-align:middle; padding-right:10px;"><img src="${escapeHtml(logoUrl)}" width="28" height="28" alt="CallTrove" style="display:block; border-radius:7px;"></td>
+<td style="vertical-align:middle; font-size:22px; font-weight:700; color:${BRAND.dark};">Call<span style="color:${BRAND.accent};">Trove</span></td>
+</tr></table>`;
+}
+
+function otpCodeEmailHtml(code, { heading, explain, securityNote, requestIp, baseUrl }) {
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
-<tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
+<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:6px;">${heading}</td></tr>
 <tr><td style="font-size:14px; color:${BRAND.muted}; line-height:1.5; padding-bottom:20px;">${explain}</td></tr>
 <tr><td>
@@ -125,13 +146,16 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
   const team = accountName ? escapeHtml(accountName) : "your team";
   const inviter = invitedBy ? escapeHtml(invitedBy) : "An admin";
   const safeUrl = escapeHtml(inviteUrl);
+  // inviteUrl already carries the request's own host -- reuse its origin
+  // rather than asking the caller for a separate baseUrl.
+  const baseUrl = new URL(inviteUrl).origin;
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
-<tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
+<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You've been added to CallTrove</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">${inviter} added you to ${team} on CallTrove. Set a password to activate your account.</td></tr>
 <tr><td align="center">
