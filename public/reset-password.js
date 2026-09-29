@@ -14,3 +14,10 @@ if (error) {
 if (params.get("sent")) {
   document.getElementById("reset-sent").hidden = false;
 }
+
+// Two submit buttons on this form (reset, and the formaction="resend" one)
+// -- disabling both on submit covers either, so a double-click on "Send a
+// new code" can't fire two reset-code emails for one click.
+document.querySelector("form").addEventListener("submit", () => {
+  document.querySelectorAll('form button[type="submit"]').forEach((b) => (b.disabled = true));
+});

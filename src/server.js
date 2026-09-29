@@ -117,6 +117,7 @@ app.get("/set-password.js", (req, res) => res.sendFile(path.join(__dirname, ".."
 // /reset-password) -- reachable pre-login same as the pages above, since
 // this is specifically for someone who can't log in yet.
 app.get("/forgot-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "forgot-password.html")));
+app.get("/forgot-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "forgot-password.js")));
 app.get("/reset-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.html")));
 app.get("/reset-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
