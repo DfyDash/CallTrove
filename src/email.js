@@ -174,6 +174,46 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 </html>`;
 }
 
+// Sent once, right after self-service signup completes (routes/auth.js's
+// POST /signup, "tenant_signup" -- the plain-text-only version already
+// lives there: "Your CallTrove account is ready..."). No code, no link
+// token -- this is orientation, not a security action, so the card leads
+// with a real "Sign in" button (a plain <a href>, same reasoning as
+// inviteEmailHtml) instead of anything to type in, and skips the
+// request-details footer the OTP/invite emails carry (there's no request
+// to attribute -- the recipient just finished creating this account
+// themselves). The one thing worth calling out is the GoHighLevel
+// connection step: self-service signup can't do that part for them, and a
+// signed-up-but-never-connected account is a dead end, so it gets its own
+// visually distinct callout rather than getting lost in a paragraph.
+function welcomeEmailHtml(username, { baseUrl }) {
+  const safeUsername = escapeHtml(username);
+  const loginUrl = escapeHtml(`${baseUrl}/login.html`);
+  return `<!doctype html>
+<html>
+<body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
+<tr><td align="center">
+<table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
+<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">Welcome to CallTrove</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is ready. Sign in with the username you chose: <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
+<tr><td align="center">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BRAND.accent}; border-radius:8px;">
+<a href="${loginUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Sign in to CallTrove</a>
+</td></tr></table>
+</td></tr>
+<tr><td style="padding-top:24px;">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="background:${BRAND.light}; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 16px; font-size:13px; color:${BRAND.muted}; line-height:1.5;"><strong style="color:${BRAND.dark};">Next step:</strong> connect your GoHighLevel account from Settings so your calls start syncing.</td></tr></table>
+</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:20px;">Didn't create this account? Contact support@calltrove.com.</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+}
+
 async function sendEmail({ to, subject, text, html }) {
   if (!isEnabled()) {
     throw new Error("Email sending is not configured (RESEND_API_KEY / EMAIL_FROM_ADDRESS)");
@@ -198,4 +238,4 @@ async function sendEmail({ to, subject, text, html }) {
   }
 }
 
-module.exports = { isEnabled, sendEmail, otpCodeEmailHtml, inviteEmailHtml };
+module.exports = { isEnabled, sendEmail, otpCodeEmailHtml, inviteEmailHtml, welcomeEmailHtml };
