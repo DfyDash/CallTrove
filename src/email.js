@@ -95,25 +95,31 @@ function formatRequestMeta(requestIp) {
 // plus the "CallTrove" wordmark, same design as everywhere else in the app),
 // not just the bare icon and not text redrawn in CSS. Source art is
 // 948x282 (3.36:1) at high resolution so it stays sharp at 2x/3x pixel
-// density despite rendering at 36px tall. Embedded as a base64 data: URI
-// read once at startup, rather than a hosted <img src="{baseUrl}/...">:
-// the hosted version depended on the recipient's mail provider being able
-// to fetch that exact URL back from our server at render time, and in
-// production that fetch was failing (Gmail showed a broken-image icon, not
-// just an images-blocked placeholder) -- a data: URI has no separate fetch
-// to fail, so the logo renders unconditionally, the same way the code and
-// text already do. Every mainstream client we need (Gmail, Apple Mail, the
-// Outlook web/mobile apps) renders data: URI images fine; only legacy
-// desktop Outlook's Word engine is unreliable with them, and that client
-// already can't render this table-based layout well.
-const LOGO_DATA_URI = (() => {
+// density despite rendering at 36px tall.
+//
+// Sent as a real inline attachment referenced by Content-ID (cid:), not a
+// base64 data: URI in the HTML. A data: URI looked like the fix (no fetch
+// back to our server to fail), but it's genuinely unreliable across
+// clients in practice: Outlook.com/Office 365 webmail actively rewrites or
+// strips data: image sources for security reasons (Microsoft's own
+// guidance is moving inline images to cid: for exactly this reason -- see
+// devblogs.microsoft.com/microsoft365dev/changes-to-inline-images-in-outlook),
+// and it turned out unreliable in Gmail too once tested there directly.
+// cid: attachments are the one embedding method every mainstream client
+// (Gmail, Outlook web/desktop, Apple Mail, Yahoo) treats as a first-class,
+// always-rendered part of the message rather than remote or inline HTML
+// content to sanitize -- see resend.com/changelog/embed-images-using-cid.
+// LOGO_ATTACHMENT is passed on every send in sendEmail() below; the
+// content-type is inferred by Resend from the filename extension.
+const LOGO_CONTENT_ID = "calltrove-logo";
+const LOGO_ATTACHMENT = (() => {
   const bytes = fs.readFileSync(path.join(__dirname, "..", "public", "email-logo.png"));
-  return `data:image/png;base64,${bytes.toString("base64")}`;
+  return { filename: "calltrove-logo.png", content: bytes.toString("base64"), content_id: LOGO_CONTENT_ID };
 })();
 
 function brandHeaderHtml() {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="padding-bottom:4px;"><tr>
-<td style="vertical-align:middle;"><img src="${LOGO_DATA_URI}" width="121" height="36" alt="CallTrove" style="display:block;"></td>
+<td style="vertical-align:middle;"><img src="cid:${LOGO_CONTENT_ID}" width="121" height="36" alt="CallTrove" style="display:block;"></td>
 </tr></table>`;
 }
 
@@ -254,7 +260,7 @@ async function sendEmail({ to, subject, text, html }) {
       to: [to],
       subject,
       text,
-      ...(html ? { html } : {}),
+      ...(html ? { html, attachments: [LOGO_ATTACHMENT] } : {}),
     }),
   });
   if (!res.ok) {
