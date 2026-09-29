@@ -177,22 +177,25 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 // Sent once, right after self-service signup completes (routes/auth.js's
 // POST /signup, "tenant_signup" -- the plain-text-only version already
 // lives there: "Your CallTrove account is ready..."). No code, no link
-// token -- this is orientation, not a security action, so the card leads
-// with a real "Sign in" button (a plain <a href>, same reasoning as
-// inviteEmailHtml) instead of anything to type in, and skips the
+// token -- this is orientation, not a security action, so the primary
+// action is a real button (a plain <a href>, same reasoning as
+// inviteEmailHtml) instead of anything to type in, and it skips the
 // request-details footer the OTP/invite emails carry (there's no request
 // to attribute -- the recipient just finished creating this account
-// themselves). This is also the one email in the set with no code to
-// protect, so it's the one place warmth doesn't compete with anything --
-// the OTP emails stay terse on purpose (every extra word is between the
-// reader and the code), but there's no equivalent reason to hold back
-// here. The one thing worth calling out is the GoHighLevel connection
-// step: self-service signup can't do that part for them, and a
-// signed-up-but-never-connected account is a dead end, so it gets its own
-// visually distinct callout rather than getting lost in a paragraph.
+// themselves). Structure follows a GHL-style onboarding template the user
+// supplied directly (subject/body with merge fields like
+// {{contact.first_name}}, {{first_action_url}}, {{dashboard_url}}) rather
+// than the warmer freeform copy this had before -- mapped onto what
+// signup actually collects: no first-name field exists (just business
+// name + email), so the personalized "Hi {{first_name}}" greeting is
+// dropped rather than guessed at from an email address, which risks
+// getting it wrong. {{first_action_url}} is the GoHighLevel connection
+// step in Settings, since a signed-up-but-never-connected account is a
+// dead end otherwise; {{dashboard_url}} is the login page.
 function welcomeEmailHtml(username, { baseUrl }) {
   const safeUsername = escapeHtml(username);
   const loginUrl = escapeHtml(`${baseUrl}/login.html`);
+  const connectUrl = escapeHtml(`${baseUrl}/settings.html`);
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -200,17 +203,21 @@ function welcomeEmailHtml(username, { baseUrl }) {
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
 <tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
-<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You're in! Welcome to CallTrove</td></tr>
-<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is live and ready to go. We're glad you're here -- let's get your calls flowing in. And your username: <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
-<tr><td align="center">
-<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BRAND.accent}; border-radius:8px;">
-<a href="${loginUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Sign in to CallTrove</a>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">Welcome to CallTrove</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is ready, and you signed up with <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
+<tr><td style="font-size:12px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:${BRAND.accent}; padding-bottom:12px;">Here's how to get started</td></tr>
+<tr><td>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="background:${BRAND.light}; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:16px;">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+<td style="font-size:14px; color:${BRAND.dark}; line-height:1.5; padding-bottom:12px;">Connect your GoHighLevel account: a guided setup walks you through it.</td>
+</tr><tr><td>
+<a href="${connectUrl}" style="display:inline-block; padding:10px 20px; background:${BRAND.accent}; border-radius:8px; font-size:14px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Connect GoHighLevel</a>
+</td></tr></table>
 </td></tr></table>
 </td></tr>
-<tr><td style="padding-top:24px;">
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="background:${BRAND.light}; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 16px; font-size:13px; color:${BRAND.muted}; line-height:1.5;"><strong style="color:${BRAND.dark};">One last step:</strong> connect your GoHighLevel account from Settings and watch your calls start rolling in automatically.</td></tr></table>
-</td></tr>
-<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:20px;">Didn't create this account? Contact support@calltrove.com.</td></tr>
+<tr><td style="font-size:14px; color:${BRAND.muted}; padding-top:16px;">You can sign in anytime here: <a href="${loginUrl}" style="color:${BRAND.accent};">${loginUrl}</a></td></tr>
+<tr><td style="font-size:15px; color:${BRAND.dark}; line-height:1.6; padding-top:24px;">We're glad you're here.<br>The CallTrove Team</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:20px; border-top:1px solid ${BRAND.cardBorder};">Didn't create this account? Contact support@calltrove.com.</td></tr>
 </table>
 </td></tr>
 </table>
