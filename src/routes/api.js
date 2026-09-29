@@ -218,6 +218,7 @@ router.post("/account/email/start", requireCsrf, async (req, res) => {
       html: email.otpCodeEmailHtml(code, {
         heading: "Confirm your email",
         explain: "Someone is adding this address to a CallTrove account. If that wasn't you, no change happens unless this code is entered.",
+        requestIp: req.ip,
       }),
     });
   } catch (err) {

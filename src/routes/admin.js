@@ -271,7 +271,11 @@ router.post("/users/invite", requireCsrf, async (req, res) => {
       to: inviteEmail,
       subject: "You've been added to CallTrove",
       text: `You've been added to CallTrove for ${account.name || "your team"}.\n\nSet your password to finish activating your account:\n${inviteUrl}\n\nThis link expires in 7 days.`,
-      html: email.inviteEmailHtml(inviteUrl, { accountName: account.name }),
+      html: email.inviteEmailHtml(inviteUrl, {
+        accountName: account.name,
+        invitedBy: req.session.user.username,
+        requestIp: req.ip,
+      }),
     });
     emailSent = true;
   } catch (err) {

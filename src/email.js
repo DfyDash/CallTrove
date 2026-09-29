@@ -65,7 +65,19 @@ function escapeHtml(s) {
 // Table-based layout and every style inlined, since email clients
 // routinely ignore <style> blocks and modern CSS (flexbox, grid) -- this
 // is the one layout approach that renders consistently across all of them.
-function otpCodeEmailHtml(code, { heading, explain }) {
+// requestIp is optional (req.ip can be undefined in odd deployment setups)
+// -- shown alongside the send time in a separate "request details" row,
+// the same pattern Google/GitHub/Stripe use on their sign-in-alert emails.
+// It's the one piece of context in this email that isn't just an adjective
+// on "someone" -- an actual, checkable fact the recipient (or, if this
+// turns into a real incident, whoever's investigating) can act on, which a
+// better-written sentence can't substitute for.
+function formatRequestMeta(requestIp) {
+  const stamp = `${new Date().toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  return requestIp ? `Requested from ${escapeHtml(requestIp)} at ${stamp}` : `Requested at ${stamp}`;
+}
+
+function otpCodeEmailHtml(code, { heading, explain, requestIp }) {
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -79,6 +91,9 @@ function otpCodeEmailHtml(code, { heading, explain }) {
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 12px 14px 22px; text-align:center; font-family:'Courier New', monospace; font-size:28px; font-weight:700; letter-spacing:10px; color:${BRAND.dark};">${code}</td></tr></table>
 </td></tr>
 <tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:16px;">Expires in 10 minutes. Didn't request this? Ignore this email.</td></tr>
+<tr><td style="font-size:12px; color:${BRAND.muted}; padding-top:14px; border-top:1px solid ${BRAND.cardBorder};">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="padding-top:14px; font-family:'Courier New', monospace;">${formatRequestMeta(requestIp)}</td></tr></table>
+</td></tr>
 </table>
 </td></tr>
 </table>
@@ -88,10 +103,16 @@ function otpCodeEmailHtml(code, { heading, explain }) {
 
 // Same card as otpCodeEmailHtml, but the thing to act on is a link, not a
 // code -- and unlike a JS "copy" button, a plain <a href> button is real:
-// every client renders and follows it, no script required. accountName is
-// optional (falls back to "your team") since a GHL account can be unnamed.
-function inviteEmailHtml(inviteUrl, { accountName }) {
+// every client renders and follows it, no script required. accountName and
+// invitedBy are both optional (a GHL account can be unnamed; invitedBy is
+// only passed where the caller has a session to read it from) and fall
+// back to something generic rather than leaving a blank in the sentence.
+// requestIp/formatRequestMeta match the OTP emails' "request details" row
+// -- here it's the admin's IP at invite time, not the recipient's, but the
+// same reasoning applies: a checkable fact beats a better-written sentence.
+function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
   const team = accountName ? escapeHtml(accountName) : "your team";
+  const inviter = invitedBy ? escapeHtml(invitedBy) : "An admin";
   const safeUrl = escapeHtml(inviteUrl);
   return `<!doctype html>
 <html>
@@ -101,13 +122,16 @@ function inviteEmailHtml(inviteUrl, { accountName }) {
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
 <tr><td style="font-size:22px; font-weight:700; color:${BRAND.dark}; padding-bottom:4px;">Call<span style="color:${BRAND.accent};">Trove</span></td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You've been added to CallTrove</td></tr>
-<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">You're joining ${team}. Set a password to activate your account.</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">${inviter} added you to ${team} on CallTrove. Set a password to activate your account.</td></tr>
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BRAND.accent}; border-radius:8px;">
 <a href="${safeUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Set your password</a>
 </td></tr></table>
 </td></tr>
 <tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:20px;">This link expires in 7 days. If you weren't expecting this, you can ignore this email.</td></tr>
+<tr><td style="font-size:12px; color:${BRAND.muted}; padding-top:14px; border-top:1px solid ${BRAND.cardBorder};">
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="padding-top:14px; font-family:'Courier New', monospace;">${formatRequestMeta(requestIp)}</td></tr></table>
+</td></tr>
 </table>
 </td></tr>
 </table>

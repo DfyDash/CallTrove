@@ -129,7 +129,7 @@ const resetPasswordResendLimiter = rateLimit({
 // the user just lands on the code-entry page without an email in their
 // inbox yet and can hit "send a new code" once whatever was wrong clears
 // up, rather than getting a raw 500 instead of a clean redirect.
-async function sendLoginEmailOtp(user) {
+async function sendLoginEmailOtp(user, requestIp) {
   try {
     const recentCount = await db.countRecentEmailOtpCodes(user.id, "login", 15);
     if (recentCount >= 5) return;
@@ -142,6 +142,7 @@ async function sendLoginEmailOtp(user) {
       html: email.otpCodeEmailHtml(code, {
         heading: "Your sign-in code",
         explain: "Someone signed in to this CallTrove account with your email address and password, and needs this code to finish.",
+        requestIp,
       }),
     });
   } catch (err) {
@@ -154,7 +155,7 @@ async function sendLoginEmailOtp(user) {
 // send failure rather than breaking the request) -- separate function
 // because the two happen on different unauthenticated flows with different
 // wording, not because the mechanics differ.
-async function sendPasswordResetEmailOtp(user) {
+async function sendPasswordResetEmailOtp(user, requestIp) {
   try {
     const recentCount = await db.countRecentEmailOtpCodes(user.id, "password_reset", 15);
     if (recentCount >= 5) return;
@@ -167,6 +168,7 @@ async function sendPasswordResetEmailOtp(user) {
       html: email.otpCodeEmailHtml(code, {
         heading: "Reset your password",
         explain: "Someone asked to reset the password on this CallTrove account. Your current password still works until this code is used.",
+        requestIp,
       }),
     });
   } catch (err) {
@@ -213,7 +215,7 @@ router.post("/login", express.urlencoded({ extended: false }), loginLimiter, asy
   // never has to ask which second factor to use.
   if (user.emailOtpEnabled) {
     req.session.pendingMfaUserId = user.id;
-    await sendLoginEmailOtp(user);
+    await sendLoginEmailOtp(user, req.ip);
     return res.redirect("/login-mfa-email.html");
   }
 
@@ -280,7 +282,7 @@ router.post("/login-mfa-email/resend", emailOtpResendLimiter, async (req, res) =
     return res.redirect("/login.html");
   }
 
-  await sendLoginEmailOtp(user);
+  await sendLoginEmailOtp(user, req.ip);
   res.redirect("/login-mfa-email.html?sent=1");
 });
 
@@ -298,7 +300,7 @@ router.post("/forgot-password", express.urlencoded({ extended: false }), forgotP
     const user = await db.getUserByUsername(username);
     if (user && user.email && user.emailVerifiedAt) {
       req.session.pendingPasswordResetUserId = user.id;
-      await sendPasswordResetEmailOtp(user);
+      await sendPasswordResetEmailOtp(user, req.ip);
     }
   }
   res.redirect("/reset-password.html?sent=1");
@@ -338,7 +340,7 @@ router.post("/reset-password/resend", resetPasswordResendLimiter, async (req, re
     return res.redirect("/forgot-password.html");
   }
 
-  await sendPasswordResetEmailOtp(user);
+  await sendPasswordResetEmailOtp(user, req.ip);
   res.redirect("/reset-password.html?sent=1");
 });
 
