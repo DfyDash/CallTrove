@@ -26,29 +26,29 @@ function isEnabled() {
   return !!API_KEY && !!FROM_ADDRESS;
 }
 
-// A 6-digit code as individual boxed digits, CallTrove-branded -- same idea
-// as the Google OTP-email layout this was modeled on. No "copy" button:
-// virtually every email client (Gmail, Outlook, Apple Mail) strips
-// JavaScript entirely, so a button that looked clickable would just be
-// dead weight that quietly does nothing. Gmail's own copy-code chip isn't
-// an exception to this -- it's not embedded in the email at all, it's a
-// Gmail client-side feature (an "Information Card" iframe Gmail draws in
-// its own UI, granted clipboard-write on google.com's origin) that appears
-// when Gmail's parser matches a verification-code pattern in the message
-// text. It only shows in Gmail, and only needs the plain-text body to read
-// naturally (e.g. "code is: 123456", see routes/auth.js) -- nothing to
-// build here. Table-based layout and every style inlined, since email
-// clients routinely ignore <style> blocks and modern CSS (flexbox, grid)
-// -- this is the one layout approach that renders consistently across all
-// of them.
+// The 6-digit code as ONE selectable text node, CallTrove-branded, styled
+// with letter-spacing to read like the boxed-digit layout it replaced. No
+// "copy" button: virtually every email client (Gmail, Outlook, Apple Mail)
+// strips JavaScript entirely, so a button that looked clickable would just
+// be dead weight that quietly does nothing -- that's a hard rendering
+// constraint every client enforces, not something a cleverer button design
+// gets around. Gmail's own copy-code chip isn't an exception -- it's not
+// embedded in the email at all, it's a Gmail client-side feature (an
+// "Information Card" iframe Gmail draws in its own UI, granted
+// clipboard-write on google.com's origin) that appears when Gmail's parser
+// matches a verification-code pattern in the message text. It only shows
+// in Gmail, and only needs the plain-text body to read naturally (e.g.
+// "code is: 123456", see routes/auth.js) -- nothing to build here.
+// The code used to be split into one <td> per digit for the boxed look,
+// which meant a drag-select could snag stray whitespace between cells or
+// miss a digit at the boundary -- annoying on the one interaction (select
+// + copy) this element exists for. Keeping the whole code in a single text
+// node makes a triple-click or one drag grab exactly the six digits, no
+// more, every time. Table-based layout and every style inlined, since
+// email clients routinely ignore <style> blocks and modern CSS (flexbox,
+// grid) -- this is the one layout approach that renders consistently
+// across all of them.
 function otpCodeEmailHtml(code, { heading, intro }) {
-  const digits = String(code)
-    .split("")
-    .map(
-      (d) => `<td style="width:44px; height:56px; background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; text-align:center; vertical-align:middle; font-family:'Courier New', monospace; font-size:28px; font-weight:700; color:${BRAND.dark};">${d}</td>`
-    )
-    .join(`<td style="width:8px;"></td>`);
-
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -59,9 +59,10 @@ function otpCodeEmailHtml(code, { heading, intro }) {
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">${heading}</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">${intro}</td></tr>
 <tr><td>
-<table role="presentation" cellpadding="0" cellspacing="0"><tr>${digits}</tr></table>
+<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:14px 12px 14px 22px; text-align:center; font-family:'Courier New', monospace; font-size:28px; font-weight:700; letter-spacing:10px; color:${BRAND.dark};">${code}</td></tr></table>
 </td></tr>
-<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:24px;">This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:12px;">Tap and hold (or double-click) the code above to select it, then copy.</td></tr>
+<tr><td style="font-size:13px; color:${BRAND.muted}; padding-top:16px;">This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</td></tr>
 </table>
 </td></tr>
 </table>
