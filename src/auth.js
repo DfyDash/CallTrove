@@ -36,6 +36,8 @@ function sessionUser(user) {
     ghlUserId: user.ghlUserId,
     tenantId: user.tenantId,
     isOperator: Boolean(user.isOperator),
+    firstName: user.firstName || null,
+    lastName: user.lastName || null,
   };
 }
 

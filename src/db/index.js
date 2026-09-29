@@ -682,7 +682,8 @@ async function getUserByUsername(username) {
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
             role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
             is_operator AS "isOperator", totp_enabled AS "totpEnabled",
-            email_otp_enabled AS "emailOtpEnabled", email, email_verified_at AS "emailVerifiedAt"
+            email_otp_enabled AS "emailOtpEnabled", email, email_verified_at AS "emailVerifiedAt",
+            first_name AS "firstName", last_name AS "lastName"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -693,7 +694,8 @@ async function getUserById(id) {
   const { rows } = await pool.query(
     `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
             is_operator AS "isOperator", totp_secret AS "totpSecret", totp_enabled AS "totpEnabled",
-            email, email_verified_at AS "emailVerifiedAt", email_otp_enabled AS "emailOtpEnabled"
+            email, email_verified_at AS "emailVerifiedAt", email_otp_enabled AS "emailOtpEnabled",
+            first_name AS "firstName", last_name AS "lastName"
      FROM users WHERE id = $1`,
     [id]
   );

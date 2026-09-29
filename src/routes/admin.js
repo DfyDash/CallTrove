@@ -265,6 +265,12 @@ router.post("/users/invite", requireCsrf, async (req, res) => {
   await log(req, "user_invited", `Invited "${inviteEmail}" (role: ${role}, linked to GHL user ${ghlUserId})`);
 
   const inviteUrl = `${req.protocol}://${req.get("host")}/set-password.html?token=${rawToken}`;
+  // Full name when the inviting admin has one on file (self-service
+  // signup collects first/last name, see public/signup.html) -- falls
+  // back to their username (an email address) for admins created another
+  // way, like an earlier invite or manual admin creation, that never had
+  // a name to collect.
+  const inviterName = [req.session.user.firstName, req.session.user.lastName].filter(Boolean).join(" ") || req.session.user.username;
   let emailSent = false;
   try {
     await email.sendEmail({
@@ -273,7 +279,7 @@ router.post("/users/invite", requireCsrf, async (req, res) => {
       text: `You've been added to CallTrove for ${account.name || "your team"}.\n\nSet your password to finish activating your account:\n${inviteUrl}\n\nThis link expires in 7 days.`,
       html: email.inviteEmailHtml(inviteUrl, {
         accountName: account.name,
-        invitedBy: req.session.user.username,
+        invitedBy: inviterName,
         requestIp: req.ip,
       }),
     });
