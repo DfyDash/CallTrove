@@ -6,6 +6,9 @@
 // works for real recipients immediately, no approval process -- see
 // .env.example's comment for the account/plan reasoning.
 
+const fs = require("fs");
+const path = require("path");
+
 const API_KEY = process.env.RESEND_API_KEY;
 const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS;
 
@@ -91,21 +94,25 @@ function formatRequestMeta(requestIp) {
 // The real brand mark (public/apple-touch-icon.png -- same phone-over-trove
 // icon as the favicon and app icon), not a substitute drawn in CSS. Sized
 // at 180x180 so it stays sharp at 2x/3x pixel density despite rendering at
-// 28px. Referenced by absolute URL rather than inlined (data: URI or
-// inline <svg>): Outlook's Word rendering engine is unreliable with both,
-// while a plain hosted <img> is the one image approach every client
-// supports. baseUrl is built the same way routes/admin.js already builds
-// inviteUrl (`${req.protocol}://${req.get("host")}`), so this works
-// against whatever host actually served the request -- staging or prod --
-// instead of a hardcoded domain. The wordmark text stays alongside the
-// icon rather than being replaced by it, so the brand still reads if the
-// client has images off by default (most webmail does, until the
-// recipient clicks "show images").
-function brandHeaderHtml(baseUrl) {
-  const logoUrl = `${baseUrl}/apple-touch-icon.png`;
+// 40px. Embedded as a base64 data: URI read once at startup, rather than a
+// hosted <img src="{baseUrl}/apple-touch-icon.png">: the hosted version
+// depended on the recipient's mail provider being able to fetch that exact
+// URL back from our server at render time, and in production that fetch
+// was failing (Gmail showed a broken-image icon, not just an
+// images-blocked placeholder) -- a data: URI has no separate fetch to
+// fail, so the logo renders unconditionally, the same way the code and
+// text already do. Every mainstream client we need (Gmail, Apple Mail,
+// the Outlook web/mobile apps) renders data: URI images fine; only
+// legacy desktop Outlook's Word engine is unreliable with them, and that
+// client already can't render this table-based layout well.
+const LOGO_DATA_URI = (() => {
+  const bytes = fs.readFileSync(path.join(__dirname, "..", "public", "apple-touch-icon.png"));
+  return `data:image/png;base64,${bytes.toString("base64")}`;
+})();
+
+function brandHeaderHtml() {
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="padding-bottom:4px;"><tr>
-<td style="vertical-align:middle; padding-right:10px;"><img src="${escapeHtml(logoUrl)}" width="28" height="28" alt="CallTrove" style="display:block; border-radius:7px;"></td>
-<td style="vertical-align:middle; font-size:22px; font-weight:700; color:${BRAND.dark};">Call<span style="color:${BRAND.accent};">Trove</span></td>
+<td style="vertical-align:middle;"><img src="${LOGO_DATA_URI}" width="40" height="40" alt="CallTrove" style="display:block; border-radius:9px;"></td>
 </tr></table>`;
 }
 
@@ -116,7 +123,7 @@ function otpCodeEmailHtml(code, { heading, explain, securityNote, requestIp, bas
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
-<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
+<tr><td>${brandHeaderHtml()}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:6px;">${heading}</td></tr>
 <tr><td style="font-size:14px; color:${BRAND.muted}; line-height:1.5; padding-bottom:20px;">${explain}</td></tr>
 <tr><td>
@@ -155,7 +162,7 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
-<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
+<tr><td>${brandHeaderHtml()}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You've been added to CallTrove</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">${inviter} added you to ${team} on CallTrove. Set a password to activate your account.</td></tr>
 <tr><td align="center">
@@ -208,7 +215,7 @@ function welcomeEmailHtml(username, { baseUrl, firstName }) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${BRAND.light}; padding:40px 16px;">
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
-<tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
+<tr><td>${brandHeaderHtml()}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">${heading}</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is ready, and you signed up with <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
 <tr><td style="font-size:12px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:${BRAND.accent}; padding-bottom:12px;">Here's how to get started</td></tr>
