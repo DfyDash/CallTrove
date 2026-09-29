@@ -139,10 +139,7 @@ async function sendLoginEmailOtp(user) {
       to: user.email,
       subject: "Your CallTrove sign-in code",
       text: `Your CallTrove sign-in code is: ${code}\n\nThis code expires in 10 minutes. If you didn't try to sign in, you can ignore this email -- your account is still secure.`,
-      html: email.otpCodeEmailHtml(code, {
-        heading: "Your sign-in code",
-        intro: "Enter this code to finish signing in.",
-      }),
+      html: email.otpCodeEmailHtml(code, { heading: "Your sign-in code" }),
     });
   } catch (err) {
     console.error("[email-otp] failed to send login code:", err);
@@ -164,10 +161,7 @@ async function sendPasswordResetEmailOtp(user) {
       to: user.email,
       subject: "Your CallTrove password reset code",
       text: `Your CallTrove password reset code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email -- your password hasn't changed.`,
-      html: email.otpCodeEmailHtml(code, {
-        heading: "Reset your password",
-        intro: "Enter this code to choose a new password.",
-      }),
+      html: email.otpCodeEmailHtml(code, { heading: "Reset your password" }),
     });
   } catch (err) {
     console.error("[email-otp] failed to send password reset code:", err);
