@@ -201,7 +201,7 @@ function welcomeEmailHtml(username, { baseUrl }) {
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
 <tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">You're in! Welcome to CallTrove</td></tr>
-<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is live and ready to go, <strong style="color:${BRAND.dark};">${safeUsername}</strong>. We're glad you're here -- let's get your calls flowing in.</td></tr>
+<tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is live and ready to go. We're glad you're here -- let's get your calls flowing in. And your username: <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
 <tr><td align="center">
 <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:${BRAND.accent}; border-radius:8px;">
 <a href="${loginUrl}" style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:700; color:${BRAND.light}; text-decoration:none;">Sign in to CallTrove</a>
