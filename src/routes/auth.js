@@ -418,9 +418,9 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   try {
     await email.sendEmail({
       to: address,
-      subject: "Welcome to CallTrove",
+      subject: `Welcome to CallTrove, ${businessName}`,
       text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with the username you chose (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}` }),
+      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, businessName }),
     });
   } catch (err) {
     console.error("[signup] failed to send welcome email:", err);

@@ -186,16 +186,18 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 // supplied directly (subject/body with merge fields like
 // {{contact.first_name}}, {{first_action_url}}, {{dashboard_url}}) rather
 // than the warmer freeform copy this had before -- mapped onto what
-// signup actually collects: no first-name field exists (just business
-// name + email), so the personalized "Hi {{first_name}}" greeting is
-// dropped rather than guessed at from an email address, which risks
-// getting it wrong. {{first_action_url}} is the GoHighLevel connection
+// signup actually collects: no first-name field exists, but businessName
+// is real, known data (the tenant name entered at signup, see routes/
+// auth.js's POST /signup), so it fills the {{contact.first_name}}-shaped
+// slot in the heading instead of leaving it blank or guessing a name from
+// an email address. {{first_action_url}} is the GoHighLevel connection
 // step in Settings, since a signed-up-but-never-connected account is a
 // dead end otherwise; {{dashboard_url}} is the login page.
-function welcomeEmailHtml(username, { baseUrl }) {
+function welcomeEmailHtml(username, { baseUrl, businessName }) {
   const safeUsername = escapeHtml(username);
   const loginUrl = escapeHtml(`${baseUrl}/login.html`);
   const connectUrl = escapeHtml(`${baseUrl}/settings.html`);
+  const heading = businessName ? `Welcome to CallTrove, ${escapeHtml(businessName)}` : "Welcome to CallTrove";
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
@@ -203,7 +205,7 @@ function welcomeEmailHtml(username, { baseUrl }) {
 <tr><td align="center">
 <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#FFFFFF; border:1px solid ${BRAND.cardBorder}; border-radius:16px; padding:40px;">
 <tr><td>${brandHeaderHtml(baseUrl)}</td></tr>
-<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">Welcome to CallTrove</td></tr>
+<tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">${heading}</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is ready, and you signed up with <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
 <tr><td style="font-size:12px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:${BRAND.accent}; padding-bottom:12px;">Here's how to get started</td></tr>
 <tr><td>
