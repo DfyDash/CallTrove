@@ -631,11 +631,11 @@ async function getCall(callId) {
 
 // --- users (dashboard login accounts) ---
 
-async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName, tenantId }) {
+async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName, tenantId, firstName, lastName }) {
   await pool.query(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID]
+    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name, tenant_id, first_name, last_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID, firstName || null, lastName || null]
   );
 }
 

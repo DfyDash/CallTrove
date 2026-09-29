@@ -488,3 +488,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_invite_token_hash_idx ON users (invite_t
 ALTER TABLE email_otp_codes DROP CONSTRAINT IF EXISTS email_otp_codes_purpose_check;
 ALTER TABLE email_otp_codes ADD CONSTRAINT email_otp_codes_purpose_check
   CHECK (purpose IN ('verify_email', 'login', 'password_reset'));
+
+-- Collected on self-service signup only (routes/auth.js's POST /signup) --
+-- an admin invite or manual admin-created user has no form to collect
+-- these from, so they stay NULL there, same as every other
+-- signup-specific column above. Nullable rather than NOT NULL for the
+-- same reason: existing rows created before this column existed have no
+-- value to backfill. Used to personalize the welcome email
+-- (email.js's welcomeEmailHtml) instead of guessing a name from the
+-- account's business name or email address.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT;

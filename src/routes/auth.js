@@ -371,12 +371,14 @@ const SIGNUP_EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // so the sequence is: tenant with no owner yet, then the user, then link
 // the two (db.updateTenantOwner).
 router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, async (req, res) => {
+  const firstName = ((req.body || {}).firstName || "").trim();
+  const lastName = ((req.body || {}).lastName || "").trim();
   const businessName = ((req.body || {}).businessName || "").trim();
   const username = ((req.body || {}).username || "").trim();
   const address = ((req.body || {}).email || "").trim().toLowerCase();
   const { password, confirmPassword } = req.body || {};
 
-  if (!businessName || !username || !address || !password) {
+  if (!firstName || !lastName || !businessName || !username || !address || !password) {
     return res.redirect("/signup.html?error=missing");
   }
   if (!SIGNUP_EMAIL_FORMAT.test(address)) {
@@ -399,7 +401,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const { hash, salt } = hashPassword(password);
 
   await db.createTenant({ id: tenantId, name: businessName });
-  await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId });
+  await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
   await db.updateTenantOwner(tenantId, userId);
   // Stored as-provided, unverified -- same shape as the self-service
   // "start email verification" flow (db.setUserPendingEmail). Proving it
@@ -418,9 +420,9 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   try {
     await email.sendEmail({
       to: address,
-      subject: `Welcome to CallTrove, ${businessName}`,
+      subject: `Welcome to CallTrove, ${firstName}`,
       text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with the username you chose (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, businessName }),
+      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName }),
     });
   } catch (err) {
     console.error("[signup] failed to send welcome email:", err);

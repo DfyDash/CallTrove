@@ -186,18 +186,22 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 // supplied directly (subject/body with merge fields like
 // {{contact.first_name}}, {{first_action_url}}, {{dashboard_url}}) rather
 // than the warmer freeform copy this had before -- mapped onto what
-// signup actually collects: no first-name field exists, but businessName
-// is real, known data (the tenant name entered at signup, see routes/
-// auth.js's POST /signup), so it fills the {{contact.first_name}}-shaped
-// slot in the heading instead of leaving it blank or guessing a name from
-// an email address. {{first_action_url}} is the GoHighLevel connection
-// step in Settings, since a signed-up-but-never-connected account is a
-// dead end otherwise; {{dashboard_url}} is the login page.
-function welcomeEmailHtml(username, { baseUrl, businessName }) {
+// signup actually collects. First/last name are now real signup fields
+// (public/signup.html, added specifically so this template could use
+// them -- see schema.sql's users.first_name/last_name), so firstName
+// fills the {{contact.first_name}}-shaped slot in the heading directly,
+// rather than the businessName stand-in this used before that field
+// existed. firstName is technically optional here (existing rows from
+// before this column existed have none) even though the signup form
+// itself requires it, so the fallback heading still covers that gap.
+// {{first_action_url}} is the GoHighLevel connection step in Settings,
+// since a signed-up-but-never-connected account is a dead end otherwise;
+// {{dashboard_url}} is the login page.
+function welcomeEmailHtml(username, { baseUrl, firstName }) {
   const safeUsername = escapeHtml(username);
   const loginUrl = escapeHtml(`${baseUrl}/login.html`);
   const connectUrl = escapeHtml(`${baseUrl}/settings.html`);
-  const heading = businessName ? `Welcome to CallTrove, ${escapeHtml(businessName)}` : "Welcome to CallTrove";
+  const heading = firstName ? `Welcome to CallTrove, ${escapeHtml(firstName)}` : "Welcome to CallTrove";
   return `<!doctype html>
 <html>
 <body style="margin:0; padding:0; background:${BRAND.light}; font-family:Helvetica, Arial, sans-serif;">
