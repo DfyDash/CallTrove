@@ -342,11 +342,18 @@ function outcomeBadge(disposition) {
   return `<span class="outcome-badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
+// "4:11" reads as a clock time or a ratio to anyone not already thinking
+// in minutes:seconds -- spelling out the units makes it unambiguous. Only
+// the static pre-playback label (the table's Duration column, the play
+// button's initial time), not the live scrubber (mmss() below) -- once
+// audio is actually playing, "0 min 4 sec / 4 min 23 sec" ticking live
+// would be unusual next to every other player's plain M:SS convention.
 function formatDuration(seconds) {
   if (!seconds) return "-";
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (m === 0) return `${s} sec`;
+  return `${m} min ${s} sec`;
 }
 
 function renderCalls(data) {
