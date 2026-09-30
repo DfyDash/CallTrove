@@ -523,3 +523,16 @@ CREATE TABLE IF NOT EXISTS call_digests (
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS call_digests_account_idx ON call_digests (ghl_account_id, computed_at DESC);
+
+-- Client-configurable digest schedule -- when the twice-daily job (src/
+-- callDigestJob.js) actually fires for this account, in the account's own
+-- local time. Defaults (8am/8pm America/New_York) match the original
+-- fixed-interval behavior so existing accounts keep working unchanged
+-- until someone actually opens the new schedule editor and picks
+-- something else. HH:MM (24h) rather than a TIME column: the job only
+-- ever compares it against an Intl-formatted "now" string in the
+-- account's timezone, never does date arithmetic on it, so there's
+-- nothing a real TIME type buys here.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_time_1 TEXT NOT NULL DEFAULT '08:00';
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_time_2 TEXT NOT NULL DEFAULT '20:00';
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_timezone TEXT NOT NULL DEFAULT 'America/New_York';

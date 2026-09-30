@@ -165,6 +165,38 @@
                   <span class="digest-timestamp" id="digest-timestamp"></span>
                 </div>
               </div>
+
+              <form id="digest-schedule-form" class="admin-form">
+                <label>Runs at
+                  <input type="time" name="digestTime1" id="digest-time-1" required />
+                </label>
+                <label>and
+                  <input type="time" name="digestTime2" id="digest-time-2" required />
+                </label>
+                <label>Time zone
+                  <select name="digestTimezone" id="digest-timezone">
+                    <option value="America/New_York">Eastern (New York)</option>
+                    <option value="America/Chicago">Central (Chicago)</option>
+                    <option value="America/Denver">Mountain (Denver)</option>
+                    <option value="America/Phoenix">Mountain, no DST (Phoenix)</option>
+                    <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                    <option value="America/Anchorage">Alaska</option>
+                    <option value="Pacific/Honolulu">Hawaii</option>
+                    <option value="America/Toronto">Eastern (Toronto)</option>
+                    <option value="America/Mexico_City">Mexico City</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Europe/Paris">Paris / Berlin</option>
+                    <option value="Asia/Kolkata">India</option>
+                    <option value="Asia/Manila">Philippines</option>
+                    <option value="Asia/Dubai">Dubai</option>
+                    <option value="Australia/Sydney">Sydney</option>
+                    <option value="UTC">UTC</option>
+                  </select>
+                </label>
+                <button type="submit">Save</button>
+                <span id="digest-schedule-status" class="settings-note"></span>
+              </form>
+
               <p class="digest-narrative" id="digest-narrative" hidden></p>
 
               <div class="stat-grid">

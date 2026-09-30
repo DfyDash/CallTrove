@@ -625,12 +625,47 @@ async function loadDigest() {
       digestSectionEl.hidden = true;
       return;
     }
+    populateDigestScheduleForm(settings);
     renderDigest(digest);
     digestSectionEl.hidden = false;
   } catch (err) {
     digestSectionEl.hidden = true;
   }
 }
+
+function populateDigestScheduleForm(settings) {
+  document.getElementById("digest-time-1").value = settings.digestTime1 || "08:00";
+  document.getElementById("digest-time-2").value = settings.digestTime2 || "20:00";
+  document.getElementById("digest-timezone").value = settings.digestTimezone || "America/New_York";
+}
+
+document.getElementById("digest-schedule-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const statusEl = document.getElementById("digest-schedule-status");
+  const form = e.target;
+  const submitBtn = form.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  statusEl.textContent = "Saving...";
+  try {
+    const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({
+        digestTime1: document.getElementById("digest-time-1").value,
+        digestTime2: document.getElementById("digest-time-2").value,
+        digestTimezone: document.getElementById("digest-timezone").value,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Could not save the schedule");
+    }
+    statusEl.textContent = "Saved. Takes effect from the next run onward.";
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+  submitBtn.disabled = false;
+});
 
 function compareLabel(current, prev, { lowerIsBetter = false, unit = "", formatMagnitude } = {}) {
   if (prev === 0 && current === 0) return null;

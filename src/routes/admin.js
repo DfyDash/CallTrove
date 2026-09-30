@@ -384,11 +384,28 @@ router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
 // an admin on one tenant can never read or flip this for an account that
 // isn't theirs.
 router.get("/settings", requireAccount, async (req, res) => {
+  const schedule = await db.getDigestSchedule(req.ghlAccountId);
   res.json({
     autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId),
     aiSummaryEnabled: await db.getAiSummaryEnabled(req.ghlAccountId),
+    ...schedule,
   });
 });
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// Rejected here rather than left to src/callDigestJob.js's own fallback
+// (UTC, if Intl doesn't recognize the string) -- that fallback exists for
+// a value already in the database somehow being bad, not as a substitute
+// for validating new input at the one place it's actually written.
+function isValidTimezone(tz) {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
   const body = req.body || {};
@@ -404,6 +421,23 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
     await db.setAiSummaryEnabled(req.ghlAccountId, enabled);
     await log(req, "ai_summary_toggled", `Turned per-call AI summary ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
     result.aiSummaryEnabled = enabled;
+  }
+  if ("digestTime1" in body || "digestTime2" in body || "digestTimezone" in body) {
+    const current = await db.getDigestSchedule(req.ghlAccountId);
+    const digestTime1 = "digestTime1" in body ? body.digestTime1 : current.digestTime1;
+    const digestTime2 = "digestTime2" in body ? body.digestTime2 : current.digestTime2;
+    const digestTimezone = "digestTimezone" in body ? body.digestTimezone : current.digestTimezone;
+    if (!HHMM_RE.test(digestTime1) || !HHMM_RE.test(digestTime2)) {
+      return res.status(400).json({ error: "digestTime1/digestTime2 must be 24h HH:MM" });
+    }
+    if (!isValidTimezone(digestTimezone)) {
+      return res.status(400).json({ error: "digestTimezone is not a recognized timezone" });
+    }
+    await db.setDigestSchedule(req.ghlAccountId, { digestTime1, digestTime2, digestTimezone });
+    await log(req, "digest_schedule_updated", `Set the analytics digest schedule to ${digestTime1} and ${digestTime2} (${digestTimezone}) for account ${req.ghlAccountId}`);
+    result.digestTime1 = digestTime1;
+    result.digestTime2 = digestTime2;
+    result.digestTimezone = digestTimezone;
   }
   res.json(result);
 });

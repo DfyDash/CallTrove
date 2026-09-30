@@ -730,11 +730,28 @@ async function getLatestCallDigest(ghlAccountId) {
 // this one for it.
 async function listGhlAccountsNeedingDigest() {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", name
+    `SELECT id, tenant_id AS "tenantId", name,
+            digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone"
      FROM ghl_accounts
      WHERE uninstalled_at IS NULL AND auto_transcribe_enabled = false`
   );
   return rows;
+}
+
+async function getDigestSchedule(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone"
+     FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] || null;
+}
+
+async function setDigestSchedule(ghlAccountId, { digestTime1, digestTime2, digestTimezone }) {
+  await pool.query(
+    `UPDATE ghl_accounts SET digest_time_1 = $2, digest_time_2 = $3, digest_timezone = $4 WHERE id = $1`,
+    [ghlAccountId, digestTime1, digestTime2, digestTimezone]
+  );
 }
 
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
@@ -1600,6 +1617,8 @@ module.exports = {
   saveCallDigest,
   getLatestCallDigest,
   listGhlAccountsNeedingDigest,
+  getDigestSchedule,
+  setDigestSchedule,
   listAllCallsWithRecordings,
   getCoverageSummary,
   getCoverageByDisposition,
