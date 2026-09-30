@@ -104,6 +104,37 @@ function forAccount({ apiToken, locationId } = {}) {
     return results;
   }
 
+  // Whether this contact has been reached by ANY message channel (call,
+  // SMS, email...) after `since` -- src/callDigestJob.js uses this so a
+  // missed call isn't flagged "unreturned" in the digest just because
+  // CallTrove's own calls table (phone calls only) has no record of the
+  // text or email a rep actually sent back. Unlike listCallMessages
+  // above, this deliberately does NOT filter by message type -- any
+  // channel counts. Walks pages newest-to-oldest and returns as soon as
+  // it can answer either way (an outbound message after `since`, or a
+  // message already at/before it), so it only ever reads as much history
+  // as it has to, not the whole conversation.
+  async function wasContactedSince(conversationId, since) {
+    let lastMessageId;
+    for (;;) {
+      const url = new URL(`${GHL_API_BASE}/conversations/${conversationId}/messages`);
+      if (lastMessageId) url.searchParams.set("lastMessageId", lastMessageId);
+      const res = await fetch(url, { headers: headers() });
+      if (!res.ok) throw new Error(`conversations/messages failed with status ${res.status}`);
+      const data = await res.json();
+      const page = (data.messages && data.messages.messages) || [];
+      if (page.length === 0) return false;
+
+      for (const m of page) {
+        if (new Date(m.dateAdded) <= since) return false;
+        if (m.direction === "outbound") return true;
+      }
+
+      if (!(data.messages && data.messages.nextPage)) return false;
+      lastMessageId = page[page.length - 1].id;
+    }
+  }
+
   async function downloadRecording(messageId) {
     const url = `${GHL_API_BASE}/conversations/messages/${messageId}/locations/${location}/recording`;
     const res = await fetch(url, { headers: headers() });
@@ -210,6 +241,7 @@ function forAccount({ apiToken, locationId } = {}) {
     searchConversations,
     searchConversationsPage,
     listCallMessages,
+    wasContactedSince,
     downloadRecording,
     getUserName,
     getAccountTimezone,

@@ -1,5 +1,6 @@
 const db = require("./db");
 const callDigestNarrative = require("./callDigestNarrative");
+const accountCredentials = require("./accountCredentials");
 
 // Checks every few minutes rather than running everyone on a fixed 12h
 // clock -- each account now picks its own two times of day (+ timezone,
@@ -45,6 +46,60 @@ function isDue(slotHHMM, nowHHMM) {
   return diff < MATCH_WINDOW_MINUTES;
 }
 
+// A candidate from db.computeCallDigestStats' unreturnedCandidates is
+// only a missed call with no LATER PHONE CALL on record -- that's as far
+// as SQL alone can see. This is the live check on top: has GHL logged an
+// outbound text, email, or other message to this contact since, even
+// though CallTrove's own calls table has no record of it (see
+// ghlApi.js's wasContactedSince). A candidate with no conversationId (a
+// call ingested before that field existed) or a failed API check stays
+// flagged rather than being silently dropped -- a false "still
+// unreturned" is a harmless false alarm; a false "resolved" hides a real
+// callback nobody made.
+async function stillUnreturned(api, candidates) {
+  const kept = [];
+  for (const candidate of candidates) {
+    if (!candidate.conversationId) {
+      kept.push(candidate);
+      continue;
+    }
+    try {
+      const contacted = await api.wasContactedSince(candidate.conversationId, new Date(candidate.occurredAt));
+      if (!contacted) kept.push(candidate);
+    } catch (err) {
+      console.error(`[callDigest] wasContactedSince check failed for conversation ${candidate.conversationId}:`, err);
+      kept.push(candidate);
+    }
+  }
+  return kept;
+}
+
+// Resolves stats.unreturnedCandidates/unreturnedCandidatesPrev (raw SQL
+// output) into the finished unreturnedCount/unreturnedCountPrev/
+// unreturnedCalls fields the digest actually displays, running the live
+// GHL check above on each candidate first. Mutates stats in place.
+async function resolveUnreturnedCalls(account, stats) {
+  const api = await accountCredentials.clientForAccount(account);
+  // No working GHL client for this account would be surprising (it's how
+  // its calls got ingested in the first place) -- but if it ever
+  // happens, fall back to the raw, unfiltered candidates rather than
+  // silently reporting a wrong zero.
+  const [current, previous] = api.isConfigured()
+    ? await Promise.all([stillUnreturned(api, stats.unreturnedCandidates), stillUnreturned(api, stats.unreturnedCandidatesPrev)])
+    : [stats.unreturnedCandidates, stats.unreturnedCandidatesPrev];
+
+  stats.unreturnedCount = current.length;
+  stats.unreturnedCountPrev = previous.length;
+  stats.unreturnedCalls = current.slice(0, 5).map((c) => ({
+    contactName: c.contactName,
+    disposition: c.disposition,
+    occurredAt: c.occurredAt,
+    waitMinutes: c.waitMinutes,
+  }));
+  delete stats.unreturnedCandidates;
+  delete stats.unreturnedCandidatesPrev;
+}
+
 async function checkOnce() {
   const accounts = await db.listGhlAccountsNeedingDigest();
   const now = new Date();
@@ -61,6 +116,7 @@ async function checkOnce() {
       }
 
       const stats = await db.computeCallDigestStats(account.id);
+      await resolveUnreturnedCalls(account, stats);
       let narrative = null;
       if (callDigestNarrative.isEnabled()) {
         try {
@@ -93,4 +149,4 @@ function start() {
   cycle();
 }
 
-module.exports = { start, checkOnce, isDue, currentLocalHHMM };
+module.exports = { start, checkOnce, isDue, currentLocalHHMM, resolveUnreturnedCalls };

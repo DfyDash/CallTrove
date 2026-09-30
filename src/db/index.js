@@ -562,10 +562,19 @@ async function callDigestDispositionBreakdown(ghlAccountId, start, end) {
 // The NOT EXISTS is evaluated at query time (now), not just against the
 // window -- a call from three days ago that's still nobody's most recent
 // contact with that person is still genuinely unreturned today.
-async function callDigestUnreturnedCalls(ghlAccountId, start, end, limit = 5) {
+// conversationId comes along so src/callDigestJob.js can do a second,
+// live check against GHL itself (has this contact been texted/emailed/
+// noted since, not just re-called?) -- see its own comment for why that
+// can't happen here: it needs a live GHL API call per candidate, which
+// has no business in a pure SQL query function. limit is generous (not
+// the ~5 the UI actually shows) because the job needs every real
+// candidate to filter before it knows how many survive, not just enough
+// to display.
+async function callDigestUnreturnedCalls(ghlAccountId, start, end, limit = 50) {
   const { rows } = await pool.query(
     `SELECT c.id, c.ghl_contact_id AS "contactId", ct.name AS "contactName",
-            c.disposition, c.occurred_at AS "occurredAt"
+            c.disposition, c.occurred_at AS "occurredAt",
+            c.raw_payload->>'conversationId' AS "conversationId"
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
      WHERE c.ghl_account_id = $1
@@ -582,24 +591,6 @@ async function callDigestUnreturnedCalls(ghlAccountId, start, end, limit = 5) {
     [ghlAccountId, start, end, limit]
   );
   return rows;
-}
-
-async function callDigestUnreturnedCount(ghlAccountId, start, end) {
-  const { rows } = await pool.query(
-    `SELECT count(*)::int AS count
-     FROM calls c
-     WHERE c.ghl_account_id = $1
-       AND c.direction = 'inbound'
-       AND c.disposition IN ('no-answer', 'voicemail')
-       AND c.occurred_at >= $2 AND c.occurred_at < $3
-       AND NOT EXISTS (
-         SELECT 1 FROM calls c2
-         WHERE c2.ghl_account_id = $1 AND c2.ghl_contact_id = c.ghl_contact_id
-           AND c2.occurred_at > c.occurred_at
-       )`,
-    [ghlAccountId, start, end]
-  );
-  return rows[0].count;
 }
 
 async function callDigestDailyVolume(ghlAccountId, start, end) {
@@ -657,15 +648,14 @@ async function computeCallDigestStats(ghlAccountId, { now = new Date() } = {}) {
   const prevStart = new Date(periodStart.getTime() - 24 * 60 * 60 * 1000);
   const weekStart = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  const [current, previous, busiest, dispositionBreakdown, unreturnedCalls, unreturnedCount, unreturnedCountPrev, trend, dailyMissedRates, topReps] =
+  const [current, previous, busiest, dispositionBreakdown, unreturnedCandidates, unreturnedCandidatesPrev, trend, dailyMissedRates, topReps] =
     await Promise.all([
       callDigestWindowTotals(ghlAccountId, periodStart, periodEnd),
       callDigestWindowTotals(ghlAccountId, prevStart, periodStart),
       callDigestBusiestHour(ghlAccountId, periodStart, periodEnd),
       callDigestDispositionBreakdown(ghlAccountId, periodStart, periodEnd),
       callDigestUnreturnedCalls(ghlAccountId, periodStart, periodEnd),
-      callDigestUnreturnedCount(ghlAccountId, periodStart, periodEnd),
-      callDigestUnreturnedCount(ghlAccountId, prevStart, periodStart),
+      callDigestUnreturnedCalls(ghlAccountId, prevStart, periodStart),
       callDigestDailyVolume(ghlAccountId, weekStart, periodEnd),
       callDigestDailyMissedRates(ghlAccountId, weekStart, periodEnd),
       callDigestTopReps(ghlAccountId, periodStart, periodEnd),
@@ -687,13 +677,22 @@ async function computeCallDigestStats(ghlAccountId, { now = new Date() } = {}) {
     missedRatePctPrev,
     isBestDayThisWeek,
     busiestHour: busiest ? busiest.hour : null,
-    unreturnedCount,
-    unreturnedCountPrev,
-    unreturnedCalls: unreturnedCalls.map((c) => ({
+    // Not yet a final count/list -- src/callDigestJob.js still has to
+    // check each candidate against GHL for a since-contacted signal
+    // (text, email, note) before deciding which ones are genuinely still
+    // unreturned. See its own comment for why that can't happen here.
+    unreturnedCandidates: unreturnedCandidates.map((c) => ({
+      contactId: c.contactId,
       contactName: c.contactName,
       disposition: c.disposition,
       occurredAt: c.occurredAt,
+      conversationId: c.conversationId,
       waitMinutes: Math.round((periodEnd.getTime() - new Date(c.occurredAt).getTime()) / 60000),
+    })),
+    unreturnedCandidatesPrev: unreturnedCandidatesPrev.map((c) => ({
+      contactId: c.contactId,
+      occurredAt: c.occurredAt,
+      conversationId: c.conversationId,
     })),
     dispositionBreakdown,
     trend,
@@ -728,9 +727,15 @@ async function getLatestCallDigest(ghlAccountId) {
 // transcription on gets the (not yet built) richer, transcript-based
 // version instead, so there's no reason to spend a Bedrock call narrating
 // this one for it.
+// Includes the OAuth credential columns (same shape as
+// listAllActiveGhlAccounts) -- src/callDigestJob.js needs a real,
+// per-account accountCredentials.clientForAccount() to check GHL for a
+// since-contacted signal on each unreturned-call candidate, not just the
+// account id.
 async function listGhlAccountsNeedingDigest() {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", name,
+    `SELECT id, tenant_id AS "tenantId", name, ghl_location_id AS "ghlLocationId",
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt",
             digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone"
      FROM ghl_accounts
      WHERE uninstalled_at IS NULL AND auto_transcribe_enabled = false`
