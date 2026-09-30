@@ -53,11 +53,16 @@ function dispositionLabel(disposition) {
   return disposition.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// "4:11" reads as a clock time or a ratio to anyone who isn't already
+// thinking in minutes:seconds -- spelling out the units makes it
+// unambiguous for the non-technical audience this page is written for
+// (see the digest narrative's own plain-language rework).
 function formatDuration(seconds) {
   if (!seconds) return "-";
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (m === 0) return `${s} sec`;
+  return `${m} min ${s} sec`;
 }
 
 // --- shared sidebar chrome (session bar, admin "viewing calls for", quick search) ---
