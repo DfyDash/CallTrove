@@ -334,6 +334,19 @@ a:hover {
   background: var(--surface);
 }
 
+/* The Settings sub-nav (public/settings.html's #settings-tabs) has almost
+   twice as many links as the main sidebar and no icons to break them up
+   visually, so the same 2px gap/8px padding that reads fine for the main
+   nav (Dashboard/Contacts/Settings) makes this one look like a single
+   run-together block. Scoped to #settings-tabs specifically rather than
+   changing .sidebar-nav itself, so the main sidebar is untouched. */
+#settings-tabs {
+  gap: 6px;
+}
+#settings-tabs .nav-link {
+  padding: 10px 12px;
+}
+
 .sidebar-nav {
   display: flex;
   flex-direction: column;
