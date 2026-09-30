@@ -1,0 +1,6 @@
+[Unit]
+Description=CallTrove external health watchdog (see scripts/app-watchdog.sh)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/app/scripts/app-watchdog.sh

@@ -1,6 +1,7 @@
 const db = require("./db");
 const callDigestNarrative = require("./callDigestNarrative");
 const accountCredentials = require("./accountCredentials");
+const alerting = require("./alerting");
 
 // Checks every few minutes rather than running everyone on a fixed 12h
 // clock -- each account now picks its own two times of day (+ timezone,
@@ -141,8 +142,10 @@ function start() {
   async function cycle() {
     try {
       await checkOnce();
+      alerting.recordSuccess("analytics digest");
     } catch (err) {
       console.error("[callDigest] check cycle failed:", err);
+      await alerting.recordFailure("analytics digest", err).catch(() => {});
     }
     setTimeout(cycle, CHECK_INTERVAL_MS);
   }

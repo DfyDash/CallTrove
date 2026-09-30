@@ -1,6 +1,7 @@
 const db = require("./db");
 const callSummary = require("./callSummary");
 const accountCredentials = require("./accountCredentials");
+const alerting = require("./alerting");
 
 // Bedrock responses land well within a few seconds, but this still polls
 // rather than calling inline from transcriptionPoller.js -- keeps a
@@ -59,8 +60,10 @@ function start() {
   async function cycle() {
     try {
       await pollOnce();
+      alerting.recordSuccess("call summary (AI)");
     } catch (err) {
       console.error("[callSummary] poll cycle failed:", err);
+      await alerting.recordFailure("call summary (AI)", err).catch(() => {});
     }
     setTimeout(cycle, POLL_INTERVAL_MS);
   }

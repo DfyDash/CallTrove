@@ -6,6 +6,7 @@ const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
 const { getRealDurationSeconds } = require("./audioDuration");
 const transcription = require("./transcription");
+const alerting = require("./alerting");
 
 const POLL_INTERVAL_MS = 60 * 1000;
 const CONVERSATIONS_PER_POLL = 100;
@@ -259,8 +260,10 @@ function start() {
   async function cycle() {
     try {
       await pollOnce();
+      alerting.recordSuccess("call ingestion (poller)");
     } catch (err) {
       console.error("[poller] poll cycle failed:", err);
+      await alerting.recordFailure("call ingestion (poller)", err).catch(() => {});
     }
     setTimeout(cycle, POLL_INTERVAL_MS);
   }

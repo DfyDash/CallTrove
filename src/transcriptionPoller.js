@@ -1,5 +1,6 @@
 const db = require("./db");
 const transcription = require("./transcription");
+const alerting = require("./alerting");
 
 // AWS Transcribe jobs are async (typically finish well within a couple
 // minutes for a call-length recording), so this checks in on outstanding
@@ -41,8 +42,10 @@ function start() {
   async function cycle() {
     try {
       await pollOnce();
+      alerting.recordSuccess("transcription");
     } catch (err) {
       console.error("[transcription] poll cycle failed:", err);
+      await alerting.recordFailure("transcription", err).catch(() => {});
     }
     setTimeout(cycle, POLL_INTERVAL_MS);
   }

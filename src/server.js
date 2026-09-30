@@ -13,6 +13,8 @@ const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
 const callSummaryPoller = require("./callSummaryPoller");
 const callDigestJob = require("./callDigestJob");
+const alerting = require("./alerting");
+const db = require("./db");
 
 const app = express();
 
@@ -131,6 +133,22 @@ app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname,
 // .ico file, which every modern browser accepts fine.
 app.get("/favicon.ico", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
 app.use("/fonts", express.static(path.join(__dirname, "..", "public", "fonts")));
+
+// Public, unauthenticated -- an external watchdog (scripts/app-watchdog.sh,
+// run outside this process entirely) curls this to confirm the app itself
+// is actually up and can reach its database, since a process that has
+// crashed or wedged can't report its own death from inside itself. Not
+// wired into src/alerting.js's in-process failure tracking for the same
+// reason -- that module lives in this process too.
+app.get("/healthz", async (req, res) => {
+  try {
+    await db.pool.query("SELECT 1");
+    res.status(200).json({ status: "ok" });
+  } catch (err) {
+    res.status(503).json({ status: "error", error: err.message });
+  }
+});
+
 app.use("/auth", authRouter);
 
 app.use(requireAuth);
@@ -143,6 +161,28 @@ app.use(express.static(path.join(__dirname, "..", "public")));
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`CallTrove listening on port ${port}`);
+});
+
+// uncaughtException already crashed the process by default before this
+// handler existed (Node's own default with nothing registered) -- this
+// just logs clearly first, then exits the same way, so systemd's restart
+// still happens. Not routed through src/alerting.js: its failure-streak
+// tracking lives in this same process's memory, which a crash-and-restart
+// wipes every time, so "N in a row" could never accumulate here -- that
+// failure mode is scripts/app-watchdog.sh's job instead (external,
+// persists its own state on disk).
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaught exception, exiting for a clean restart:", err);
+  process.exit(1);
+});
+
+// Doesn't exit -- an unhandled rejection doesn't necessarily leave the
+// process corrupted the way an uncaught exception can, and this process
+// keeps running either way, so alerting's in-memory streak tracking works
+// normally here (unlike the crash case above).
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandled rejection:", reason);
+  alerting.recordFailure("unhandled app errors", reason).catch(() => {});
 });
 
 // Call ingestion now happens by polling GHL's own API rather than a GHL
