@@ -56,6 +56,25 @@ async function ghlApiForTenant(tenantId) {
 // equivalent one-click "download all my data" feature.
 const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 7);
 
+// Typed back to confirm, same as the tenant-name-typing flow this
+// replaced -- a fixed phrase instead of the account's own name since some
+// tenant names are long/awkward to retype, but still short enough that it
+// can't be checked off by accident. Checked here, not just client-side
+// (public/settings.js already disables the button until it matches, but
+// that's just UX -- this is the actual guard).
+const CANCEL_CONFIRM_PHRASE = "CANCEL MY ACCOUNT";
+
+// Mirrors src/routes/operator.js's own log() -- writing with no tenantId
+// is exactly what db.listAuditLogForOperator's tenant_id IS NULL filter
+// picks up (see that function's comment), so a self-service cancel/restore
+// shows up on the operator's cross-tenant Activity tab the same way an
+// operator-triggered one does. This is *in addition to* the normal
+// tenant-scoped log() call below, not instead of it -- the tenant's own
+// admin still needs to see it on their own Activity log too.
+function logForOperator(req, action, message) {
+  return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message });
+}
+
 // GET /api/tenant/status (routes/api.js) is what actually serves status
 // to the frontend -- it isn't admin-gated, since a locked-out NON-admin
 // user of a canceled tenant still needs to see "contact your account
@@ -67,8 +86,8 @@ router.post("/tenant/cancel", requireCsrf, async (req, res) => {
   if (tenant.ownerUserId !== req.session.user.id) {
     return res.status(403).json({ error: "only the account owner can cancel this account" });
   }
-  if (req.body?.confirmName !== tenant.name) {
-    return res.status(400).json({ error: "confirmation text did not match the account name" });
+  if (req.body?.confirmPhrase !== CANCEL_CONFIRM_PHRASE) {
+    return res.status(400).json({ error: `type "${CANCEL_CONFIRM_PHRASE}" to confirm` });
   }
   if (tenant.status !== "active") {
     return res.status(409).json({ error: `account is already ${tenant.status}` });
@@ -77,6 +96,7 @@ router.post("/tenant/cancel", requireCsrf, async (req, res) => {
   const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
   await db.requestTenantCancellation(tenant.id, purgeAt);
   await log(req, "tenant_cancellation_requested", `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}`);
+  await logForOperator(req, "tenant_cancelled_self_service", `Self-service cancellation by account owner for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}`);
   res.json({ status: "cancellation_pending", purgeAt });
 });
 
@@ -95,6 +115,7 @@ router.post("/tenant/restore", requireCsrf, async (req, res) => {
 
   await db.restoreTenant(tenant.id);
   await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
+  await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });
 });
 

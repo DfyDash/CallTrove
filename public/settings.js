@@ -123,13 +123,20 @@ async function loadSession() {
 const dangerZone = document.getElementById("danger-zone");
 const openCancelBtn = document.getElementById("open-cancel-btn");
 const cancelConfirm = document.getElementById("cancel-confirm");
-const cancelConfirmName = document.getElementById("cancel-confirm-name");
+const cancelConfirmCheckbox = document.getElementById("cancel-confirm-checkbox");
 const cancelConfirmInput = document.getElementById("cancel-confirm-input");
 const confirmCancelBtn = document.getElementById("confirm-cancel-btn");
 const cancelCancelBtn = document.getElementById("cancel-cancel-btn");
 const cancelError = document.getElementById("cancel-error");
 const gracePeriodDaysEl = document.getElementById("grace-period-days");
+const gracePeriodDaysEl2 = document.getElementById("grace-period-days-2");
 let tenantName = "";
+
+// Shorter than typing the account name back (which could be long/awkward
+// for some tenant names) but still a deliberate, typed action -- not just
+// a click. Checked server-side too (src/routes/admin.js), same as every
+// other confirm-by-typing flow in this app.
+const CANCEL_CONFIRM_PHRASE = "CANCEL MY ACCOUNT";
 
 async function loadDangerZone() {
   const res = await fetch("/api/tenant/status");
@@ -137,14 +144,23 @@ async function loadDangerZone() {
   if (!tenant.isOwner) return; // stays hidden -- only the paying owner can see or trigger this
   if (tenant.status !== "active") return; // already canceled/pending -- nothing new to offer here, account-canceled.html covers that state
   tenantName = tenant.name;
-  cancelConfirmName.textContent = tenant.name;
   gracePeriodDaysEl.textContent = tenant.gracePeriodDays;
+  gracePeriodDaysEl2.textContent = tenant.gracePeriodDays;
   dangerZone.hidden = false;
+}
+
+// Both the warning checkbox and the typed phrase are required before the
+// button is even clickable -- not just validated on click -- so there's no
+// way to fat-finger past the warning by tabbing straight to the button.
+function updateConfirmBtnState() {
+  confirmCancelBtn.disabled = !cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE;
 }
 
 openCancelBtn.addEventListener("click", () => {
   cancelConfirm.hidden = false;
   cancelConfirmInput.value = "";
+  cancelConfirmCheckbox.checked = false;
+  updateConfirmBtnState();
   cancelConfirmInput.focus();
 });
 
@@ -153,12 +169,11 @@ cancelCancelBtn.addEventListener("click", () => {
   cancelError.hidden = true;
 });
 
+cancelConfirmCheckbox.addEventListener("change", updateConfirmBtnState);
+cancelConfirmInput.addEventListener("input", updateConfirmBtnState);
+
 confirmCancelBtn.addEventListener("click", async () => {
-  if (cancelConfirmInput.value !== tenantName) {
-    cancelError.textContent = "That doesn't match the account name.";
-    cancelError.hidden = false;
-    return;
-  }
+  if (!cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE) return; // button should already be disabled -- just a guard
   if (!confirm(`This will lock everyone out of "${tenantName}" immediately and permanently delete its data after the grace period. Are you sure?`)) {
     return;
   }
@@ -166,7 +181,7 @@ confirmCancelBtn.addEventListener("click", async () => {
   const res = await fetch("/api/admin/tenant/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ confirmName: cancelConfirmInput.value }),
+    body: JSON.stringify({ confirmPhrase: cancelConfirmInput.value }),
   });
   if (res.ok) {
     location.href = "/account-canceled.html";
@@ -175,7 +190,7 @@ confirmCancelBtn.addEventListener("click", async () => {
   const body = await res.json().catch(() => ({}));
   cancelError.textContent = body.error || "Could not cancel the account.";
   cancelError.hidden = false;
-  confirmCancelBtn.disabled = false;
+  updateConfirmBtnState();
 });
 
 async function loadViewAsOptions() {

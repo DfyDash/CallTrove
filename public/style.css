@@ -804,6 +804,25 @@ tbody tr:last-child td {
   background: rgba(208, 59, 59, 0.12);
 }
 
+.cancel-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(208, 59, 59, 0.3);
+  border-radius: 6px;
+  background: rgba(208, 59, 59, 0.06);
+  color: #a52e2e;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.cancel-warning-box input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
 .transcript-text {
   margin: 6px 0 0;
   font-size: 0.85rem;

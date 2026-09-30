@@ -538,11 +538,16 @@
             <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
 
             <div id="cancel-confirm" hidden>
+              <label class="cancel-warning-box">
+                <input type="checkbox" id="cancel-confirm-checkbox" />
+                I understand that once I cancel, I have <span id="grace-period-days-2">7</span> days
+                to download all recordings before this account and its recordings are permanently deleted.
+              </label>
               <p class="settings-note">
-                Type the account name (<strong id="cancel-confirm-name"></strong>) to confirm.
+                Type <strong>CANCEL MY ACCOUNT</strong> to confirm.
               </p>
               <input type="text" id="cancel-confirm-input" autocomplete="off" />
-              <button type="button" id="confirm-cancel-btn" class="delete-btn">Permanently cancel</button>
+              <button type="button" id="confirm-cancel-btn" class="delete-btn" disabled>Permanently cancel</button>
               <button type="button" id="cancel-cancel-btn">Never mind</button>
               <p id="cancel-error" class="login-error" hidden></p>
             </div>
