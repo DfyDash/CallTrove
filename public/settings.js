@@ -625,7 +625,7 @@ async function loadDigest() {
       digestSectionEl.hidden = true;
       return;
     }
-    populateDigestScheduleForm(settings);
+    await populateDigestScheduleForm(settings);
     renderDigest(digest);
     digestSectionEl.hidden = false;
   } catch (err) {
@@ -633,10 +633,49 @@ async function loadDigest() {
   }
 }
 
-function populateDigestScheduleForm(settings) {
+// Adds the given IANA zone as a selectable option if the curated list
+// doesn't already have it -- an admin's real browser timezone (or one
+// they've explicitly saved before) can be anything, not just the ~16
+// common ones listed in the dropdown.
+function ensureTimezoneOption(select, tz) {
+  if (!Array.from(select.options).some((o) => o.value === tz)) {
+    const opt = document.createElement("option");
+    opt.value = tz;
+    opt.textContent = tz.replace(/_/g, " ");
+    select.insertBefore(opt, select.firstChild);
+  }
+}
+
+// Until an account's schedule has been customized (see schema.sql's
+// comment on digest_schedule_customized), the timezone shown here is
+// detected from whichever admin's browser happens to load this page
+// first, then silently saved so the background job -- which has no
+// browser of its own -- picks up the same value. This only ever fires
+// once per account; after that (auto-detected or manually chosen), it's
+// an ordinary setting nothing overwrites but the Save button.
+async function populateDigestScheduleForm(settings) {
   document.getElementById("digest-time-1").value = settings.digestTime1 || "08:00";
   document.getElementById("digest-time-2").value = settings.digestTime2 || "20:00";
-  document.getElementById("digest-timezone").value = settings.digestTimezone || "America/New_York";
+  const tzSelect = document.getElementById("digest-timezone");
+
+  if (!settings.digestScheduleCustomized) {
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    ensureTimezoneOption(tzSelect, detected);
+    tzSelect.value = detected;
+    try {
+      await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ digestTimezone: detected }),
+      });
+    } catch (err) {
+      // Non-fatal -- the form still shows the detected zone even if this
+      // silent save failed; a later manual Save click retries it.
+    }
+  } else {
+    ensureTimezoneOption(tzSelect, settings.digestTimezone);
+    tzSelect.value = settings.digestTimezone;
+  }
 }
 
 document.getElementById("digest-schedule-form").addEventListener("submit", async (e) => {

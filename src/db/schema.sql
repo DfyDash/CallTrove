@@ -535,4 +535,17 @@ CREATE INDEX IF NOT EXISTS call_digests_account_idx ON call_digests (ghl_account
 -- nothing a real TIME type buys here.
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_time_1 TEXT NOT NULL DEFAULT '08:00';
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_time_2 TEXT NOT NULL DEFAULT '20:00';
-ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_timezone TEXT NOT NULL DEFAULT 'America/New_York';
+-- UTC, not a guessed region -- this server's own location has no bearing
+-- on where an account's actual clients are. It's just the bootstrap value
+-- for the background job to use before any browser has ever reported a
+-- real one; see digest_schedule_customized below for how that happens.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_timezone TEXT NOT NULL DEFAULT 'UTC';
+
+-- Set once the timezone has been auto-detected from an admin's own
+-- browser (public/settings.js, on first visit to the Call report tab) or
+-- explicitly saved through the schedule editor -- whichever happens
+-- first. Before that, the account is running on the UTC bootstrap value
+-- above; after, it's never auto-overwritten again by a *different*
+-- admin's browser opening the same settings from a different timezone --
+-- from that point on it only changes when someone deliberately edits it.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_schedule_customized BOOLEAN NOT NULL DEFAULT false;

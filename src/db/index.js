@@ -740,16 +740,22 @@ async function listGhlAccountsNeedingDigest() {
 
 async function getDigestSchedule(ghlAccountId) {
   const { rows } = await pool.query(
-    `SELECT digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone"
+    `SELECT digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone",
+            digest_schedule_customized AS "digestScheduleCustomized"
      FROM ghl_accounts WHERE id = $1`,
     [ghlAccountId]
   );
   return rows[0] || null;
 }
 
+// Marks the schedule customized on every call, whether it's an explicit
+// save from the settings form or the one-time silent save that follows
+// auto-detecting a timezone from an admin's browser (see
+// public/settings.js) -- either way, the UTC bootstrap default shouldn't
+// be auto-overwritten again after this.
 async function setDigestSchedule(ghlAccountId, { digestTime1, digestTime2, digestTimezone }) {
   await pool.query(
-    `UPDATE ghl_accounts SET digest_time_1 = $2, digest_time_2 = $3, digest_timezone = $4 WHERE id = $1`,
+    `UPDATE ghl_accounts SET digest_time_1 = $2, digest_time_2 = $3, digest_timezone = $4, digest_schedule_customized = true WHERE id = $1`,
     [ghlAccountId, digestTime1, digestTime2, digestTimezone]
   );
 }
