@@ -1655,6 +1655,17 @@ tbody tr:last-child td {
   color: var(--muted);
 }
 
+.settings-rate {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: inline-block;
+}
+
 .account-access-details summary {
   cursor: pointer;
   font-size: 0.85rem;
