@@ -153,6 +153,80 @@
 
         <!-- Call report -->
         <section id="tab-report" class="settings-tab-panel viz-root" hidden>
+          <!-- Analytics digest: twice-daily metadata-only snapshot, shown
+               only for accounts without transcription on (see
+               src/callDigestJob.js). Hidden entirely when the account has
+               transcription on, or when no snapshot has been computed yet. -->
+          <div id="digest-section" hidden>
+            <div class="digest-card">
+              <div class="digest-header">
+                <div>
+                  <h2>Analytics Digest</h2>
+                  <span class="digest-timestamp" id="digest-timestamp"></span>
+                </div>
+                <span class="digest-badge">AI-narrated &middot; twice daily &middot; no transcription needed</span>
+              </div>
+              <p class="digest-narrative" id="digest-narrative" hidden></p>
+
+              <div class="stat-grid">
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-calls-total"></div>
+                  <div class="stat-label">Calls, last 24h</div>
+                  <div class="stat-compare" id="digest-calls-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-avg-duration"></div>
+                  <div class="stat-label">Avg. call duration</div>
+                  <div class="stat-compare" id="digest-duration-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-missed-rate"></div>
+                  <div class="stat-label">Missed-call rate</div>
+                  <div class="stat-compare" id="digest-missed-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-unreturned-total"></div>
+                  <div class="stat-label">Unreturned calls</div>
+                  <div class="stat-compare" id="digest-unreturned-compare"></div>
+                </div>
+              </div>
+
+              <div class="digest-two-col">
+                <div class="rep-bars-card">
+                  <h3>Outcome breakdown</h3>
+                  <div id="digest-outcome-bars"></div>
+                </div>
+                <div class="rep-bars-card">
+                  <h3 id="digest-unreturned-heading">Unreturned calls</h3>
+                  <div class="unreturned-list" id="digest-unreturned-list"></div>
+                </div>
+              </div>
+
+              <div class="rep-bars-card">
+                <h3>7-day call volume</h3>
+                <div id="digest-trend-bars"></div>
+              </div>
+
+              <div class="rep-bars-card">
+                <h3>Top reps, last 24h</h3>
+                <div id="digest-top-rep-bars"></div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Rep</th>
+                      <th>Calls</th>
+                      <th>Avg. duration</th>
+                      <th>Unique contacts</th>
+                    </tr>
+                  </thead>
+                  <tbody id="digest-top-rep-rows"></tbody>
+                </table>
+              </div>
+
+              <p class="digest-upsell">Turn on call transcription for content-level insight -- sentiment, recurring themes, and follow-up reasons based on what was actually said.</p>
+            </div>
+          </div>
+
           <div id="report-leaderboard">
             <h1>Call report</h1>
             <p class="settings-note">Volume and quality of calls across the whole team. Click a rep to see their individual breakdown.</p>

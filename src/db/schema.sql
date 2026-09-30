@@ -499,3 +499,27 @@ ALTER TABLE email_otp_codes ADD CONSTRAINT email_otp_codes_purpose_check
 -- account's business name or email address.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT;
+
+-- Twice-daily metadata-only call digest (src/callDigestJob.js) -- the
+-- Call report tab's "Analytics Digest" section for accounts that don't
+-- have transcription on (ghl_accounts.auto_transcribe_enabled = false).
+-- Computed and stored on a schedule rather than live per page view,
+-- specifically because narrative is a real Bedrock call: querying and
+-- re-narrating on every page load would mean an LLM call (and its
+-- latency) every time someone just checks the tab, instead of a bounded
+-- ~2 calls/day/account. stats holds every number the UI renders (period
+-- totals, comparisons, disposition breakdown, unreturned-call list,
+-- 7-day trend, top reps) as one JSON blob rather than a wide table,
+-- since it's write-once/read-latest and never queried by individual
+-- field. narrative is nullable: a Bedrock failure (or Bedrock not
+-- configured at all) still saves the real stats, just without the
+-- one-line synthesis on top.
+CREATE TABLE IF NOT EXISTS call_digests (
+  id              UUID PRIMARY KEY,
+  ghl_account_id  UUID NOT NULL REFERENCES ghl_accounts(id) ON DELETE CASCADE,
+  computed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  stats           JSONB NOT NULL,
+  narrative       TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS call_digests_account_idx ON call_digests (ghl_account_id, computed_at DESC);

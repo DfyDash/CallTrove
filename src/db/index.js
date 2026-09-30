@@ -502,6 +502,241 @@ async function getCallReportTrend(tenantId, { dateFrom, dateTo, granularity = "d
   return rows;
 }
 
+// --- Call digest (src/callDigestJob.js): metadata-only twice-daily report
+// for accounts without transcription on. Every query below is scoped to
+// one ghl_account_id and an explicit [start, end) window, computed twice
+// per account per day rather than live per page view -- see schema.sql's
+// comment on call_digests for why. "Rolling 24h ending at computed_at"
+// rather than calendar-day: the job can run at any time of day, and a
+// calendar-day window would make an 8am run's "today" almost empty.
+
+async function callDigestWindowTotals(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE c.disposition IS DISTINCT FROM 'completed')::int AS missed,
+            COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            COALESCE(max(c.duration_seconds), 0)::int AS "longestDurationSeconds"
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3`,
+    [ghlAccountId, start, end]
+  );
+  return rows[0];
+}
+
+async function callDigestBusiestHour(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT extract(hour FROM c.occurred_at)::int AS hour, count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1 ORDER BY count DESC LIMIT 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows[0] || null;
+}
+
+// completed/no-answer/voicemail are their own bucket (each was a
+// meaningfully-sized slice in real data -- see the disposition audit this
+// was designed from); busy/canceled/failed/ringing/null are rare enough
+// to lump into "other" rather than clutter the breakdown with slivers.
+async function callDigestDispositionBreakdown(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT CASE
+              WHEN c.disposition = 'completed' THEN 'completed'
+              WHEN c.disposition = 'no-answer' THEN 'no-answer'
+              WHEN c.disposition = 'voicemail' THEN 'voicemail'
+              ELSE 'other'
+            END AS bucket,
+            count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows;
+}
+
+// "Unreturned" = a missed inbound call (no-answer/voicemail) where nobody
+// has called that contact back since, in either direction -- the same
+// "based on outcome and callback history, not what was said" framing the
+// approved mockup uses, since there's no transcript to know intent from.
+// The NOT EXISTS is evaluated at query time (now), not just against the
+// window -- a call from three days ago that's still nobody's most recent
+// contact with that person is still genuinely unreturned today.
+async function callDigestUnreturnedCalls(ghlAccountId, start, end, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.ghl_contact_id AS "contactId", ct.name AS "contactName",
+            c.disposition, c.occurred_at AS "occurredAt"
+     FROM calls c
+     LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
+     WHERE c.ghl_account_id = $1
+       AND c.direction = 'inbound'
+       AND c.disposition IN ('no-answer', 'voicemail')
+       AND c.occurred_at >= $2 AND c.occurred_at < $3
+       AND NOT EXISTS (
+         SELECT 1 FROM calls c2
+         WHERE c2.ghl_account_id = $1 AND c2.ghl_contact_id = c.ghl_contact_id
+           AND c2.occurred_at > c.occurred_at
+       )
+     ORDER BY c.occurred_at ASC
+     LIMIT $4`,
+    [ghlAccountId, start, end, limit]
+  );
+  return rows;
+}
+
+async function callDigestUnreturnedCount(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1
+       AND c.direction = 'inbound'
+       AND c.disposition IN ('no-answer', 'voicemail')
+       AND c.occurred_at >= $2 AND c.occurred_at < $3
+       AND NOT EXISTS (
+         SELECT 1 FROM calls c2
+         WHERE c2.ghl_account_id = $1 AND c2.ghl_contact_id = c.ghl_contact_id
+           AND c2.occurred_at > c.occurred_at
+       )`,
+    [ghlAccountId, start, end]
+  );
+  return rows[0].count;
+}
+
+async function callDigestDailyVolume(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day, count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1 ORDER BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows;
+}
+
+// Per-day missed-call rate for the trailing week, used only to decide
+// whether the current window's rate is this week's best -- not rendered
+// directly, so no zero-filling: a day with no calls at all just isn't a
+// candidate for "best day".
+async function callDigestDailyMissedRates(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day,
+            count(*)::int AS total,
+            count(*) FILTER (WHERE c.disposition IS DISTINCT FROM 'completed')::int AS missed
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows
+    .filter((r) => r.total > 0)
+    .map((r) => ({ day: r.day, missedRatePct: Math.round((100 * r.missed) / r.total) }));
+}
+
+async function callDigestTopReps(ghlAccountId, start, end, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT c.handled_by_id AS id, c.handled_by_name AS name,
+            count(*)::int AS total,
+            COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            count(DISTINCT c.ghl_contact_id)::int AS "uniqueContacts"
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.handled_by_id IS NOT NULL
+       AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY c.handled_by_id, c.handled_by_name
+     ORDER BY total DESC
+     LIMIT $4`,
+    [ghlAccountId, start, end, limit]
+  );
+  return rows;
+}
+
+// Orchestrates every query above into the one JSON blob call_digests.stats
+// holds. now defaults to the real clock but is injectable for testing.
+async function computeCallDigestStats(ghlAccountId, { now = new Date() } = {}) {
+  const periodEnd = now;
+  const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const prevStart = new Date(periodStart.getTime() - 24 * 60 * 60 * 1000);
+  const weekStart = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [current, previous, busiest, dispositionBreakdown, unreturnedCalls, unreturnedCount, unreturnedCountPrev, trend, dailyMissedRates, topReps] =
+    await Promise.all([
+      callDigestWindowTotals(ghlAccountId, periodStart, periodEnd),
+      callDigestWindowTotals(ghlAccountId, prevStart, periodStart),
+      callDigestBusiestHour(ghlAccountId, periodStart, periodEnd),
+      callDigestDispositionBreakdown(ghlAccountId, periodStart, periodEnd),
+      callDigestUnreturnedCalls(ghlAccountId, periodStart, periodEnd),
+      callDigestUnreturnedCount(ghlAccountId, periodStart, periodEnd),
+      callDigestUnreturnedCount(ghlAccountId, prevStart, periodStart),
+      callDigestDailyVolume(ghlAccountId, weekStart, periodEnd),
+      callDigestDailyMissedRates(ghlAccountId, weekStart, periodEnd),
+      callDigestTopReps(ghlAccountId, periodStart, periodEnd),
+    ]);
+
+  const missedRatePct = current.total > 0 ? Math.round((100 * current.missed) / current.total) : 0;
+  const missedRatePctPrev = previous.total > 0 ? Math.round((100 * previous.missed) / previous.total) : 0;
+  const isBestDayThisWeek = dailyMissedRates.length > 0 && missedRatePct <= Math.min(...dailyMissedRates.map((r) => r.missedRatePct));
+
+  return {
+    periodStart: periodStart.toISOString(),
+    periodEnd: periodEnd.toISOString(),
+    totalCalls: current.total,
+    totalCallsPrev: previous.total,
+    avgDurationSeconds: current.avgDurationSeconds,
+    avgDurationSecondsPrev: previous.avgDurationSeconds,
+    longestDurationSeconds: current.longestDurationSeconds,
+    missedRatePct,
+    missedRatePctPrev,
+    isBestDayThisWeek,
+    busiestHour: busiest ? busiest.hour : null,
+    unreturnedCount,
+    unreturnedCountPrev,
+    unreturnedCalls: unreturnedCalls.map((c) => ({
+      contactName: c.contactName,
+      disposition: c.disposition,
+      occurredAt: c.occurredAt,
+      waitMinutes: Math.round((periodEnd.getTime() - new Date(c.occurredAt).getTime()) / 60000),
+    })),
+    dispositionBreakdown,
+    trend,
+    topReps,
+  };
+}
+
+// One row per account per job run -- see schema.sql's comment on
+// call_digests for why this is stored rather than computed live.
+async function saveCallDigest({ ghlAccountId, stats, narrative }) {
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO call_digests (id, ghl_account_id, stats, narrative) VALUES ($1, $2, $3, $4)`,
+    [id, ghlAccountId, JSON.stringify(stats), narrative || null]
+  );
+  return id;
+}
+
+async function getLatestCallDigest(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT id, computed_at AS "computedAt", stats, narrative
+     FROM call_digests
+     WHERE ghl_account_id = $1
+     ORDER BY computed_at DESC
+     LIMIT 1`,
+    [ghlAccountId]
+  );
+  return rows[0] || null;
+}
+
+// Only accounts that actually need the metadata-only digest -- one with
+// transcription on gets the (not yet built) richer, transcript-based
+// version instead, so there's no reason to spend a Bedrock call narrating
+// this one for it.
+async function listGhlAccountsNeedingDigest() {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", name
+     FROM ghl_accounts
+     WHERE uninstalled_at IS NULL AND auto_transcribe_enabled = false`
+  );
+  return rows;
+}
+
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
 // (routes/admin.js), which needs every matching row to stream, not one
 // page. dateFrom/dateTo are optional, same semantics as listCalls().
@@ -1361,6 +1596,10 @@ module.exports = {
   getCallReportByRep,
   getCallReportDispositionsByRep,
   getCallReportTrend,
+  computeCallDigestStats,
+  saveCallDigest,
+  getLatestCallDigest,
+  listGhlAccountsNeedingDigest,
   listAllCallsWithRecordings,
   getCoverageSummary,
   getCoverageByDisposition,

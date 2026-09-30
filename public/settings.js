@@ -602,6 +602,208 @@ async function loadCallReport() {
   reportData = await res.json();
   renderReportLeaderboard();
   if (selectedRepId) renderReportDetail();
+  loadDigest();
+}
+
+// --- Analytics digest (twice-daily, metadata-only, no-transcription accounts) ---
+
+const digestSectionEl = document.getElementById("digest-section");
+
+// Shown only for accounts without transcription on, and only once the
+// background job (src/callDigestJob.js) has actually computed a first
+// snapshot -- a freshly connected account has neither, and that's not an
+// error state worth a message, just nothing to show yet.
+async function loadDigest() {
+  try {
+    const [digestRes, settingsRes] = await Promise.all([
+      fetch(`/api/admin/call-digest?accountId=${encodeURIComponent(currentAccountId)}`),
+      fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`),
+    ]);
+    const { digest } = await digestRes.json();
+    const settings = await settingsRes.json();
+    if (settings.autoTranscribeEnabled || !digest) {
+      digestSectionEl.hidden = true;
+      return;
+    }
+    renderDigest(digest);
+    digestSectionEl.hidden = false;
+  } catch (err) {
+    digestSectionEl.hidden = true;
+  }
+}
+
+function compareLabel(current, prev, { lowerIsBetter = false, unit = "" } = {}) {
+  if (prev === 0 && current === 0) return null;
+  const delta = current - prev;
+  if (delta === 0) return { text: "No change from the prior 24h", good: true };
+  const better = lowerIsBetter ? delta < 0 : delta > 0;
+  const arrow = delta > 0 ? "↑" : "↓";
+  const magnitude = unit === "%" ? `${Math.abs(delta)}pts` : `${Math.abs(delta)}${unit}`;
+  return { text: `${arrow} ${magnitude} vs. prior 24h`, good: better };
+}
+
+function renderDigest(digest) {
+  const stats = digest.stats;
+
+  document.getElementById("digest-timestamp").textContent =
+    "As of " + new Date(digest.computedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  const narrativeEl = document.getElementById("digest-narrative");
+  if (digest.narrative) {
+    narrativeEl.textContent = digest.narrative;
+    narrativeEl.hidden = false;
+  } else {
+    narrativeEl.hidden = true;
+  }
+
+  document.getElementById("digest-calls-total").textContent = stats.totalCalls;
+  setCompare("digest-calls-compare", stats.totalCalls, stats.totalCallsPrev, { unit: "" });
+
+  document.getElementById("digest-avg-duration").textContent = formatDuration(stats.avgDurationSeconds);
+  setCompare("digest-duration-compare", stats.avgDurationSeconds, stats.avgDurationSecondsPrev, { lowerIsBetter: true, unit: "s" });
+
+  document.getElementById("digest-missed-rate").textContent = `${stats.missedRatePct}%`;
+  const missedCompareEl = document.getElementById("digest-missed-compare");
+  const missedCompare = compareLabel(stats.missedRatePct, stats.missedRatePctPrev, { lowerIsBetter: true, unit: "%" });
+  if (stats.isBestDayThisWeek) {
+    missedCompareEl.textContent = "Best day this week";
+    missedCompareEl.className = "stat-compare stat-compare-good";
+  } else {
+    applyCompare(missedCompareEl, missedCompare);
+  }
+
+  document.getElementById("digest-unreturned-total").textContent = stats.unreturnedCount;
+  setCompare("digest-unreturned-compare", stats.unreturnedCount, stats.unreturnedCountPrev, { lowerIsBetter: true, unit: "" });
+
+  renderDigestOutcomeBars(stats.dispositionBreakdown);
+  renderDigestUnreturned(stats.unreturnedCalls);
+  renderDigestTrend(stats.trend);
+  renderDigestTopReps(stats.topReps);
+}
+
+function setCompare(elId, current, prev, opts) {
+  applyCompare(document.getElementById(elId), compareLabel(current, prev, opts));
+}
+
+function applyCompare(el, compare) {
+  if (!compare) {
+    el.textContent = "";
+    el.className = "stat-compare";
+    return;
+  }
+  el.textContent = compare.text;
+  el.className = `stat-compare ${compare.good ? "stat-compare-good" : "stat-compare-bad"}`;
+}
+
+const DIGEST_OUTCOME_LABELS = { completed: "Completed", "no-answer": "No answer", voicemail: "Voicemail", other: "Busy / canceled" };
+const DIGEST_OUTCOME_ORDER = ["completed", "no-answer", "voicemail", "other"];
+
+function renderDigestOutcomeBars(breakdown) {
+  const container = document.getElementById("digest-outcome-bars");
+  const byBucket = {};
+  let total = 0;
+  for (const row of breakdown) {
+    byBucket[row.bucket] = row.count;
+    total += row.count;
+  }
+  if (total === 0) {
+    container.innerHTML = `<p class="digest-empty">No calls in the last 24h.</p>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const bucket of DIGEST_OUTCOME_ORDER) {
+    const count = byBucket[bucket] || 0;
+    if (count === 0 && bucket === "other") continue;
+    const pct = Math.round((count / total) * 100);
+    const row = document.createElement("div");
+    row.className = "rep-bar-row rep-bar-row-static";
+    row.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(DIGEST_OUTCOME_LABELS[bucket])}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${count}</span>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function renderDigestUnreturned(calls) {
+  const heading = document.getElementById("digest-unreturned-heading");
+  const list = document.getElementById("digest-unreturned-list");
+  heading.textContent = `Unreturned calls${calls.length ? ` · ${calls.length} contact${calls.length === 1 ? "" : "s"}` : ""}`;
+  if (calls.length === 0) {
+    list.innerHTML = `<p class="digest-empty">Nobody's waiting on a callback right now.</p>`;
+    return;
+  }
+  list.innerHTML = "";
+  calls.forEach((call, i) => {
+    const row = document.createElement("div");
+    row.className = "unreturned-row";
+    const waitLabel = call.waitMinutes >= 60 ? `${Math.floor(call.waitMinutes / 60)}h ${call.waitMinutes % 60}m waiting` : `${call.waitMinutes}m waiting`;
+    const when = new Date(call.occurredAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    row.innerHTML = `
+      <div>
+        <div class="unreturned-name">${escapeHtml(call.contactName || "(unknown contact)")}</div>
+        <div class="unreturned-meta">${escapeHtml(dispositionLabel(call.disposition))} ${escapeHtml(when)} &middot; ${escapeHtml(waitLabel)}</div>
+      </div>
+      ${i === 0 ? `<span class="unreturned-oldest-badge">Oldest</span>` : ""}
+    `;
+    list.appendChild(row);
+  });
+}
+
+function renderDigestTrend(trend) {
+  const container = document.getElementById("digest-trend-bars");
+  if (trend.length === 0) {
+    container.innerHTML = `<p class="digest-empty">Not enough history yet.</p>`;
+    return;
+  }
+  const maxCount = Math.max(1, ...trend.map((d) => d.count));
+  container.innerHTML = "";
+  for (const day of trend) {
+    const label = new Date(`${day.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+    const pct = Math.round((day.count / maxCount) * 100);
+    const row = document.createElement("div");
+    row.className = "rep-bar-row rep-bar-row-static";
+    row.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(label)}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${day.count}</span>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function renderDigestTopReps(reps) {
+  const barsContainer = document.getElementById("digest-top-rep-bars");
+  const rowsEl = document.getElementById("digest-top-rep-rows");
+  if (reps.length === 0) {
+    barsContainer.innerHTML = `<p class="digest-empty">No calls handled in the last 24h.</p>`;
+    rowsEl.innerHTML = `<tr><td colspan="4" class="empty-state">No calls handled in the last 24h.</td></tr>`;
+    return;
+  }
+  const maxTotal = Math.max(1, ...reps.map((r) => r.total));
+  barsContainer.innerHTML = "";
+  rowsEl.innerHTML = "";
+  for (const rep of reps) {
+    const pct = Math.round((rep.total / maxTotal) * 100);
+    const barRow = document.createElement("div");
+    barRow.className = "rep-bar-row rep-bar-row-static";
+    barRow.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(rep.name || "(unnamed)")}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${rep.total}</span>
+    `;
+    barsContainer.appendChild(barRow);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td data-label="Rep">${escapeHtml(rep.name || "(unnamed)")}</td>
+      <td data-label="Calls">${rep.total}</td>
+      <td data-label="Avg. duration">${formatDuration(rep.avgDurationSeconds)}</td>
+      <td data-label="Unique contacts">${rep.uniqueContacts}</td>
+    `;
+    rowsEl.appendChild(tr);
+  }
 }
 
 function renderReportLeaderboard() {

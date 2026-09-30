@@ -12,6 +12,7 @@ const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
 const callSummaryPoller = require("./callSummaryPoller");
+const callDigestJob = require("./callDigestJob");
 
 const app = express();
 
@@ -149,6 +150,7 @@ app.listen(port, () => {
 poller.start();
 transcriptionPoller.start();
 callSummaryPoller.start();
+callDigestJob.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand

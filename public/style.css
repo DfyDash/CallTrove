@@ -1458,6 +1458,134 @@ tbody tr:last-child td {
   margin-top: 6px;
 }
 
+.stat-compare-good { color: var(--good); }
+.stat-compare-bad { color: var(--critical); }
+
+/* --- Analytics digest (Call report tab, no-transcription accounts) --- */
+
+.digest-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+.digest-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.digest-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.digest-timestamp {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-left: 10px;
+}
+
+.digest-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  background: rgba(127, 127, 127, 0.1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.digest-narrative {
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.rep-bar-row-static {
+  cursor: default;
+}
+.rep-bar-row-static:hover {
+  background: none;
+}
+
+.unreturned-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.unreturned-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.unreturned-row:last-child {
+  border-bottom: none;
+}
+
+.unreturned-row:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.unreturned-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.unreturned-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.unreturned-oldest-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.digest-upsell {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.digest-empty {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.digest-two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .digest-two-col { grid-template-columns: 1fr; }
+}
+
 .settings-section h2 {
   margin: 0 0 10px;
   font-size: 1rem;

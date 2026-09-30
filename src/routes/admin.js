@@ -631,6 +631,15 @@ router.get("/call-report", async (req, res) => {
   res.json({ reps, trend, trendGranularity: granularity, dispositionsByRep });
 });
 
+// Latest twice-daily digest snapshot for the selected account -- see
+// src/callDigestJob.js. null when the job hasn't run for this account yet
+// (just connected, or it has transcription on and was never eligible),
+// not an error -- the client renders an empty state either way.
+router.get("/call-digest", requireAccount, async (req, res) => {
+  const digest = await db.getLatestCallDigest(req.ghlAccountId);
+  res.json({ digest });
+});
+
 router.get("/coverage/gaps", async (req, res) => {
   const result = await db.listCoverageGaps(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
