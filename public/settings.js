@@ -632,14 +632,18 @@ async function loadDigest() {
   }
 }
 
-function compareLabel(current, prev, { lowerIsBetter = false, unit = "" } = {}) {
+function compareLabel(current, prev, { lowerIsBetter = false, unit = "", formatMagnitude } = {}) {
   if (prev === 0 && current === 0) return null;
   const delta = current - prev;
-  if (delta === 0) return { text: "No change from the prior 24h", good: true };
+  if (delta === 0) return { text: "Same as yesterday", good: true };
   const better = lowerIsBetter ? delta < 0 : delta > 0;
   const arrow = delta > 0 ? "↑" : "↓";
-  const magnitude = unit === "%" ? `${Math.abs(delta)}pts` : `${Math.abs(delta)}${unit}`;
-  return { text: `${arrow} ${magnitude} vs. prior 24h`, good: better };
+  const magnitude = formatMagnitude
+    ? formatMagnitude(Math.abs(delta))
+    : unit === "%"
+      ? `${Math.abs(delta)}pts`
+      : `${Math.abs(delta)}${unit}`;
+  return { text: `${arrow} ${magnitude} vs. yesterday`, good: better };
 }
 
 function renderDigest(digest) {
@@ -660,7 +664,7 @@ function renderDigest(digest) {
   setCompare("digest-calls-compare", stats.totalCalls, stats.totalCallsPrev, { unit: "" });
 
   document.getElementById("digest-avg-duration").textContent = formatDuration(stats.avgDurationSeconds);
-  setCompare("digest-duration-compare", stats.avgDurationSeconds, stats.avgDurationSecondsPrev, { lowerIsBetter: true, unit: "s" });
+  setCompare("digest-duration-compare", stats.avgDurationSeconds, stats.avgDurationSecondsPrev, { lowerIsBetter: true, formatMagnitude: formatDuration });
 
   document.getElementById("digest-missed-rate").textContent = `${stats.missedRatePct}%`;
   const missedCompareEl = document.getElementById("digest-missed-compare");
@@ -707,7 +711,7 @@ function renderDigestOutcomeBars(breakdown) {
     total += row.count;
   }
   if (total === 0) {
-    container.innerHTML = `<p class="digest-empty">No calls in the last 24h.</p>`;
+    container.innerHTML = `<p class="digest-empty">No calls came in today.</p>`;
     return;
   }
   container.innerHTML = "";
@@ -777,8 +781,8 @@ function renderDigestTopReps(reps) {
   const barsContainer = document.getElementById("digest-top-rep-bars");
   const rowsEl = document.getElementById("digest-top-rep-rows");
   if (reps.length === 0) {
-    barsContainer.innerHTML = `<p class="digest-empty">No calls handled in the last 24h.</p>`;
-    rowsEl.innerHTML = `<tr><td colspan="4" class="empty-state">No calls handled in the last 24h.</td></tr>`;
+    barsContainer.innerHTML = `<p class="digest-empty">No calls handled today.</p>`;
+    rowsEl.innerHTML = `<tr><td colspan="4" class="empty-state">No calls handled today.</td></tr>`;
     return;
   }
   const maxTotal = Math.max(1, ...reps.map((r) => r.total));

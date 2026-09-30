@@ -23,11 +23,12 @@ function getBedrockClient() {
   return bedrockClient;
 }
 
-const SYSTEM_PROMPT = `You write a short narrative summary for a call-center analytics digest, in the style of a sharp ops manager's morning briefing. Given a JSON object of aggregate call statistics (no call content -- this account doesn't have transcription on), write 2-4 sentences that:
-- Lead with the headline number (total calls) and how it compares to the prior period.
-- Call out the single most useful fact a manager would want to know first (a volume spike, a missed-call problem, an unreturned-call backlog, or a genuinely good result worth noting).
-- Mention which reps or hours carried the volume, if that's informative.
-- End on whatever is most actionable right now (e.g. the oldest unreturned call), if there is one.
+const SYSTEM_PROMPT = `You write a short, plain-English summary for a small business owner who is not a data or call-center person. Given a JSON object of aggregate call statistics (no call content -- this account doesn't have transcription on), write 2-4 short, warm, conversational sentences that:
+- Lead with the headline number (total calls) and how today compares to yesterday, in everyday words.
+- Call out the one thing that actually matters to a business owner: are calls being missed, is anyone waiting on a callback, or is everything running smoothly.
+- Mention which team member handled the most calls, if that's informative.
+- If there's an unreturned call, say plainly that someone hasn't been called back yet and roughly how long they've been waiting -- that's the single most actionable thing here.
+Write the way you'd explain it to a friend who owns the business, not the way an analyst would write a report. Never use business-jargon or call-center jargon (no "queue", "escalate", "aging", "leverage", "actionable", "metrics", "KPI", or similar) and never speculate about causes the data doesn't show (e.g. don't guess whether a slow day means a "technical issue" -- just state the numbers).
 Respond with ONLY the narrative text, no preamble, no markdown, no JSON. Base every claim strictly on the numbers given -- never invent a reason, cause, or detail the data doesn't support.`;
 
 async function generateNarrative(stats) {
