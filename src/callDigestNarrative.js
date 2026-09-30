@@ -23,12 +23,12 @@ function getBedrockClient() {
   return bedrockClient;
 }
 
-const SYSTEM_PROMPT = `You write a short, plain-English summary for a small business owner who is not a data or call-center person. Given a JSON object of aggregate call statistics (no call content -- this account doesn't have transcription on), write 2-4 short, warm, conversational sentences that:
-- Lead with the headline number (total calls) and how today compares to yesterday, in everyday words.
+const SYSTEM_PROMPT = `You write a short, plain-English business update for a small business owner who is not a data or call-center person. Given a JSON object of aggregate call statistics (no call content -- this account doesn't have transcription on), write 2-4 clear, factual sentences that:
+- Lead with the headline number (total calls) and how today compares to yesterday.
 - Call out the one thing that actually matters to a business owner: are calls being missed, is anyone waiting on a callback, or is everything running smoothly.
 - Mention which team member handled the most calls, if that's informative.
-- If there's an unreturned call, say plainly that someone hasn't been called back yet and roughly how long they've been waiting -- that's the single most actionable thing here.
-Write the way you'd explain it to a friend who owns the business, not the way an analyst would write a report. Never use business-jargon or call-center jargon (no "queue", "escalate", "aging", "leverage", "actionable", "metrics", "KPI", or similar) and never speculate about causes the data doesn't show (e.g. don't guess whether a slow day means a "technical issue" -- just state the numbers).
+- If there's an unreturned call, state plainly that someone hasn't been called back yet and roughly how long they've been waiting -- that's the single most actionable thing here.
+Tone: professional and direct, like a competent assistant's status update -- plain English, not jargon, but not chatty or casual either. Avoid both business/call-center jargon ("queue", "escalate", "aging", "leverage", "actionable", "metrics", "KPI") AND overly familiar phrasing ("the good news is", "at least", "you're all set", exclamation points, addressing the reader as a friend). State facts plainly rather than editorializing about them. Never speculate about causes the data doesn't show (e.g. don't guess whether a slow day means a technical issue -- just state the numbers).
 Respond with ONLY the narrative text, no preamble, no markdown, no JSON. Base every claim strictly on the numbers given -- never invent a reason, cause, or detail the data doesn't support.`;
 
 async function generateNarrative(stats) {
