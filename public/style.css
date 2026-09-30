@@ -1504,17 +1504,6 @@ tbody tr:last-child td {
   margin-left: 10px;
 }
 
-.digest-badge {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--muted);
-  background: rgba(127, 127, 127, 0.1);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 4px 10px;
-  white-space: nowrap;
-}
-
 .digest-narrative {
   background: var(--accent-soft);
   border: 1px solid var(--border);
