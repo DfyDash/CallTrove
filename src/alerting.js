@@ -30,6 +30,28 @@ function isEnabled() {
   return email.isEnabled() && !!ALERT_TO;
 }
 
+// What breaking actually means, in plain language -- "X is failing" with
+// a raw stack trace isn't enough to know how urgent it is or what to
+// check first. Keyed by the exact subsystem string each caller passes
+// (poller.js, transcriptionPoller.js, callSummaryPoller.js,
+// callDigestJob.js, server.js's unhandledRejection handler); a subsystem
+// not listed here (new code that hasn't been given its own entry yet)
+// falls back to a generic note rather than the email silently omitting
+// this section.
+const IMPACT_BY_SUBSYSTEM = {
+  "call ingestion (poller)":
+    "New calls from GHL have stopped being detected entirely -- nothing new will show up in Contacts, Dashboard, or Call report until this is fixed. No data is being lost permanently (GHL still has it), but it won't appear here until ingestion resumes; anything that happened during the outage can be brought in afterward with Settings > Import past calls.",
+  transcription:
+    "New recordings are not being transcribed. Recordings themselves are unaffected and still play/download normally -- only the text transcript is delayed. Nothing is lost; queued recordings will transcribe automatically once this recovers.",
+  "call summary (AI)":
+    "AI-generated call summaries aren't being posted as notes on contacts. Recordings and transcripts are unaffected. Not urgent -- summaries resume automatically once this recovers, nothing is lost in the meantime.",
+  "analytics digest":
+    "The twice-daily Analytics Digest (Settings > Call report) has stopped updating for accounts without transcription on. Call data itself is unaffected and nothing is lost -- this is a reporting feature only, so the impact is a stale/missing digest, not missing calls.",
+  "unhandled app errors":
+    "An unexpected error occurred somewhere in the app outside the normal background jobs -- the specific impact depends on what triggered it. Worth logging into the app directly to confirm nothing else looks broken.",
+};
+const DEFAULT_IMPACT = "No specific impact note has been written for this subsystem yet -- worth checking the app directly to see what's actually affected.";
+
 const state = new Map(); // subsystem -> { count, lastAlertAt, alerted }
 
 async function recordFailure(subsystem, err) {
@@ -65,11 +87,12 @@ async function sendAlert(subsystem, count, err) {
     console.error(`[alerting] would alert on "${subsystem}" (${count} consecutive failures) but ALERT_EMAIL_TO/Resend isn't configured:`, err);
     return;
   }
+  const impact = IMPACT_BY_SUBSYSTEM[subsystem] || DEFAULT_IMPACT;
   try {
     await email.sendEmail({
       to: ALERT_TO,
       subject: `CallTrove alert: ${subsystem} is failing`,
-      text: `${subsystem} has failed ${count} times in a row.\n\nMost recent error:\n${(err && err.stack) || err}\n\nYou'll get one more email like this if it's still broken an hour from now, and one when it recovers.`,
+      text: `${subsystem} has failed ${count} times in a row.\n\nWhat this affects:\n${impact}\n\nMost recent error:\n${(err && err.stack) || err}\n\nYou'll get one more email like this if it's still broken an hour from now, and one when it recovers.`,
     });
   } catch (sendErr) {
     console.error(`[alerting] failed to send alert email for "${subsystem}":`, sendErr);

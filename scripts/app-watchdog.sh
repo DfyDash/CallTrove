@@ -68,7 +68,11 @@ fi
 
 count=$((count + 1))
 if [ "$count" -ge "$FAILURE_THRESHOLD" ] && [ $((now - last_alert)) -ge "$COOLDOWN_SECONDS" ]; then
-  send_alert_email "CallTrove alert: app is unreachable" "The app has failed $count consecutive health checks (checked every few minutes). You'll get one more email like this if it's still down an hour from now, and one when it recovers."
+  send_alert_email "CallTrove alert: app is unreachable" "The app has failed $count consecutive health checks (checked every few minutes).
+
+What this affects: the entire app is down -- nobody can log in, view the dashboard, play recordings, or reach anything else until this recovers. This is the most severe alert type; every feature is affected, not just one part of it.
+
+You'll get one more email like this if it's still down an hour from now, and one when it recovers."
   last_alert=$now
 fi
 echo "$count $last_alert" > "$STATE_FILE"
