@@ -857,7 +857,7 @@ tbody tr:last-child td {
   display: flex;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
   align-items: center;
 }
 
