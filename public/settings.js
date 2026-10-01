@@ -601,11 +601,11 @@ async function loadGhlAccountsTab() {
                <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
             : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
           return `<tr>
-            <td>${escapeHtml(a.name || a.ghlLocationId)}</td>
-            <td>${escapeHtml(a.ghlLocationId)}</td>
-            <td>${statusHtml}</td>
-            <td>${escapeHtml(formatLastSynced(a.lastSyncedAt))}</td>
-            <td>${actionHtml}</td>
+            <td data-label="Location name">${escapeHtml(a.name || a.ghlLocationId)}</td>
+            <td data-label="GHL location ID">${escapeHtml(a.ghlLocationId)}</td>
+            <td data-label="Status">${statusHtml}</td>
+            <td data-label="Last synced">${escapeHtml(formatLastSynced(a.lastSyncedAt))}</td>
+            <td class="ghl-account-actions">${actionHtml}</td>
           </tr>`;
         })
         .join("")

@@ -834,7 +834,6 @@ tbody tr:last-child td {
 
 .ghl-reconnect-btn {
   padding: 5px 10px;
-  margin-left: 6px;
   border: 1px solid var(--accent);
   border-radius: 6px;
   background: var(--accent-soft);
@@ -845,6 +844,21 @@ tbody tr:last-child td {
 
 .ghl-reconnect-btn:hover {
   opacity: 0.85;
+}
+
+/* Overrides the generic table td's flex-direction:column (mobile's
+   stacked-card layout, see the "Every table on the site" comment below)
+   so Disconnect/Reconnect sit side by side as a little button row instead
+   of each taking its own full-width line -- this cell holds actions, not
+   a label+value pair, so it never gets a data-label either (same as any
+   other action-only cell on the site). Unmedia-queried since it reads
+   fine as a plain flex row on desktop too. */
+.ghl-account-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .transcript-text {
