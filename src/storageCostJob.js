@@ -76,8 +76,15 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
   // dayCount > 0 means real daily history exists for this period -- use
   // its true average. Otherwise (no daily snapshots cover this month at
   // all) fall back to a current-bytes snapshot, same approximation this
-  // job used before daily history existed.
-  const bytesBasis = dayCount > 0 ? Number(avgBytes) : await db.getTotalStoredBytesForTenant(tenantId);
+  // job used before daily history existed -- fine for awsCost (an
+  // internal estimate either way), but NOT a safe basis for a real
+  // client charge: "today" can be far from this past period's actual
+  // average, and db.recordStorageCost is write-once (ON CONFLICT DO
+  // NOTHING), so a wrong overage charge here could never be corrected
+  // later. clientRevenue stays null in that case, same convention as
+  // schema.sql's "pre-policy entries keep NULL (not 0)".
+  const usingFallback = dayCount === 0;
+  const bytesBasis = usingFallback ? await db.getTotalStoredBytesForTenant(tenantId) : Number(avgBytes);
 
   const gb = bytesBasis / BYTES_PER_GB;
   const awsCost = gb * billingRates.AWS_S3_STANDARD_PER_GB_MONTH;
@@ -87,7 +94,7 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
   // account's real usage, so this is $0 for everyone except a genuine
   // outlier.
   const billableGB = Math.max(0, gb - billingRates.CLIENT_STORAGE_FREE_GB);
-  const clientRevenue = billableGB * billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH;
+  const clientRevenue = usingFallback ? null : billableGB * billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH;
 
   await db.recordStorageCost({
     tenantId,
@@ -102,7 +109,10 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
 }
 
 async function checkNegativeMargins() {
-  if (!email.isEnabled() || !ALERT_TO) return;
+  if (!email.isEnabled() || !ALERT_TO) {
+    console.log("[storageCost] would check negative margins, but email isn't configured (ALERT_EMAIL_TO/Resend) -- skipping");
+    return;
+  }
   const margins = await db.listTenantMargins();
   const now = Date.now();
 
@@ -117,7 +127,6 @@ async function checkNegativeMargins() {
 
     const lastAlerted = marginAlertState.get(t.id) || 0;
     if (now - lastAlerted < MARGIN_ALERT_COOLDOWN_MS) continue;
-    marginAlertState.set(t.id, now);
 
     try {
       await email.sendEmail({
@@ -125,6 +134,11 @@ async function checkNegativeMargins() {
         subject: `CallTrove alert: "${t.name}" has gone margin-negative`,
         text: `"${t.name}"'s cumulative AWS cost ($${totalCost.toFixed(2)}) has overtaken its cumulative revenue ($${totalRevenue.toFixed(2)}) -- a lifetime margin of $${margin.toFixed(2)}.\n\nWhat this means: this account is now costing more than it's bringing in, across its entire history with CallTrove. Usually means either a genuine high-volume outlier (storage, transcription, or AI summary usage well above a typical account) or a rate that needs revisiting for this client specifically.\n\nCheck Operator > Accounts > "${t.name}" for the breakdown by category.\n\nYou'll get another email like this at most once a day while it stays negative.`,
       });
+      // Only start the cooldown once the send actually succeeded -- a
+      // failed send (SES throttling, network blip) should retry next
+      // cycle, not go quiet on a genuinely negative-margin tenant for up
+      // to 24h with no email ever delivered.
+      marginAlertState.set(t.id, now);
     } catch (err) {
       console.error(`[storageCost] failed to send negative-margin alert for tenant ${t.id}:`, err);
     }
