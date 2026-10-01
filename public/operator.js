@@ -56,25 +56,61 @@ function filterAndSort(baseList) {
   return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
-// Client-side paging, not a second server round-trip -- the filtered/
-// sorted list is already in hand, so slicing it here is enough to stop
-// every account rendering onto one endless page. One shared page number
-// across Accounts/Analytics/Cost & revenue, same reasoning the shared
-// search box already established: "page 2" means the same position no
-// matter which of those tabs you're looking at it from.
-const ACCOUNTS_PAGE_SIZE = 20;
-let accountsPage = 1;
+// A-Z grouping -- same pattern as the Contacts page's own directory
+// (public/contacts.js's loadContacts): instead of one long list (or a
+// page of 20 with no sense of where in the alphabet you are), accounts
+// are grouped under a letter header, with a jump strip of every letter
+// above the table -- a grey letter has no accounts under it right now,
+// an accent-colored one does and jumps straight to that group.
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
-function pageOf(list) {
-  const start = (accountsPage - 1) * ACCOUNTS_PAGE_SIZE;
-  return { page: list.slice(start, start + ACCOUNTS_PAGE_SIZE), total: list.length };
+function groupByLetter(tenants) {
+  const grouped = {};
+  for (const t of tenants) {
+    const name = t.name || "";
+    const letter = name ? name[0].toUpperCase() : "#";
+    const key = ALPHABET.includes(letter) ? letter : "#";
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(t);
+  }
+  return grouped;
 }
 
-function renderPagination(prevBtn, nextBtn, indicator, total) {
-  const totalPages = Math.max(1, Math.ceil(total / ACCOUNTS_PAGE_SIZE));
-  indicator.textContent = `Page ${accountsPage} of ${totalPages}`;
-  prevBtn.disabled = accountsPage <= 1;
-  nextBtn.disabled = accountsPage >= totalPages;
+// groupIdPrefix keeps each tab's jump targets/header ids distinct
+// (accounts-A, analytics-A, cost-A, ...) since Analytics/Cost & revenue
+// can have a different active-letter set than Accounts (activeOnly()
+// excludes canceled tenants) even though all three show the same search.
+function renderAzStrip(stripEl, grouped, groupIdPrefix) {
+  const letters = grouped["#"] ? ["#", ...ALPHABET] : ALPHABET;
+  stripEl.innerHTML = letters
+    .map((letter) => {
+      const active = grouped[letter] && grouped[letter].length > 0;
+      return `<a href="#${groupIdPrefix}-${encodeURIComponent(letter)}" class="az-letter${active ? " has-contacts" : ""}">${escapeHtml(letter)}</a>`;
+    })
+    .join("");
+}
+
+// Renders <tr> group-header rows interleaved with each letter's own
+// tenant rows into tbody, via rowTemplate(tenant) -> inner <tr> html.
+// colspan matches the table's real column count so the header row still
+// looks right as a single banner across every column.
+function renderGroupedRows(tbody, stripEl, tenants, groupIdPrefix, colspan, rowTemplate) {
+  const grouped = groupByLetter(tenants);
+  renderAzStrip(stripEl, grouped, groupIdPrefix);
+  const activeLetters = Object.keys(grouped).sort((a, b) => (a === "#" ? -1 : b === "#" ? 1 : a.localeCompare(b)));
+
+  tbody.innerHTML = "";
+  for (const letter of activeLetters) {
+    const header = document.createElement("tr");
+    header.innerHTML = `<td colspan="${colspan}" class="contact-group-header" id="${groupIdPrefix}-${escapeHtml(letter)}">${escapeHtml(letter)}</td>`;
+    tbody.appendChild(header);
+    for (const t of grouped[letter]) {
+      const row = document.createElement("tr");
+      row.dataset.tenantId = t.id;
+      row.innerHTML = rowTemplate(t);
+      tbody.appendChild(row);
+    }
+  }
 }
 
 // --- Search dropdown (same interaction as Contacts' sidebar search:
@@ -92,7 +128,6 @@ accountSearchInput.addEventListener("input", () => {
     accountSearchResults.hidden = true;
     accountSearchResults.innerHTML = "";
     searchQuery = "";
-    accountsPage = 1;
     renderAll();
     return;
   }
@@ -126,7 +161,6 @@ function renderSearchDropdown(query) {
     li.addEventListener("click", () => {
       accountSearchInput.value = t.name;
       searchQuery = t.name;
-      accountsPage = 1;
       accountSearchResults.hidden = true;
       renderAll();
     });
@@ -201,58 +235,39 @@ function renderAll() {
   renderCostAndRevenue();
 }
 
-const accountsPrevBtn = document.getElementById("accounts-prev-btn");
-const accountsNextBtn = document.getElementById("accounts-next-btn");
-const accountsPageIndicator = document.getElementById("accounts-page-indicator");
-const analyticsPrevBtn = document.getElementById("analytics-prev-btn");
-const analyticsNextBtn = document.getElementById("analytics-next-btn");
-const analyticsPageIndicator = document.getElementById("analytics-page-indicator");
-const costPrevBtn = document.getElementById("cost-prev-btn");
-const costNextBtn = document.getElementById("cost-next-btn");
-const costPageIndicator = document.getElementById("cost-page-indicator");
-
-for (const btn of [accountsPrevBtn, analyticsPrevBtn, costPrevBtn]) {
-  btn.addEventListener("click", () => {
-    accountsPage = Math.max(1, accountsPage - 1);
-    renderAll();
-  });
-}
-for (const btn of [accountsNextBtn, analyticsNextBtn, costNextBtn]) {
-  btn.addEventListener("click", () => {
-    accountsPage += 1;
-    renderAll();
-  });
-}
+const accountsAzStrip = document.getElementById("accounts-az-strip");
+const analyticsAzStrip = document.getElementById("analytics-az-strip");
+const costAzStrip = document.getElementById("cost-az-strip");
 
 function renderAccounts() {
-  const { page, total } = pageOf(filterAndSort(cachedTenants));
-  renderPagination(accountsPrevBtn, accountsNextBtn, accountsPageIndicator, total);
-  if (page.length === 0) {
+  const tenants = filterAndSort(cachedTenants);
+  if (tenants.length === 0) {
+    accountsAzStrip.innerHTML = "";
     operatorRows.innerHTML = `<tr><td colspan="4">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
-  operatorRows.innerHTML = page
-    .map(
-      (t) => `
-    <tr data-tenant-id="${escapeHtml(t.id)}">
+  renderGroupedRows(
+    operatorRows,
+    accountsAzStrip,
+    tenants,
+    "accounts",
+    4,
+    (t) => `
       <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
       <td data-label="Actions">${actionsForTenant(t)}</td>
-    </tr>`
-    )
-    .join("");
+    `
+  );
 }
 
 function renderAnalytics() {
   // activeOnly: a canceled tenant has nothing left to analyze -- see
-  // activeOnly()'s own comment. tenants is the full filtered set (totals
-  // below are across everything matching the search, not just this page).
+  // activeOnly()'s own comment.
   const tenants = filterAndSort(activeOnly(cachedTenants));
-  const { page, total } = pageOf(tenants);
-  renderPagination(analyticsPrevBtn, analyticsNextBtn, analyticsPageIndicator, total);
   if (tenants.length === 0) {
     analyticsSummary.innerHTML = "";
+    analyticsAzStrip.innerHTML = "";
     analyticsRows.innerHTML = `<tr><td colspan="7">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
     renderAccountsChart([]);
     return;
@@ -279,10 +294,13 @@ function renderAnalytics() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
   `;
 
-  analyticsRows.innerHTML = page
-    .map(
-      (t) => `
-    <tr data-tenant-id="${escapeHtml(t.id)}">
+  renderGroupedRows(
+    analyticsRows,
+    analyticsAzStrip,
+    tenants,
+    "analytics",
+    7,
+    (t) => `
       <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="GHL accounts">${t.ghlAccountCount}</td>
       <td data-label="Total calls">${t.totalCalls}</td>
@@ -290,11 +308,10 @@ function renderAnalytics() {
       <td data-label="Recordings stored">${t.recordingsStored}</td>
       <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
       <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
-    </tr>`
-    )
-    .join("");
+    `
+  );
 
-  renderAccountsChart(page);
+  renderAccountsChart(tenants);
 }
 
 // Own tab now (Cost & revenue, separate from Analytics -- see
@@ -307,11 +324,10 @@ function renderAnalytics() {
 function renderCostAndRevenue() {
   // activeOnly: see its own comment -- a canceled tenant is the exact
   // kind of zeroed-out row this was built to stop cluttering this tab.
-  const tenants = filterAndSort(activeOnly(cachedTenants)); // full filtered set -- totals below are across everything matching the search, not just this page
-  const { page, total } = pageOf(tenants);
-  renderPagination(costPrevBtn, costNextBtn, costPageIndicator, total);
+  const tenants = filterAndSort(activeOnly(cachedTenants));
   if (tenants.length === 0) {
     costSummary.innerHTML = "";
+    costAzStrip.innerHTML = "";
     costRows.innerHTML = `<tr><td colspan="10">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
@@ -337,10 +353,13 @@ function renderCostAndRevenue() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
   `;
 
-  costRows.innerHTML = page
-    .map(
-      (t) => `
-    <tr data-tenant-id="${escapeHtml(t.id)}">
+  renderGroupedRows(
+    costRows,
+    costAzStrip,
+    tenants,
+    "cost",
+    10,
+    (t) => `
       <td data-label="Account">${escapeHtml(t.name)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
       <td data-label="Transcription cost">${formatMoney(t.transcriptionAwsCost)}</td>
@@ -351,9 +370,8 @@ function renderCostAndRevenue() {
       <td data-label="Total cost">${formatMoney(t.totalAwsCost)}</td>
       <td data-label="Total revenue">${formatMoney(t.totalRevenue)}</td>
       <td data-label="Margin">${formatMoney(t.margin)}</td>
-    </tr>`
-    )
-    .join("");
+    `
+  );
 }
 
 // --- Calls-by-account chart (same SVG bar-chart approach as the client
