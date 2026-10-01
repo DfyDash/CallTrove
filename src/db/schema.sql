@@ -628,3 +628,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS cost_ledger_call_category_idx
 -- bytes stored, not recording count or call duration, so there's no way
 -- to derive this after the fact without asking S3 directly.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS size_bytes BIGINT;
+
+-- Daily storage history -- lets a month's cost_ledger 'storage' entry
+-- (src/storageCostJob.js) be computed from a real daily average across
+-- the month, the way AWS actually bills S3, instead of the single
+-- end-of-month snapshot this replaces (that approximation is still what
+-- months before this table existed are priced on -- there's no way to
+-- reconstruct a daily history that was never recorded, same reasoning as
+-- cost_ledger's own backfilled flag for calls that predate the ledger).
+-- One row per tenant per day: upserted (not insert-once), so each check
+-- during that day reflects the latest reading, but a past day's row is
+-- never touched again once the day has turned over -- it's that day's
+-- final, locked-in figure from then on.
+CREATE TABLE IF NOT EXISTS daily_storage_snapshots (
+  id             UUID PRIMARY KEY,
+  tenant_id      UUID NOT NULL REFERENCES tenants(id),
+  snapshot_date  DATE NOT NULL,
+  total_bytes    BIGINT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS daily_storage_snapshots_tenant_date_idx
+  ON daily_storage_snapshots (tenant_id, snapshot_date);

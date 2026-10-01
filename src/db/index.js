@@ -1612,6 +1612,40 @@ async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, a
   );
 }
 
+// --- daily_storage_snapshots (real day-by-day history, see schema.sql's
+// comment on that table for why this replaces a single end-of-month
+// snapshot once enough days have accumulated) ---
+
+// Upsert, not insert-once: src/storageCostJob.js calls this every cycle
+// for "today", so the latest reading during the day keeps overwriting
+// today's row -- once the day turns over, this tenant+date is never
+// touched again (a later cycle is always writing a *new* day's row by
+// then), which is what makes a past day's figure permanent.
+async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes) {
+  await pool.query(
+    `INSERT INTO daily_storage_snapshots (id, tenant_id, snapshot_date, total_bytes, updated_at)
+     VALUES ($1, $2, $3, $4, now())
+     ON CONFLICT (tenant_id, snapshot_date) DO UPDATE SET total_bytes = $4, updated_at = now()`,
+    [randomUUID(), tenantId, snapshotDate, totalBytes]
+  );
+}
+
+// Average bytes stored across whatever daily snapshots actually exist in
+// [periodStart, periodEnd) -- dayCount tells the caller how many days
+// that average is based on, so src/storageCostJob.js can tell "a real
+// daily average across the month" apart from "no daily history exists
+// for this period at all" (an older month, or the transition month this
+// feature was deployed mid-way through) and fall back accordingly.
+async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, periodEnd) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(avg(total_bytes), 0)::numeric AS "avgBytes", count(*)::int AS "dayCount"
+     FROM daily_storage_snapshots
+     WHERE tenant_id = $1 AND snapshot_date >= $2 AND snapshot_date < $3`,
+    [tenantId, periodStart, periodEnd]
+  );
+  return rows[0];
+}
+
 // --- audit_log (who changed what admin setting/account, and when) ---
 
 // tenantId is optional purely for src/tenantPurge.js/src/routes/operator.js,
@@ -1823,6 +1857,8 @@ module.exports = {
   recordTranscriptionCost,
   recordAiSummaryCost,
   recordStorageCost,
+  upsertDailyStorageSnapshot,
+  getAverageStoredBytesForTenantPeriod,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

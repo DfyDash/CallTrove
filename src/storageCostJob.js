@@ -1,33 +1,38 @@
-// Monthly storage cost -- writes one cost_ledger row per tenant for each
-// calendar month once it's fully over (see schema.sql's cost_ledger
-// comment for why this is a permanent receipt, not a live estimate, and
-// why storage specifically has no client_revenue: no storage rate has
-// ever been agreed with clients, only transcription and AI summary).
+// Storage history + cost -- two jobs in one cycle:
 //
-// Approximation, stated plainly: AWS actually bills S3 storage on a
-// daily-average basis across the month, but nothing in this app records
-// byte-count history over time -- only "what's stored right now" (calls.
-// size_bytes, summed in db.getTotalStoredBytesForTenant). So this job
-// takes a snapshot of what's stored at the moment it runs (shortly after
-// the month ends) and treats that as the whole month's figure. For a
-// call-recording archive that's almost entirely additive (recordings
-// basically only get added, not deleted, outside of a full tenant purge
-// -- see src/tenantPurge.js), the snapshot right after month-end is a
-// reasonable stand-in for the month's average, not an exact figure.
+//   1. Daily snapshot: every cycle, record each tenant's current total
+//      stored bytes as "today"'s reading (db.upsertDailyStorageSnapshot).
+//      Upserted, not insert-once, so the figure stays fresh through the
+//      day; once a day turns over, that day's row is never touched again
+//      (see schema.sql's comment on daily_storage_snapshots).
+//   2. Monthly cost: once a calendar month is fully over, write that
+//      tenant's 'storage' cost_ledger entry (see schema.sql's cost_ledger
+//      comment -- a permanent receipt, not a live estimate) computed from
+//      the REAL daily average across that month, now that daily history
+//      exists -- true to how AWS actually bills S3 (an average over the
+//      month), not the single end-of-month snapshot this replaced. If no
+//      daily snapshots exist for that period at all (an older month, or
+//      the transition month this feature was deployed mid-way through),
+//      this falls back to that same end-of-month-snapshot approximation
+//      rather than writing nothing -- clearly worse data is still better
+//      than no data, and it's the best this job can do without a time
+//      machine.
 //
-// Idempotent by design, not by a separate "already ran" check: every
-// attempt to record the same tenant+period is a no-op past the first
-// (cost_ledger_storage_period_idx's unique index, see
-// db.recordStorageCost), so this can simply try every tenant every cycle
-// without tracking state of its own. That also means a late deploy
-// immediately catches up on any already-completed month it missed.
+// Idempotent by design, not by a separate "already ran" check: both
+// db.upsertDailyStorageSnapshot (unique on tenant+date) and
+// db.recordStorageCost (unique on tenant+period, see
+// cost_ledger_storage_period_idx) make a repeat attempt a no-op, so this
+// can simply try every tenant every cycle without tracking state of its
+// own.
 const db = require("./db");
 const alerting = require("./alerting");
 const billingRates = require("./billingRates");
 
-// No need for anything finer than a few times a day -- this only ever
-// has new work to do once a month, right after it turns over.
-const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// Frequent enough that "today"'s snapshot reflects something close to
+// end-of-day by the time the day turns over, without checking so often
+// it's needless DB churn -- this only ever has genuinely new work (a
+// month closing out) once a month.
+const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const BYTES_PER_GB = 1024 ** 3;
 
@@ -44,23 +49,48 @@ function toDateString(d) {
   return d.toISOString().slice(0, 10);
 }
 
+async function recordTodaysSnapshot(tenantId, now) {
+  const totalBytes = await db.getTotalStoredBytesForTenant(tenantId);
+  await db.upsertDailyStorageSnapshot(tenantId, toDateString(now), totalBytes);
+}
+
+async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
+  const { avgBytes, dayCount } = await db.getAverageStoredBytesForTenantPeriod(
+    tenantId,
+    toDateString(periodStart),
+    toDateString(periodEnd)
+  );
+
+  // dayCount > 0 means real daily history exists for this period -- use
+  // its true average. Otherwise (no daily snapshots cover this month at
+  // all) fall back to a current-bytes snapshot, same approximation this
+  // job used before daily history existed.
+  const bytesBasis = dayCount > 0 ? Number(avgBytes) : await db.getTotalStoredBytesForTenant(tenantId);
+
+  const gb = bytesBasis / BYTES_PER_GB;
+  const awsCost = gb * billingRates.AWS_S3_STANDARD_PER_GB_MONTH;
+  await db.recordStorageCost({
+    tenantId,
+    periodStart: toDateString(periodStart),
+    periodEnd: toDateString(periodEnd),
+    gbMonths: gb,
+    awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
+    awsCost,
+  });
+}
+
 async function runOnce(now = new Date()) {
   const { periodStart, periodEnd } = lastCompletedMonth(now);
   const tenantIds = await db.listAllTenantIds();
 
   for (const tenantId of tenantIds) {
     try {
-      const totalBytes = await db.getTotalStoredBytesForTenant(tenantId);
-      const gb = totalBytes / BYTES_PER_GB;
-      const awsCost = gb * billingRates.AWS_S3_STANDARD_PER_GB_MONTH;
-      await db.recordStorageCost({
-        tenantId,
-        periodStart: toDateString(periodStart),
-        periodEnd: toDateString(periodEnd),
-        gbMonths: gb,
-        awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
-        awsCost,
-      });
+      await recordTodaysSnapshot(tenantId, now);
+    } catch (err) {
+      console.error(`[storageCost] failed to record today's snapshot for tenant ${tenantId}:`, err);
+    }
+    try {
+      await recordMonthlyCostIfDue(tenantId, periodStart, periodEnd);
     } catch (err) {
       console.error(`[storageCost] failed to record storage cost for tenant ${tenantId}:`, err);
     }
@@ -68,7 +98,7 @@ async function runOnce(now = new Date()) {
 }
 
 function start() {
-  console.log(`[storageCost] starting, checking every ${CHECK_INTERVAL_MS / (60 * 60 * 1000)}h for a completed month to record`);
+  console.log(`[storageCost] starting, checking every ${CHECK_INTERVAL_MS / (60 * 60 * 1000)}h (daily snapshot + completed-month cost)`);
   async function cycle() {
     try {
       await runOnce();
