@@ -25,7 +25,26 @@ const costSummary = document.getElementById("operator-cost-summary");
 const costRows = document.getElementById("operator-cost-rows");
 const accountsChartSvg = document.getElementById("operator-accounts-chart");
 const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
+const accountSearchInput = document.getElementById("operator-account-search");
 let cachedTenants = [];
+let searchQuery = "";
+
+// Shared by every tab that lists accounts (Accounts, Analytics, Cost &
+// revenue) -- one search box in the header (see operator.html) filters
+// all three consistently, rather than each tab having its own
+// independent filter that could disagree with the others. Matches by
+// either the account's own name or its owner's login, case-insensitive.
+// Always alphabetical by name regardless of the order the API returned
+// (which already sorts this way server-side -- see
+// db.listTenantsForOperator -- but sorting again here means the UI's
+// ordering doesn't silently depend on that staying true).
+function visibleTenants() {
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q
+    ? cachedTenants.filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
+    : cachedTenants;
+  return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+}
 
 let csrfToken = "";
 let pendingPurgeTenantId = null;
@@ -80,19 +99,32 @@ async function loadTenants() {
     operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
     analyticsRows.innerHTML = `<tr><td colspan="7">Could not load analytics.</td></tr>`;
     analyticsSummary.innerHTML = "";
+    costRows.innerHTML = `<tr><td colspan="10">Could not load cost &amp; revenue.</td></tr>`;
+    costSummary.innerHTML = "";
     return;
   }
   cachedTenants = await res.json();
-  renderAccounts();
-  renderAnalytics();
+  renderAll();
 }
 
+function renderAll() {
+  renderAccounts();
+  renderAnalytics();
+  renderCostAndRevenue();
+}
+
+accountSearchInput.addEventListener("input", () => {
+  searchQuery = accountSearchInput.value;
+  renderAll();
+});
+
 function renderAccounts() {
-  if (cachedTenants.length === 0) {
-    operatorRows.innerHTML = `<tr><td colspan="4">No accounts yet.</td></tr>`;
+  const tenants = visibleTenants();
+  if (tenants.length === 0) {
+    operatorRows.innerHTML = `<tr><td colspan="4">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
-  operatorRows.innerHTML = cachedTenants
+  operatorRows.innerHTML = tenants
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
@@ -106,16 +138,15 @@ function renderAccounts() {
 }
 
 function renderAnalytics() {
-  if (cachedTenants.length === 0) {
+  const tenants = visibleTenants();
+  if (tenants.length === 0) {
     analyticsSummary.innerHTML = "";
-    analyticsRows.innerHTML = `<tr><td colspan="7">No accounts yet.</td></tr>`;
+    analyticsRows.innerHTML = `<tr><td colspan="7">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     renderAccountsChart([]);
-    costSummary.innerHTML = "";
-    costRows.innerHTML = `<tr><td colspan="9">No accounts yet.</td></tr>`;
     return;
   }
 
-  const totals = cachedTenants.reduce(
+  const totals = tenants.reduce(
     (acc, t) => ({
       ghlAccountCount: acc.ghlAccountCount + t.ghlAccountCount,
       totalCalls: acc.totalCalls + t.totalCalls,
@@ -128,7 +159,7 @@ function renderAnalytics() {
   );
 
   analyticsSummary.innerHTML = `
-    <div class="stat-tile"><div class="stat-value">${cachedTenants.length}</div><div class="stat-label">Accounts</div></div>
+    <div class="stat-tile"><div class="stat-value">${tenants.length}</div><div class="stat-label">Accounts</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.totalCalls}</div><div class="stat-label">Total calls</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.completedCalls}</div><div class="stat-label">Completed calls</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
@@ -136,7 +167,7 @@ function renderAnalytics() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
   `;
 
-  analyticsRows.innerHTML = cachedTenants
+  analyticsRows.innerHTML = tenants
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
@@ -151,15 +182,24 @@ function renderAnalytics() {
     )
     .join("");
 
-  renderAccountsChart(cachedTenants);
-  renderCostAndRevenue(cachedTenants);
+  renderAccountsChart(tenants);
 }
 
-// Real cost_ledger sums (routes/operator.js's /tenants -- see that
-// route's own comment), not the live transcribedMinutes-based estimate
-// above -- every number here is a permanent receipt at the rate in
-// effect when it happened.
-function renderCostAndRevenue(tenants) {
+// Own tab now (Cost & revenue, separate from Analytics -- see
+// operator.html), but still driven by the same visibleTenants() search/
+// sort as every other account-listing tab. Real cost_ledger sums
+// (routes/operator.js's /tenants -- see that route's own comment), not
+// the live transcribedMinutes-based estimate Analytics shows -- every
+// number here is a permanent receipt at the rate in effect when it
+// happened.
+function renderCostAndRevenue() {
+  const tenants = visibleTenants();
+  if (tenants.length === 0) {
+    costSummary.innerHTML = "";
+    costRows.innerHTML = `<tr><td colspan="10">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
+    return;
+  }
+
   const totals = tenants.reduce(
     (acc, t) => ({
       transcriptionAwsCost: acc.transcriptionAwsCost + t.transcriptionAwsCost,
@@ -186,6 +226,7 @@ function renderCostAndRevenue(tenants) {
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
       <td data-label="Account">${escapeHtml(t.name)}</td>
+      <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
       <td data-label="Transcription cost">${formatMoney(t.transcriptionAwsCost)}</td>
       <td data-label="Transcription revenue">${formatMoney(t.transcriptionRevenue)}</td>
       <td data-label="AI summary cost">${formatMoney(t.aiSummaryAwsCost)}</td>
@@ -499,7 +540,7 @@ activityNextBtn.addEventListener("click", () => {
 
 // --- Tabs ---
 
-const TAB_NAMES = ["accounts", "analytics", "activity"];
+const TAB_NAMES = ["accounts", "analytics", "cost", "activity"];
 
 function activateTab(tab) {
   if (!TAB_NAMES.includes(tab)) tab = "accounts";

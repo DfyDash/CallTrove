@@ -213,6 +213,20 @@ a:hover {
   gap: 12px;
 }
 
+.content-header-left {
+  flex: 1;
+  min-width: 160px;
+  max-width: 360px;
+}
+
+.operator-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
 .content-header .session-bar {
   margin-bottom: 0;
 }

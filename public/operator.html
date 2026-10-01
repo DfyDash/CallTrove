@@ -39,12 +39,17 @@
         <nav class="sidebar-nav" id="operator-tabs">
           <a href="#accounts" class="nav-link active" data-tab="accounts">Accounts</a>
           <a href="#analytics" class="nav-link" data-tab="analytics">Analytics</a>
+          <a href="#cost" class="nav-link" data-tab="cost">Cost &amp; revenue</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity</a>
         </nav>
       </div>
 
       <div class="settings-content">
-        <div class="content-header content-header-end">
+        <div class="content-header">
+          <div class="content-header-left">
+            <input type="search" id="operator-account-search" class="operator-search-input"
+              placeholder="Search by account name or owner..." autocomplete="off" />
+          </div>
           <div class="content-header-right">
             <div id="session-bar" class="session-bar"></div>
             <button type="button" id="theme-toggle" class="theme-toggle">Dark mode</button>
@@ -90,7 +95,7 @@
             Usage and estimated cost across every account. Estimated transcribe cost is
             exactly that, an estimate (transcribed minutes &times; AWS's per-minute rate),
             not a real AWS bill -- the shared server/database cost isn't included since it
-            doesn't grow per client. For real cost and revenue, see Cost &amp; revenue below.
+            doesn't grow per client. For real cost and revenue, see the Cost &amp; revenue tab.
           </p>
 
           <div id="operator-analytics-summary" class="stat-grid"></div>
@@ -129,8 +134,10 @@
             </thead>
             <tbody id="operator-analytics-rows"></tbody>
           </table>
+        </section>
 
-          <h2>Cost &amp; revenue</h2>
+        <section id="tab-cost" class="settings-tab-panel viz-root" hidden>
+          <h1>Cost &amp; revenue</h1>
           <p class="settings-note">
             Real recorded cost and revenue, not a live estimate -- each row below comes
             from a permanent ledger entry written at the moment it happened, at whatever
@@ -147,6 +154,7 @@
             <thead>
               <tr>
                 <th>Account</th>
+                <th>Owner</th>
                 <th>Transcription cost</th>
                 <th>Transcription revenue</th>
                 <th>AI summary cost</th>
