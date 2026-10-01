@@ -1168,6 +1168,26 @@ async function listAllTenantIds() {
   return rows.map((r) => r.id);
 }
 
+// Cumulative margin (all-time, every category) per active tenant -- the
+// basis for src/storageCostJob.js's negative-margin alert. All-time, not
+// month-to-date: cost_ledger is a permanent ledger, and a tenant that's
+// been profitable for a year shouldn't suddenly look "negative" just
+// because this month alone had a cost spike -- the alert cares whether
+// the relationship with this client has gone upside-down overall, not
+// about one month in isolation.
+async function listTenantMargins() {
+  const { rows } = await pool.query(`
+    SELECT t.id, t.name,
+           coalesce(sum(l.aws_cost), 0)::numeric AS "totalCost",
+           coalesce(sum(l.client_revenue), 0)::numeric AS "totalRevenue"
+    FROM tenants t
+    LEFT JOIN cost_ledger l ON l.tenant_id = t.id
+    WHERE t.status != 'canceled'
+    GROUP BY t.id, t.name
+  `);
+  return rows;
+}
+
 // Total bytes currently stored across every call this tenant owns
 // (across all its GHL accounts, active or disconnected -- disconnecting
 // an account stops new syncing, not what's already stored, see routes/
@@ -1303,13 +1323,15 @@ async function listTenantsForOperator() {
       -- transcribedSeconds/estimatedTranscribeCost above (a live estimate
       -- the route computes from today's rate), these are the actual
       -- recorded receipts, each at the rate that was in effect when it
-      -- happened. storage has no revenue column -- see cost_ledger's own
-      -- comment for why (no client-facing storage rate has ever existed).
+      -- happened. storageRevenue is the safety-net overage charge only
+      -- (billingRates.js's CLIENT_STORAGE_FREE_GB comment) -- $0 for a
+      -- normal account, never a general storage rate.
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionAwsCost",
       (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionRevenue",
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryAwsCost",
       (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryRevenue",
-      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageAwsCost"
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageRevenue"
     FROM tenants t
     LEFT JOIN users u ON u.id = t.owner_user_id
     ORDER BY t.name
@@ -1603,12 +1625,17 @@ async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens
 // ON CONFLICT (tenant_id, period_start) matches
 // cost_ledger_storage_period_idx -- re-running the job for a period
 // that's already been billed is a no-op.
-async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, backfilled }) {
+// clientRate/clientRevenue are nullable -- a storage entry recorded
+// before the free-tier/overage policy existed (see billingRates.js's
+// CLIENT_STORAGE_FREE_GB comment) has none, and stays that way: this is
+// a receipt, so a policy that didn't exist yet when the entry was
+// written is never applied to it retroactively.
+async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
   await pool.query(
-    `INSERT INTO cost_ledger (id, tenant_id, category, period_start, period_end, quantity, quantity_unit, aws_rate, aws_cost, backfilled)
-     VALUES ($1, $2, 'storage', $3, $4, $5, 'gb_months', $6, $7, $8)
+    `INSERT INTO cost_ledger (id, tenant_id, category, period_start, period_end, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, backfilled)
+     VALUES ($1, $2, 'storage', $3, $4, $5, 'gb_months', $6, $7, $8, $9, $10)
      ON CONFLICT (tenant_id, period_start) WHERE category = 'storage' DO NOTHING`,
-    [randomUUID(), tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, Boolean(backfilled)]
+    [randomUUID(), tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, clientRate ?? null, clientRevenue ?? null, Boolean(backfilled)]
   );
 }
 
@@ -1765,6 +1792,7 @@ module.exports = {
   updateTenantOwner,
   getTenantById,
   listAllTenantIds,
+  listTenantMargins,
   getTotalStoredBytesForTenant,
   requestTenantCancellation,
   restoreTenant,

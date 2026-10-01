@@ -573,10 +573,14 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_schedule_customized BOO
 --   'storage' -- one row per tenant per month (src/storageCostJob.js),
 --     not tied to any single call -- S3 bills storage as an ongoing
 --     monthly charge on whatever's stored, not a one-time event like the
---     two above. client_revenue is NULL here: no storage rate has ever
---     been agreed with clients (see public/settings.html's billing
---     rates -- only transcription and summary are listed), so this is
---     tracked purely as CallTrove's own AWS cost, not billed through.
+--     two above. client_revenue is a safety-net overage charge only (see
+--     billingRates.js's CLIENT_STORAGE_FREE_GB/CLIENT_STORAGE_OVERAGE_
+--     PER_GB_MONTH comment) -- $0 for a normal account, since the free
+--     allowance is sized well above any realistic single-location
+--     account's usage; it only ever charges a genuine high-volume
+--     outlier. A storage entry recorded before this policy existed has
+--     client_revenue/client_rate = NULL, not 0 -- that's a real gap, not
+--     "we charged nothing," since no policy existed yet to apply.
 --
 -- ghl_account_id is informational (which connected location this was
 -- for, at the time) -- NOT kept in sync if that call's contacts/account

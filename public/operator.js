@@ -334,18 +334,20 @@ function renderCostAndRevenue() {
       aiSummaryAwsCost: acc.aiSummaryAwsCost + t.aiSummaryAwsCost,
       aiSummaryRevenue: acc.aiSummaryRevenue + t.aiSummaryRevenue,
       storageAwsCost: acc.storageAwsCost + t.storageAwsCost,
+      storageRevenue: acc.storageRevenue + t.storageRevenue,
       totalAwsCost: acc.totalAwsCost + t.totalAwsCost,
       totalRevenue: acc.totalRevenue + t.totalRevenue,
       margin: acc.margin + t.margin,
     }),
-    { transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0, storageAwsCost: 0, totalAwsCost: 0, totalRevenue: 0, margin: 0 }
+    { transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0, storageAwsCost: 0, storageRevenue: 0, totalAwsCost: 0, totalRevenue: 0, margin: 0 }
   );
 
   costSummary.innerHTML = `
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalAwsCost)}</div><div class="stat-label">Total AWS cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.margin)}</div><div class="stat-label">Margin</div></div>
-    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
   `;
 }
 
@@ -510,7 +512,8 @@ function renderAccountDetail(t) {
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionRevenue)}</div><div class="stat-label">Transcription revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryAwsCost)}</div><div class="stat-label">AI summary cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryRevenue)}</div><div class="stat-label">AI summary revenue</div></div>
-    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalAwsCost)}</div><div class="stat-label">Total cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.margin)}</div><div class="stat-label">Margin</div></div>

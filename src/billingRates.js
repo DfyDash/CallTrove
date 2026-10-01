@@ -45,10 +45,19 @@ const CLIENT_TRANSCRIPTION_PER_MINUTE = Number(process.env.CLIENT_TRANSCRIPTION_
 // ai_summary's quantity/client_revenue use different bases).
 const CLIENT_AI_SUMMARY_PER_CALL = Number(process.env.CLIENT_AI_SUMMARY_RATE_PER_CALL || 0.007);
 
-// No client-facing storage rate has ever been agreed (public/
-// settings.html's billing rates list only transcription and summary) --
-// deliberately no CLIENT_STORAGE_* constant. Storage is tracked as a pure
-// AWS cost in the ledger, never billed through.
+// Storage safety net against a disproportionately high-volume account
+// (a call-center-scale client would otherwise absorb the flat monthly
+// fee's entire margin in storage alone) -- NOT meant to charge normal
+// accounts anything: 100GB comfortably covers a typical single-location
+// account for years (CallTrove's own real account ran about 22GB/year
+// at its actual call volume), so this is a ceiling for outliers, not a
+// quota anyone normal should ever see. $0.08/GB-month past that is
+// roughly 3.5x AWS's own $0.023/GB-month cost, and about 6.6x cheaper
+// than GHL's own equivalent call-recording storage rate (their
+// $0.0005/minute converts to roughly $0.53/GB-month) -- confirmed
+// against GHL's official LC Phone Pricing & Billing Guide, not guessed.
+const CLIENT_STORAGE_FREE_GB = Number(process.env.CLIENT_STORAGE_FREE_GB || 100);
+const CLIENT_STORAGE_OVERAGE_PER_GB_MONTH = Number(process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH || 0.08);
 
 module.exports = {
   AWS_TRANSCRIBE_PER_MINUTE,
@@ -57,4 +66,6 @@ module.exports = {
   AWS_S3_STANDARD_PER_GB_MONTH,
   CLIENT_TRANSCRIPTION_PER_MINUTE,
   CLIENT_AI_SUMMARY_PER_CALL,
+  CLIENT_STORAGE_FREE_GB,
+  CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
 };

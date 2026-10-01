@@ -33,13 +33,13 @@ function num(v) {
 // rate" figure (shared infra like EC2/RDS is deliberately excluded, same
 // as before) -- it's a quick sanity-check number, not what's shown as
 // the real cost. transcriptionAwsCost/aiSummaryAwsCost/storageAwsCost and
-// the two revenue fields are the real cost_ledger sums (see
+// the three revenue fields are the real cost_ledger sums (see
 // listTenantsForOperator's own comment): permanent receipts at the rate
 // in effect when each one happened, never recalculated from today's
 // rates the way the estimate is. totalAwsCost/totalRevenue/margin are
-// computed here from those real sums -- storage has no revenue line (no
-// client-facing storage rate exists, see cost_ledger's schema comment),
-// so it only ever adds to cost, never to revenue.
+// computed here from those real sums -- storageRevenue is a safety-net
+// overage charge, $0 for a normal account (see billingRates.js's
+// CLIENT_STORAGE_FREE_GB comment), not a general storage rate.
 router.get("/tenants", async (req, res) => {
   const tenants = await db.listTenantsForOperator();
   res.json(
@@ -49,8 +49,9 @@ router.get("/tenants", async (req, res) => {
       const aiSummaryAwsCost = num(t.aiSummaryAwsCost);
       const aiSummaryRevenue = num(t.aiSummaryRevenue);
       const storageAwsCost = num(t.storageAwsCost);
+      const storageRevenue = num(t.storageRevenue);
       const totalAwsCost = transcriptionAwsCost + aiSummaryAwsCost + storageAwsCost;
-      const totalRevenue = transcriptionRevenue + aiSummaryRevenue;
+      const totalRevenue = transcriptionRevenue + aiSummaryRevenue + storageRevenue;
       return {
         ...t,
         transcribedMinutes: Math.round((t.transcribedSeconds / 60) * 10) / 10,
@@ -60,6 +61,7 @@ router.get("/tenants", async (req, res) => {
         aiSummaryAwsCost,
         aiSummaryRevenue,
         storageAwsCost,
+        storageRevenue,
         totalAwsCost,
         totalRevenue,
         margin: totalRevenue - totalAwsCost,

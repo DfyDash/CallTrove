@@ -27,6 +27,7 @@
 const db = require("./db");
 const alerting = require("./alerting");
 const billingRates = require("./billingRates");
+const email = require("./email");
 
 // Frequent enough that "today"'s snapshot reflects something close to
 // end-of-day by the time the day turns over, without checking so often
@@ -35,6 +36,17 @@ const billingRates = require("./billingRates");
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const BYTES_PER_GB = 1024 ** 3;
+
+// Negative-margin safety net: a client whose cumulative AWS cost has
+// overtaken their cumulative revenue (see db.listTenantMargins) gets
+// flagged promptly instead of waiting for a month-end reconciliation to
+// notice -- this is the actual mechanism meant to catch a disproportionately
+// high-volume account before it quietly erodes margin for a billing cycle
+// or more. Re-sent at most once per cooldown per tenant while it stays
+// negative, same reasoning as src/alerting.js's ALERT_COOLDOWN_MS.
+const MARGIN_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const marginAlertState = new Map(); // tenantId -> last alerted timestamp
+const ALERT_TO = process.env.ALERT_EMAIL_TO;
 
 // The most recently fully-completed calendar month as of `now`, as a
 // [periodStart, periodEnd) pair of UTC dates -- e.g. if `now` is any time
@@ -69,6 +81,14 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
 
   const gb = bytesBasis / BYTES_PER_GB;
   const awsCost = gb * billingRates.AWS_S3_STANDARD_PER_GB_MONTH;
+
+  // Safety-net overage only -- the free allowance (billingRates.js's
+  // CLIENT_STORAGE_FREE_GB comment) is sized well above any normal
+  // account's real usage, so this is $0 for everyone except a genuine
+  // outlier.
+  const billableGB = Math.max(0, gb - billingRates.CLIENT_STORAGE_FREE_GB);
+  const clientRevenue = billableGB * billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH;
+
   await db.recordStorageCost({
     tenantId,
     periodStart: toDateString(periodStart),
@@ -76,7 +96,39 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
     gbMonths: gb,
     awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
     awsCost,
+    clientRate: billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
+    clientRevenue,
   });
+}
+
+async function checkNegativeMargins() {
+  if (!email.isEnabled() || !ALERT_TO) return;
+  const margins = await db.listTenantMargins();
+  const now = Date.now();
+
+  for (const t of margins) {
+    const totalCost = Number(t.totalCost);
+    const totalRevenue = Number(t.totalRevenue);
+    const margin = totalRevenue - totalCost;
+    if (margin >= 0) {
+      marginAlertState.delete(t.id); // recovered -- next time it goes negative, alert fresh
+      continue;
+    }
+
+    const lastAlerted = marginAlertState.get(t.id) || 0;
+    if (now - lastAlerted < MARGIN_ALERT_COOLDOWN_MS) continue;
+    marginAlertState.set(t.id, now);
+
+    try {
+      await email.sendEmail({
+        to: ALERT_TO,
+        subject: `CallTrove alert: "${t.name}" has gone margin-negative`,
+        text: `"${t.name}"'s cumulative AWS cost ($${totalCost.toFixed(2)}) has overtaken its cumulative revenue ($${totalRevenue.toFixed(2)}) -- a lifetime margin of $${margin.toFixed(2)}.\n\nWhat this means: this account is now costing more than it's bringing in, across its entire history with CallTrove. Usually means either a genuine high-volume outlier (storage, transcription, or AI summary usage well above a typical account) or a rate that needs revisiting for this client specifically.\n\nCheck Operator > Accounts > "${t.name}" for the breakdown by category.\n\nYou'll get another email like this at most once a day while it stays negative.`,
+      });
+    } catch (err) {
+      console.error(`[storageCost] failed to send negative-margin alert for tenant ${t.id}:`, err);
+    }
+  }
 }
 
 async function runOnce(now = new Date()) {
@@ -95,6 +147,12 @@ async function runOnce(now = new Date()) {
       console.error(`[storageCost] failed to record storage cost for tenant ${tenantId}:`, err);
     }
   }
+
+  try {
+    await checkNegativeMargins();
+  } catch (err) {
+    console.error("[storageCost] negative-margin check failed:", err);
+  }
 }
 
 function start() {
@@ -112,4 +170,4 @@ function start() {
   cycle();
 }
 
-module.exports = { start, runOnce, lastCompletedMonth };
+module.exports = { start, runOnce, lastCompletedMonth, checkNegativeMargins };
