@@ -47,8 +47,11 @@
       <div class="settings-content">
         <div class="content-header">
           <div class="content-header-left">
-            <input type="search" id="operator-account-search" class="operator-search-input"
-              placeholder="Search by account name or owner..." autocomplete="off" />
+            <div class="search-wrap">
+              <input type="search" id="operator-account-search" class="operator-search-input"
+                placeholder="Search by account name or owner..." autocomplete="off" />
+              <ul id="operator-search-results" class="search-results" hidden></ul>
+            </div>
           </div>
           <div class="content-header-right">
             <div id="session-bar" class="session-bar"></div>

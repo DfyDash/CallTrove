@@ -26,40 +26,48 @@ const costRows = document.getElementById("operator-cost-rows");
 const accountsChartSvg = document.getElementById("operator-accounts-chart");
 const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
 const accountSearchInput = document.getElementById("operator-account-search");
+const accountSearchResults = document.getElementById("operator-search-results");
 let cachedTenants = [];
 let searchQuery = "";
 
-// Shared by every tab that lists accounts (Accounts, Analytics, Cost &
-// revenue) -- one search box in the header (see operator.html) filters
-// all three consistently, rather than each tab having its own
-// independent filter that could disagree with the others. Matches by
-// either the account's own name or its owner's login, case-insensitive.
-// Always alphabetical by name regardless of the order the API returned
+// A canceled tenant is dead weight on a live financial view -- no owner,
+// no connected GHL account, nothing left to analyze, just a row of
+// zeroes (exactly what prompted this). Analytics and Cost & revenue
+// exclude them by default; Accounts still shows every status, since
+// that's the tab you'd actually use to find/restore/delete one.
+function activeOnly(list) {
+  return list.filter((t) => t.status !== "canceled");
+}
+
+// Shared sort+search core for every tab that lists accounts -- matches by
+// either the account's own name or its owner's login, case-insensitive,
+// always alphabetical by name regardless of the order the API returned
 // (which already sorts this way server-side -- see
 // db.listTenantsForOperator -- but sorting again here means the UI's
-// ordering doesn't silently depend on that staying true).
-function visibleTenants() {
+// ordering doesn't silently depend on that staying true). Each tab passes
+// its own base list (the full set for Accounts, activeOnly() for
+// Analytics/Cost & revenue) so the same search term narrows each tab's
+// own population rather than a single shared list.
+function filterAndSort(baseList) {
   const q = searchQuery.trim().toLowerCase();
   const filtered = q
-    ? cachedTenants.filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
-    : cachedTenants;
+    ? baseList.filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
+    : baseList;
   return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
-// Client-side paging, not a second server round-trip -- the full
-// (filtered, sorted) list is already in hand from visibleTenants() above,
-// so slicing it here is enough to stop every account rendering onto one
-// endless page without re-fetching anything. One shared page number
+// Client-side paging, not a second server round-trip -- the filtered/
+// sorted list is already in hand, so slicing it here is enough to stop
+// every account rendering onto one endless page. One shared page number
 // across Accounts/Analytics/Cost & revenue, same reasoning the shared
-// search box above already established: "page 2" means the same set of
-// accounts no matter which of those tabs you're looking at it from.
+// search box already established: "page 2" means the same position no
+// matter which of those tabs you're looking at it from.
 const ACCOUNTS_PAGE_SIZE = 20;
 let accountsPage = 1;
 
-function pagedTenants() {
-  const all = visibleTenants();
+function pageOf(list) {
   const start = (accountsPage - 1) * ACCOUNTS_PAGE_SIZE;
-  return { page: all.slice(start, start + ACCOUNTS_PAGE_SIZE), total: all.length };
+  return { page: list.slice(start, start + ACCOUNTS_PAGE_SIZE), total: list.length };
 }
 
 function renderPagination(prevBtn, nextBtn, indicator, total) {
@@ -67,6 +75,63 @@ function renderPagination(prevBtn, nextBtn, indicator, total) {
   indicator.textContent = `Page ${accountsPage} of ${totalPages}`;
   prevBtn.disabled = accountsPage <= 1;
   nextBtn.disabled = accountsPage >= totalPages;
+}
+
+// --- Search dropdown (same interaction as Contacts' sidebar search:
+// type, see a live dropdown of matches, click one to commit it as the
+// filter) -- client-side only, no fetch needed, the full account list is
+// already in cachedTenants. Searches every account regardless of status
+// (so a canceled one is still findable from here, e.g. to go manage it
+// on Accounts), even though Analytics/Cost & revenue won't show it if
+// it's canceled -- see activeOnly() above.
+let searchDebounce;
+accountSearchInput.addEventListener("input", () => {
+  const value = accountSearchInput.value.trim();
+  clearTimeout(searchDebounce);
+  if (!value) {
+    accountSearchResults.hidden = true;
+    accountSearchResults.innerHTML = "";
+    searchQuery = "";
+    accountsPage = 1;
+    renderAll();
+    return;
+  }
+  searchDebounce = setTimeout(() => renderSearchDropdown(value), 200);
+});
+
+accountSearchInput.addEventListener("focus", () => {
+  if (accountSearchInput.value.trim() && accountSearchResults.innerHTML) accountSearchResults.hidden = false;
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search-wrap")) accountSearchResults.hidden = true;
+});
+
+function renderSearchDropdown(query) {
+  const q = query.toLowerCase();
+  const matches = cachedTenants
+    .filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  accountSearchResults.innerHTML = "";
+  accountSearchResults.hidden = false;
+  if (matches.length === 0) {
+    accountSearchResults.innerHTML = `<li class="search-empty">No matching accounts.</li>`;
+    return;
+  }
+  for (const t of matches) {
+    const li = document.createElement("li");
+    li.className = "search-result-item";
+    li.innerHTML = `${escapeHtml(t.name)}<span class="contact-phone">${escapeHtml(t.ownerUsername || "No owner")}</span>`;
+    li.addEventListener("click", () => {
+      accountSearchInput.value = t.name;
+      searchQuery = t.name;
+      accountsPage = 1;
+      accountSearchResults.hidden = true;
+      renderAll();
+    });
+    accountSearchResults.appendChild(li);
+  }
 }
 
 let csrfToken = "";
@@ -136,12 +201,6 @@ function renderAll() {
   renderCostAndRevenue();
 }
 
-accountSearchInput.addEventListener("input", () => {
-  searchQuery = accountSearchInput.value;
-  accountsPage = 1; // a new search invalidates whatever page you were on
-  renderAll();
-});
-
 const accountsPrevBtn = document.getElementById("accounts-prev-btn");
 const accountsNextBtn = document.getElementById("accounts-next-btn");
 const accountsPageIndicator = document.getElementById("accounts-page-indicator");
@@ -166,7 +225,7 @@ for (const btn of [accountsNextBtn, analyticsNextBtn, costNextBtn]) {
 }
 
 function renderAccounts() {
-  const { page, total } = pagedTenants();
+  const { page, total } = pageOf(filterAndSort(cachedTenants));
   renderPagination(accountsPrevBtn, accountsNextBtn, accountsPageIndicator, total);
   if (page.length === 0) {
     operatorRows.innerHTML = `<tr><td colspan="4">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
@@ -186,12 +245,15 @@ function renderAccounts() {
 }
 
 function renderAnalytics() {
-  const tenants = visibleTenants(); // full filtered set -- totals below are across everything matching the search, not just this page
-  const { page, total } = pagedTenants();
+  // activeOnly: a canceled tenant has nothing left to analyze -- see
+  // activeOnly()'s own comment. tenants is the full filtered set (totals
+  // below are across everything matching the search, not just this page).
+  const tenants = filterAndSort(activeOnly(cachedTenants));
+  const { page, total } = pageOf(tenants);
   renderPagination(analyticsPrevBtn, analyticsNextBtn, analyticsPageIndicator, total);
   if (tenants.length === 0) {
     analyticsSummary.innerHTML = "";
-    analyticsRows.innerHTML = `<tr><td colspan="7">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
+    analyticsRows.innerHTML = `<tr><td colspan="7">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
     renderAccountsChart([]);
     return;
   }
@@ -236,19 +298,21 @@ function renderAnalytics() {
 }
 
 // Own tab now (Cost & revenue, separate from Analytics -- see
-// operator.html), but still driven by the same visibleTenants() search/
+// operator.html), but still driven by the same filterAndSort() search/
 // sort as every other account-listing tab. Real cost_ledger sums
 // (routes/operator.js's /tenants -- see that route's own comment), not
 // the live transcribedMinutes-based estimate Analytics shows -- every
 // number here is a permanent receipt at the rate in effect when it
 // happened.
 function renderCostAndRevenue() {
-  const tenants = visibleTenants(); // full filtered set -- totals below are across everything matching the search, not just this page
-  const { page, total } = pagedTenants();
+  // activeOnly: see its own comment -- a canceled tenant is the exact
+  // kind of zeroed-out row this was built to stop cluttering this tab.
+  const tenants = filterAndSort(activeOnly(cachedTenants)); // full filtered set -- totals below are across everything matching the search, not just this page
+  const { page, total } = pageOf(tenants);
   renderPagination(costPrevBtn, costNextBtn, costPageIndicator, total);
   if (tenants.length === 0) {
     costSummary.innerHTML = "";
-    costRows.innerHTML = `<tr><td colspan="10">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
+    costRows.innerHTML = `<tr><td colspan="10">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
 
