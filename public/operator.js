@@ -46,6 +46,29 @@ function visibleTenants() {
   return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
+// Client-side paging, not a second server round-trip -- the full
+// (filtered, sorted) list is already in hand from visibleTenants() above,
+// so slicing it here is enough to stop every account rendering onto one
+// endless page without re-fetching anything. One shared page number
+// across Accounts/Analytics/Cost & revenue, same reasoning the shared
+// search box above already established: "page 2" means the same set of
+// accounts no matter which of those tabs you're looking at it from.
+const ACCOUNTS_PAGE_SIZE = 20;
+let accountsPage = 1;
+
+function pagedTenants() {
+  const all = visibleTenants();
+  const start = (accountsPage - 1) * ACCOUNTS_PAGE_SIZE;
+  return { page: all.slice(start, start + ACCOUNTS_PAGE_SIZE), total: all.length };
+}
+
+function renderPagination(prevBtn, nextBtn, indicator, total) {
+  const totalPages = Math.max(1, Math.ceil(total / ACCOUNTS_PAGE_SIZE));
+  indicator.textContent = `Page ${accountsPage} of ${totalPages}`;
+  prevBtn.disabled = accountsPage <= 1;
+  nextBtn.disabled = accountsPage >= totalPages;
+}
+
 let csrfToken = "";
 let pendingPurgeTenantId = null;
 
@@ -115,16 +138,41 @@ function renderAll() {
 
 accountSearchInput.addEventListener("input", () => {
   searchQuery = accountSearchInput.value;
+  accountsPage = 1; // a new search invalidates whatever page you were on
   renderAll();
 });
 
+const accountsPrevBtn = document.getElementById("accounts-prev-btn");
+const accountsNextBtn = document.getElementById("accounts-next-btn");
+const accountsPageIndicator = document.getElementById("accounts-page-indicator");
+const analyticsPrevBtn = document.getElementById("analytics-prev-btn");
+const analyticsNextBtn = document.getElementById("analytics-next-btn");
+const analyticsPageIndicator = document.getElementById("analytics-page-indicator");
+const costPrevBtn = document.getElementById("cost-prev-btn");
+const costNextBtn = document.getElementById("cost-next-btn");
+const costPageIndicator = document.getElementById("cost-page-indicator");
+
+for (const btn of [accountsPrevBtn, analyticsPrevBtn, costPrevBtn]) {
+  btn.addEventListener("click", () => {
+    accountsPage = Math.max(1, accountsPage - 1);
+    renderAll();
+  });
+}
+for (const btn of [accountsNextBtn, analyticsNextBtn, costNextBtn]) {
+  btn.addEventListener("click", () => {
+    accountsPage += 1;
+    renderAll();
+  });
+}
+
 function renderAccounts() {
-  const tenants = visibleTenants();
-  if (tenants.length === 0) {
+  const { page, total } = pagedTenants();
+  renderPagination(accountsPrevBtn, accountsNextBtn, accountsPageIndicator, total);
+  if (page.length === 0) {
     operatorRows.innerHTML = `<tr><td colspan="4">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
-  operatorRows.innerHTML = tenants
+  operatorRows.innerHTML = page
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
@@ -138,7 +186,9 @@ function renderAccounts() {
 }
 
 function renderAnalytics() {
-  const tenants = visibleTenants();
+  const tenants = visibleTenants(); // full filtered set -- totals below are across everything matching the search, not just this page
+  const { page, total } = pagedTenants();
+  renderPagination(analyticsPrevBtn, analyticsNextBtn, analyticsPageIndicator, total);
   if (tenants.length === 0) {
     analyticsSummary.innerHTML = "";
     analyticsRows.innerHTML = `<tr><td colspan="7">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
@@ -167,7 +217,7 @@ function renderAnalytics() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
   `;
 
-  analyticsRows.innerHTML = tenants
+  analyticsRows.innerHTML = page
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
@@ -182,7 +232,7 @@ function renderAnalytics() {
     )
     .join("");
 
-  renderAccountsChart(tenants);
+  renderAccountsChart(page);
 }
 
 // Own tab now (Cost & revenue, separate from Analytics -- see
@@ -193,7 +243,9 @@ function renderAnalytics() {
 // number here is a permanent receipt at the rate in effect when it
 // happened.
 function renderCostAndRevenue() {
-  const tenants = visibleTenants();
+  const tenants = visibleTenants(); // full filtered set -- totals below are across everything matching the search, not just this page
+  const { page, total } = pagedTenants();
+  renderPagination(costPrevBtn, costNextBtn, costPageIndicator, total);
   if (tenants.length === 0) {
     costSummary.innerHTML = "";
     costRows.innerHTML = `<tr><td colspan="10">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
@@ -221,7 +273,7 @@ function renderCostAndRevenue() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
   `;
 
-  costRows.innerHTML = tenants
+  costRows.innerHTML = page
     .map(
       (t) => `
     <tr data-tenant-id="${escapeHtml(t.id)}">
