@@ -549,3 +549,82 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_timezone TEXT NOT NULL 
 -- admin's browser opening the same settings from a different timezone --
 -- from that point on it only changes when someone deliberately edits it.
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_schedule_customized BOOLEAN NOT NULL DEFAULT false;
+
+-- Cost/revenue ledger: one permanent row per billable event, written at
+-- the AWS/client rate actually in effect when it happened -- never
+-- recomputed later from today's rates. This is deliberate: a live
+-- "transcribed minutes x today's rate" estimate (like the existing
+-- estimatedTranscribeCost in routes/operator.js) silently re-prices every
+-- past month the moment a rate changes, so "July's revenue" stops meaning
+-- what July actually earned. A ledger entry is a receipt, not a formula.
+--
+-- category distinguishes the three billable things this tracks:
+--   'transcription' -- one row per call, written when transcription
+--     completes (src/transcriptionPoller.js). quantity = minutes
+--     transcribed -- the basis for both the AWS cost (Transcribe's
+--     per-minute rate) and the client revenue (the per-minute rate in
+--     public/settings.html).
+--   'ai_summary' -- one row per call, written when the AI summary
+--     completes (src/callSummaryPoller.js). quantity = total tokens
+--     (input + output, also broken out below) -- the basis for the AWS
+--     cost, since Bedrock bills per token. client_revenue is instead a
+--     flat rate per call regardless of token count (how this was
+--     actually priced to clients), not derived from quantity.
+--   'storage' -- one row per tenant per month (src/storageCostJob.js),
+--     not tied to any single call -- S3 bills storage as an ongoing
+--     monthly charge on whatever's stored, not a one-time event like the
+--     two above. client_revenue is NULL here: no storage rate has ever
+--     been agreed with clients (see public/settings.html's billing
+--     rates -- only transcription and summary are listed), so this is
+--     tracked purely as CallTrove's own AWS cost, not billed through.
+--
+-- ghl_account_id is informational (which connected location this was
+-- for, at the time) -- NOT kept in sync if that call's contacts/account
+-- later get re-pointed (see the ghl_accounts orphaned-contacts incident
+-- this followed). tenant_id is the stable scoping column every query
+-- should actually filter/group on.
+CREATE TABLE IF NOT EXISTS cost_ledger (
+  id              UUID PRIMARY KEY,
+  tenant_id       UUID NOT NULL REFERENCES tenants(id),
+  ghl_account_id  UUID REFERENCES ghl_accounts(id),
+  category        TEXT NOT NULL CHECK (category IN ('transcription', 'ai_summary', 'storage')),
+  call_id         UUID REFERENCES calls(id),
+  period_start    DATE,
+  period_end      DATE,
+  quantity        NUMERIC NOT NULL,
+  quantity_unit   TEXT NOT NULL,
+  aws_rate        NUMERIC NOT NULL,
+  aws_cost        NUMERIC NOT NULL,
+  client_rate     NUMERIC,
+  client_revenue  NUMERIC,
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  -- One-time backfilled entries (src/backfillCostLedger.js) use
+  -- today's rates applied retroactively, since the real historical rate
+  -- at the time isn't recorded anywhere for calls that predate this
+  -- table -- flagged so a later reader can tell "this is a receipt from
+  -- when it happened" apart from "this is a best-effort reconstruction".
+  backfilled      BOOLEAN NOT NULL DEFAULT false,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS cost_ledger_tenant_idx ON cost_ledger (tenant_id, category);
+CREATE INDEX IF NOT EXISTS cost_ledger_call_idx ON cost_ledger (call_id);
+-- Guards storageCostJob.js's "only one entry per tenant per month"
+-- invariant at the database level, not just in application code.
+CREATE UNIQUE INDEX IF NOT EXISTS cost_ledger_storage_period_idx
+  ON cost_ledger (tenant_id, period_start) WHERE category = 'storage';
+-- Guards against double-billing the same call if a poller cycle somehow
+-- runs twice (a race, a retry) -- same reasoning transcription_status/
+-- ai_summary_status on calls itself is already an idempotent state
+-- machine, just enforced at the ledger level too since this is money.
+CREATE UNIQUE INDEX IF NOT EXISTS cost_ledger_call_category_idx
+  ON cost_ledger (call_id, category) WHERE call_id IS NOT NULL;
+
+-- Byte size of the stored recording -- captured at save time
+-- (src/storage/index.js's saveRecording) going forward; existing
+-- recordings are backfilled via a one-time S3 HeadObject pass (src/
+-- backfillCostLedger.js) since nothing recorded this before.
+-- Basis for storage cost (src/storageCostJob.js): AWS bills S3 by actual
+-- bytes stored, not recording count or call duration, so there's no way
+-- to derive this after the fact without asking S3 directly.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS size_bytes BIGINT;

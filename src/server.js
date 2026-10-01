@@ -13,6 +13,7 @@ const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
 const callSummaryPoller = require("./callSummaryPoller");
 const callDigestJob = require("./callDigestJob");
+const storageCostJob = require("./storageCostJob");
 const alerting = require("./alerting");
 const db = require("./db");
 
@@ -191,6 +192,7 @@ poller.start();
 transcriptionPoller.start();
 callSummaryPoller.start();
 callDigestJob.start();
+storageCostJob.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand

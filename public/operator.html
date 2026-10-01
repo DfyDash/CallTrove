@@ -90,8 +90,7 @@
             Usage and estimated cost across every account. Estimated transcribe cost is
             exactly that, an estimate (transcribed minutes &times; AWS's per-minute rate),
             not a real AWS bill -- the shared server/database cost isn't included since it
-            doesn't grow per client. Revenue/profit isn't shown yet -- no billing system
-            exists to pull it from.
+            doesn't grow per client. For real cost and revenue, see Cost &amp; revenue below.
           </p>
 
           <div id="operator-analytics-summary" class="stat-grid"></div>
@@ -129,6 +128,36 @@
               </tr>
             </thead>
             <tbody id="operator-analytics-rows"></tbody>
+          </table>
+
+          <h2>Cost &amp; revenue</h2>
+          <p class="settings-note">
+            Real recorded cost and revenue, not a live estimate -- each row below comes
+            from a permanent ledger entry written at the moment it happened, at whatever
+            rate was actually in effect then (see the Transcription billing rates in each
+            account's own Settings). Changing a rate in the future never rewrites what a
+            past month actually earned. Storage has no revenue column -- no client-facing
+            storage rate has ever been agreed, so it's tracked purely as AWS cost CallTrove
+            itself absorbs, never billed through.
+          </p>
+
+          <div id="operator-cost-summary" class="stat-grid"></div>
+
+          <table id="operator-cost-table">
+            <thead>
+              <tr>
+                <th>Account</th>
+                <th>Transcription cost</th>
+                <th>Transcription revenue</th>
+                <th>AI summary cost</th>
+                <th>AI summary revenue</th>
+                <th>Storage cost</th>
+                <th>Total cost</th>
+                <th>Total revenue</th>
+                <th>Margin</th>
+              </tr>
+            </thead>
+            <tbody id="operator-cost-rows"></tbody>
           </table>
         </section>
 

@@ -67,16 +67,22 @@ async function insertCall({
   return result.rows[0] || null;
 }
 
-async function markCallStored(callId, storageKey, durationSeconds) {
+// sizeBytes is the already-in-memory recording buffer's own length (see
+// src/poller.js's call sites) -- cheap to capture here since nothing has
+// to re-fetch or HEAD the object afterward, unlike the one-time S3
+// HeadObject backfill existing recordings needed (src/scripts/
+// backfillCostLedger.js) because this didn't exist before. Basis for
+// storage cost (src/storageCostJob.js, schema.sql's cost_ledger comment).
+async function markCallStored(callId, storageKey, durationSeconds, sizeBytes) {
   if (durationSeconds !== undefined && durationSeconds !== null) {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3 WHERE id = $1`,
-      [callId, storageKey, durationSeconds]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3, size_bytes = $4 WHERE id = $1`,
+      [callId, storageKey, durationSeconds, sizeBytes || null]
     );
   } else {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored' WHERE id = $1`,
-      [callId, storageKey]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', size_bytes = $3 WHERE id = $1`,
+      [callId, storageKey, sizeBytes || null]
     );
   }
 }
@@ -173,18 +179,33 @@ async function markTranscriptionFailed(callId) {
   await pool.query(`UPDATE calls SET transcription_status = 'failed' WHERE id = $1`, [callId]);
 }
 
+// duration_seconds/ghl_account_id/tenant_id are the cost-ledger basis
+// (src/transcriptionPoller.js writes a 'transcription' row once a job
+// completes -- see schema.sql's cost_ledger comment) -- joined here
+// rather than looked up separately per call once it completes.
 async function listPendingTranscriptions() {
-  const { rows } = await pool.query(`SELECT id FROM calls WHERE transcription_status = 'pending'`);
+  const { rows } = await pool.query(
+    `SELECT c.id, c.duration_seconds AS "durationSeconds", c.ghl_account_id AS "ghlAccountId",
+            g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.transcription_status = 'pending'`
+  );
   return rows;
 }
 
 // --- AI call summary (Bedrock/Claude) ---
 
+// tenantId is the cost-ledger basis (src/callSummaryPoller.js writes an
+// 'ai_summary' row once a summary completes), joined here the same way
+// listPendingTranscriptions above does.
 async function listPendingCallSummaries() {
   const { rows } = await pool.query(
-    `SELECT id, transcript, ghl_contact_id AS "contactId", ghl_account_id AS "ghlAccountId",
-            ai_summary_attempts AS "attempts"
-     FROM calls WHERE ai_summary_status = 'pending'`
+    `SELECT c.id, c.transcript, c.ghl_contact_id AS "contactId", c.ghl_account_id AS "ghlAccountId",
+            c.ai_summary_attempts AS "attempts", g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.ai_summary_status = 'pending'`
   );
   return rows;
 }
@@ -1137,6 +1158,33 @@ async function updateTenantOwner(tenantId, ownerUserId) {
   await pool.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [ownerUserId, tenantId]);
 }
 
+// For src/storageCostJob.js's monthly sweep -- every tenant whose data
+// still exists to be charged storage for. A fully 'canceled' tenant has
+// already been purged (src/tenantPurge.js deletes its recordings), so
+// there's nothing left to bill; 'cancellation_pending' still has its data
+// for the whole grace period and keeps being billed normally until then.
+async function listAllTenantIds() {
+  const { rows } = await pool.query(`SELECT id FROM tenants WHERE status != 'canceled'`);
+  return rows.map((r) => r.id);
+}
+
+// Total bytes currently stored across every call this tenant owns
+// (across all its GHL accounts, active or disconnected -- disconnecting
+// an account stops new syncing, not what's already stored, see routes/
+// admin.js's disconnect route). The storage-cost job's basis (src/
+// storageCostJob.js) -- a snapshot, not a true daily average, since
+// nothing records byte-count history over time; see that job's own
+// comment for why this is still a reasonable approximation here.
+async function getTotalStoredBytesForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(sum(c.size_bytes), 0)::bigint AS "totalBytes"
+     FROM calls c JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE g.tenant_id = $1`,
+    [tenantId]
+  );
+  return Number(rows[0].totalBytes);
+}
+
 async function getTenantById(id) {
   const { rows } = await pool.query(
     `SELECT id, name, owner_user_id AS "ownerUserId", status,
@@ -1250,7 +1298,18 @@ async function listTenantsForOperator() {
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id AND c.storage_key IS NOT NULL) AS "recordingsStored",
       (SELECT coalesce(sum(c.duration_seconds), 0)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
-         WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds"
+         WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds",
+      -- Real cost-ledger sums (schema.sql's cost_ledger comment) -- unlike
+      -- transcribedSeconds/estimatedTranscribeCost above (a live estimate
+      -- the route computes from today's rate), these are the actual
+      -- recorded receipts, each at the rate that was in effect when it
+      -- happened. storage has no revenue column -- see cost_ledger's own
+      -- comment for why (no client-facing storage rate has ever existed).
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageAwsCost"
     FROM tenants t
     LEFT JOIN users u ON u.id = t.owner_user_id
     ORDER BY t.name
@@ -1509,6 +1568,50 @@ async function setAiSummaryEnabled(ghlAccountId, enabled) {
   await pool.query(`UPDATE ghl_accounts SET ai_summary_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
 }
 
+// --- cost_ledger (see schema.sql's comment on this table for why it's a
+// permanent receipt per billable event, not a live recalculated
+// estimate) ---
+
+// ON CONFLICT (call_id, category) matches cost_ledger_call_category_idx
+// -- a second write for the same call+category (a retried poller cycle)
+// is a silent no-op, not a double-billed row. Every rate/cost argument is
+// passed in already computed by the caller (src/transcriptionPoller.js,
+// src/callSummaryPoller.js), which reads them from src/billingRates.js
+// at write time -- this function just persists them, it doesn't decide
+// what the rates are.
+async function recordTranscriptionCost({ tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, backfilled)
+     VALUES ($1, $2, $3, 'transcription', $4, $5, 'minutes', $6, $7, $8, $9, $10)
+     ON CONFLICT (call_id, category) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, Boolean(backfilled)]
+  );
+}
+
+async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, backfilled)
+     VALUES ($1, $2, $3, 'ai_summary', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT (call_id, category) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate, clientRevenue, inputTokens, outputTokens, Boolean(backfilled)]
+  );
+}
+
+// One row per tenant per period (src/storageCostJob.js) -- ghl_account_id
+// is left NULL, since this sums bytes across every account the tenant
+// owns, not any one of them (see schema.sql's cost_ledger comment).
+// ON CONFLICT (tenant_id, period_start) matches
+// cost_ledger_storage_period_idx -- re-running the job for a period
+// that's already been billed is a no-op.
+async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, category, period_start, period_end, quantity, quantity_unit, aws_rate, aws_cost, backfilled)
+     VALUES ($1, $2, 'storage', $3, $4, $5, 'gb_months', $6, $7, $8)
+     ON CONFLICT (tenant_id, period_start) WHERE category = 'storage' DO NOTHING`,
+    [randomUUID(), tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, Boolean(backfilled)]
+  );
+}
+
 // --- audit_log (who changed what admin setting/account, and when) ---
 
 // tenantId is optional purely for src/tenantPurge.js/src/routes/operator.js,
@@ -1627,6 +1730,8 @@ module.exports = {
   createTenant,
   updateTenantOwner,
   getTenantById,
+  listAllTenantIds,
+  getTotalStoredBytesForTenant,
   requestTenantCancellation,
   restoreTenant,
   listTenantsReadyForPurge,
@@ -1715,6 +1820,9 @@ module.exports = {
   setAutoTranscribeEnabled,
   getAiSummaryEnabled,
   setAiSummaryEnabled,
+  recordTranscriptionCost,
+  recordAiSummaryCost,
+  recordStorageCost,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

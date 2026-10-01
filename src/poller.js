@@ -99,7 +99,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     });
     const key = `${contactId}/${callRowId}.${extension}`;
     await saveRecording(key, taggedBuffer);
-    await db.markCallStored(callRowId, key, durationSeconds);
+    await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length);
     console.log(`[poller] stored recording for call ${message.id}`);
 
     if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled(ghlAccountId))) {
@@ -157,7 +157,7 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
       });
       const key = `${call.contactId}/${call.id}.${extension}`;
       await saveRecording(key, taggedBuffer);
-      await db.markCallStored(call.id, key, durationSeconds);
+      await db.markCallStored(call.id, key, durationSeconds, taggedBuffer.length);
       console.log(`[poller] retry succeeded for call ${call.ghlCallId} (recording was still processing)`);
     } catch (err) {
       // Still not ready, or genuinely never going to have one -- leave it

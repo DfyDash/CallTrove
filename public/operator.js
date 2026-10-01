@@ -21,6 +21,8 @@ let activityLoaded = false;
 
 const analyticsSummary = document.getElementById("operator-analytics-summary");
 const analyticsRows = document.getElementById("operator-analytics-rows");
+const costSummary = document.getElementById("operator-cost-summary");
+const costRows = document.getElementById("operator-cost-rows");
 const accountsChartSvg = document.getElementById("operator-accounts-chart");
 const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
 let cachedTenants = [];
@@ -108,6 +110,8 @@ function renderAnalytics() {
     analyticsSummary.innerHTML = "";
     analyticsRows.innerHTML = `<tr><td colspan="7">No accounts yet.</td></tr>`;
     renderAccountsChart([]);
+    costSummary.innerHTML = "";
+    costRows.innerHTML = `<tr><td colspan="9">No accounts yet.</td></tr>`;
     return;
   }
 
@@ -148,6 +152,51 @@ function renderAnalytics() {
     .join("");
 
   renderAccountsChart(cachedTenants);
+  renderCostAndRevenue(cachedTenants);
+}
+
+// Real cost_ledger sums (routes/operator.js's /tenants -- see that
+// route's own comment), not the live transcribedMinutes-based estimate
+// above -- every number here is a permanent receipt at the rate in
+// effect when it happened.
+function renderCostAndRevenue(tenants) {
+  const totals = tenants.reduce(
+    (acc, t) => ({
+      transcriptionAwsCost: acc.transcriptionAwsCost + t.transcriptionAwsCost,
+      transcriptionRevenue: acc.transcriptionRevenue + t.transcriptionRevenue,
+      aiSummaryAwsCost: acc.aiSummaryAwsCost + t.aiSummaryAwsCost,
+      aiSummaryRevenue: acc.aiSummaryRevenue + t.aiSummaryRevenue,
+      storageAwsCost: acc.storageAwsCost + t.storageAwsCost,
+      totalAwsCost: acc.totalAwsCost + t.totalAwsCost,
+      totalRevenue: acc.totalRevenue + t.totalRevenue,
+      margin: acc.margin + t.margin,
+    }),
+    { transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0, storageAwsCost: 0, totalAwsCost: 0, totalRevenue: 0, margin: 0 }
+  );
+
+  costSummary.innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalAwsCost)}</div><div class="stat-label">Total AWS cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.margin)}</div><div class="stat-label">Margin</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
+  `;
+
+  costRows.innerHTML = tenants
+    .map(
+      (t) => `
+    <tr data-tenant-id="${escapeHtml(t.id)}">
+      <td data-label="Account">${escapeHtml(t.name)}</td>
+      <td data-label="Transcription cost">${formatMoney(t.transcriptionAwsCost)}</td>
+      <td data-label="Transcription revenue">${formatMoney(t.transcriptionRevenue)}</td>
+      <td data-label="AI summary cost">${formatMoney(t.aiSummaryAwsCost)}</td>
+      <td data-label="AI summary revenue">${formatMoney(t.aiSummaryRevenue)}</td>
+      <td data-label="Storage cost">${formatMoney(t.storageAwsCost)}</td>
+      <td data-label="Total cost">${formatMoney(t.totalAwsCost)}</td>
+      <td data-label="Total revenue">${formatMoney(t.totalRevenue)}</td>
+      <td data-label="Margin">${formatMoney(t.margin)}</td>
+    </tr>`
+    )
+    .join("");
 }
 
 // --- Calls-by-account chart (same SVG bar-chart approach as the client

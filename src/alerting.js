@@ -49,6 +49,8 @@ const IMPACT_BY_SUBSYSTEM = {
     "The twice-daily Analytics Digest (Settings > Call report) has stopped updating for accounts without transcription on. Call data itself is unaffected and nothing is lost -- this is a reporting feature only, so the impact is a stale/missing digest, not missing calls.",
   "unhandled app errors":
     "An unexpected error occurred somewhere in the app outside the normal background jobs -- the specific impact depends on what triggered it. Worth logging into the app directly to confirm nothing else looks broken.",
+  "storage cost ledger":
+    "This month's storage cost isn't being recorded for the Operator Analytics tab. Nothing client-facing is affected -- recordings, transcripts, and summaries are all unaffected -- this only delays how soon storage cost shows up in your own cost tracking. It will catch up automatically once this recovers.",
 };
 const DEFAULT_IMPACT = "No specific impact note has been written for this subsystem yet -- worth checking the app directly to see what's actually affected.";
 

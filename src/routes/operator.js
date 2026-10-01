@@ -7,6 +7,7 @@
 const express = require("express");
 const db = require("../db");
 const tenantPurge = require("../tenantPurge");
+const billingRates = require("../billingRates");
 const { requireOperator, requireCsrf } = require("../auth");
 
 const router = express.Router();
@@ -17,28 +18,53 @@ router.use(requireOperator);
 // same grace period a client cancelling themselves would get.
 const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 7);
 
-// AWS Transcribe standard batch pricing (see src/transcription.js) --
-// env-overridable since this is a cost estimate, not a real AWS bill
-// (nothing here tags actual Transcribe usage by tenant), so it should be
-// easy to correct if the real rate changes or a discount tier applies.
-const TRANSCRIBE_RATE_PER_MINUTE = Number(process.env.TRANSCRIBE_RATE_PER_MINUTE || 0.006);
-
 function log(req, action, message) {
   return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message });
 }
 
-// Estimated cost only -- see listTenantsForOperator's own comment for why
-// shared infra (EC2/RDS) is deliberately excluded. "Profit" (this minus
-// what the client actually pays) isn't shown yet -- there's no billing
-// system to pull real revenue from (see README's deferred-features list).
+// pg returns NUMERIC columns as strings (they can exceed JS's safe
+// integer precision) -- every cost_ledger sum from listTenantsForOperator
+// needs this before any arithmetic.
+function num(v) {
+  return Number(v) || 0;
+}
+
+// estimatedTranscribeCost stays a live "transcribed minutes x today's
+// rate" figure (shared infra like EC2/RDS is deliberately excluded, same
+// as before) -- it's a quick sanity-check number, not what's shown as
+// the real cost. transcriptionAwsCost/aiSummaryAwsCost/storageAwsCost and
+// the two revenue fields are the real cost_ledger sums (see
+// listTenantsForOperator's own comment): permanent receipts at the rate
+// in effect when each one happened, never recalculated from today's
+// rates the way the estimate is. totalAwsCost/totalRevenue/margin are
+// computed here from those real sums -- storage has no revenue line (no
+// client-facing storage rate exists, see cost_ledger's schema comment),
+// so it only ever adds to cost, never to revenue.
 router.get("/tenants", async (req, res) => {
   const tenants = await db.listTenantsForOperator();
   res.json(
-    tenants.map((t) => ({
-      ...t,
-      transcribedMinutes: Math.round((t.transcribedSeconds / 60) * 10) / 10,
-      estimatedTranscribeCost: Math.round((t.transcribedSeconds / 60) * TRANSCRIBE_RATE_PER_MINUTE * 100) / 100,
-    }))
+    tenants.map((t) => {
+      const transcriptionAwsCost = num(t.transcriptionAwsCost);
+      const transcriptionRevenue = num(t.transcriptionRevenue);
+      const aiSummaryAwsCost = num(t.aiSummaryAwsCost);
+      const aiSummaryRevenue = num(t.aiSummaryRevenue);
+      const storageAwsCost = num(t.storageAwsCost);
+      const totalAwsCost = transcriptionAwsCost + aiSummaryAwsCost + storageAwsCost;
+      const totalRevenue = transcriptionRevenue + aiSummaryRevenue;
+      return {
+        ...t,
+        transcribedMinutes: Math.round((t.transcribedSeconds / 60) * 10) / 10,
+        estimatedTranscribeCost: Math.round((t.transcribedSeconds / 60) * billingRates.AWS_TRANSCRIBE_PER_MINUTE * 100) / 100,
+        transcriptionAwsCost,
+        transcriptionRevenue,
+        aiSummaryAwsCost,
+        aiSummaryRevenue,
+        storageAwsCost,
+        totalAwsCost,
+        totalRevenue,
+        margin: totalRevenue - totalAwsCost,
+      };
+    })
   );
 });
 
