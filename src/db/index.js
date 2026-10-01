@@ -1293,6 +1293,53 @@ async function updateGhlAccountName(id, name) {
   await pool.query(`UPDATE ghl_accounts SET name = $2 WHERE id = $1`, [id, name]);
 }
 
+// Self-service disconnect (src/routes/admin.js's POST /ghl-accounts/:id/
+// disconnect) -- stops the ingestion poller from touching this account
+// (it only ever loops listAllActiveGhlAccounts, which filters exactly
+// this column) without deleting anything it already brought in:
+// recordings, contacts, and calls all keep their ghl_account_id exactly
+// as they are. Tokens are cleared too -- no reason to keep live GHL
+// credentials around for a connection the admin just chose to end;
+// reconnecting (same location) gets fresh ones anyway and is recognized
+// as the same account by the OAuth callback (matched on GHL's own
+// location ID, not this row's id -- see getGhlAccountByLocationId above).
+// Guarded by uninstalled_at IS NULL so calling this twice is a no-op the
+// caller can detect via the returned row count, not a silent re-stamp of
+// the disconnect time.
+async function disconnectGhlAccount(id) {
+  const { rowCount } = await pool.query(
+    `UPDATE ghl_accounts SET uninstalled_at = now(), access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+     WHERE id = $1 AND uninstalled_at IS NULL`,
+    [id]
+  );
+  return rowCount > 0;
+}
+
+// Every account this tenant has ever connected, active or not, with
+// enough status to manage the connection from Settings -- unlike
+// listGhlAccountsForTenant below (active only, since that's also what
+// powers the Team tab's per-user account-access checklist, where
+// offering access to a disconnected account makes no sense). Without
+// this, disconnecting an account would make it vanish from the UI
+// entirely with no way back except OAuth-connecting blind and hoping
+// GHL's own location picker is unambiguous. lastSyncedAt is the
+// ingestion poller's own checkpoint (see account_sync_state below) --
+// surfaced here so a stuck/stale sync is visible without having to ask
+// someone to check the database.
+async function listGhlAccountsWithStatusForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name,
+            g.installed_at AS "installedAt", g.uninstalled_at AS "uninstalledAt",
+            s.last_synced_at AS "lastSyncedAt"
+     FROM ghl_accounts g
+     LEFT JOIN account_sync_state s ON s.ghl_account_id = g.id
+     WHERE g.tenant_id = $1
+     ORDER BY (g.uninstalled_at IS NOT NULL), g.installed_at ASC`,
+    [tenantId]
+  );
+  return rows;
+}
+
 async function listGhlAccountsForTenant(tenantId) {
   const { rows } = await pool.query(
     `SELECT id, ghl_location_id AS "ghlLocationId", name
@@ -1590,7 +1637,9 @@ module.exports = {
   getGhlAccountByLocationId,
   updateGhlAccountTokens,
   updateGhlAccountName,
+  disconnectGhlAccount,
   listGhlAccountsForTenant,
+  listGhlAccountsWithStatusForTenant,
   listAccessibleAccounts,
   listAllActiveGhlAccounts,
   listActiveGhlAccountsForTenant,

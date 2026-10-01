@@ -549,17 +549,75 @@ const ghlAccountRows = document.getElementById("ghl-account-rows");
 const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
 const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
 
+function formatLastSynced(iso) {
+  return iso ? new Date(iso).toLocaleString() : "Never";
+}
+
+// Reconnect is the same "go authorize through GHL's own location picker"
+// flow as the main Connect button -- GHL's OAuth screen doesn't support
+// pre-targeting one location from our side, so there's nothing to pick
+// here beyond sending the admin there and letting the existing callback
+// logic (matched on GHL's own location ID) sort out whether that's a new
+// account or an update to this one. Offered on *active* rows too, not
+// just disconnected ones -- re-authorizing in place is also the fix for a
+// stuck/stale sync (an expired refresh token, etc.), without having to
+// disconnect first.
+function reconnectGhlAccount() {
+  location.href = "/api/admin/oauth/connect";
+}
+
+async function disconnectGhlAccount(id, name, btn) {
+  if (!confirm(`Disconnect "${name}"? New calls will stop syncing until you reconnect. Everything already recorded -- recordings, contacts, transcripts -- stays exactly as it is and comes right back when you reconnect the same location.`)) {
+    return;
+  }
+  btn.disabled = true;
+  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/disconnect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+  });
+  if (res.ok) {
+    loadGhlAccountsTab();
+    return;
+  }
+  btn.disabled = false;
+  const body = await res.json().catch(() => ({}));
+  alert(body.error || "Could not disconnect this account.");
+}
+
 async function loadGhlAccountsTab() {
   tabLoaded.accounts = true;
-  const res = await fetch("/api/admin/ghl-accounts");
+  const res = await fetch("/api/admin/ghl-accounts/status");
   const { accounts, oauthConfigured } = await res.json();
 
   ghlAccountRows.innerHTML = accounts.length
-    ? accounts.map((a) => `<tr><td>${escapeHtml(a.name || a.ghlLocationId)}</td><td>${escapeHtml(a.ghlLocationId)}</td></tr>`).join("")
-    : `<tr><td colspan="2" class="empty-state">No GHL accounts connected yet.</td></tr>`;
+    ? accounts
+        .map((a) => {
+          const isActive = !a.uninstalledAt;
+          const statusHtml = isActive
+            ? `<span class="ghl-status-active">Connected</span>`
+            : `<span class="ghl-status-disconnected">Disconnected ${escapeHtml(new Date(a.uninstalledAt).toLocaleDateString())}</span>`;
+          const actionHtml = isActive
+            ? `<button type="button" class="delete-btn" data-disconnect="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name || a.ghlLocationId)}">Disconnect</button>
+               <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
+            : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
+          return `<tr>
+            <td>${escapeHtml(a.name || a.ghlLocationId)}</td>
+            <td>${escapeHtml(a.ghlLocationId)}</td>
+            <td>${statusHtml}</td>
+            <td>${escapeHtml(formatLastSynced(a.lastSyncedAt))}</td>
+            <td>${actionHtml}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty-state">No GHL accounts connected yet.</td></tr>`;
 
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
+
+  ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
+  ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
+    btn.addEventListener("click", () => disconnectGhlAccount(btn.dataset.disconnect, btn.dataset.name, btn));
+  });
 }
 
 connectGhlAccountBtn.addEventListener("click", () => {

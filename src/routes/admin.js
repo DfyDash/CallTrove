@@ -470,6 +470,42 @@ router.get("/ghl-accounts", async (req, res) => {
   res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
 });
 
+// Fuller status view for the Settings > GHL accounts management table
+// (connect/disconnect/reconnect) -- deliberately a separate endpoint from
+// GET /ghl-accounts above rather than that one just returning more, since
+// that one also feeds the Team tab's per-user account-access checklist,
+// which must only ever offer *active* accounts to grant someone access
+// to. This one includes disconnected accounts too, so there's somewhere
+// to see one and reconnect it, plus each account's last sync time for
+// spotting a stuck/stale connection.
+router.get("/ghl-accounts/status", async (req, res) => {
+  const accounts = await db.listGhlAccountsWithStatusForTenant(req.session.user.tenantId);
+  res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
+});
+
+// Stops syncing this location -- the poller only ever loops active
+// accounts (see listAllActiveGhlAccounts) -- without deleting anything
+// it's already brought in; recordings, contacts, and calls all keep their
+// ghl_account_id exactly as they are. Reconnecting afterward (same
+// location, via "Connect"/"Reconnect", both of which just send the admin
+// through GHL's own OAuth picker -- see GET /oauth/connect below) is
+// recognized as the same account by the OAuth callback, matched on GHL's
+// own location ID rather than this row's id, so it cleanly re-attaches to
+// the same history instead of orphaning it the way the tenant-ownership
+// bug this followed did.
+router.post("/ghl-accounts/:id/disconnect", requireCsrf, async (req, res) => {
+  const account = await db.getGhlAccountById(req.params.id);
+  if (!account || account.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "account not found" });
+  }
+  const disconnected = await db.disconnectGhlAccount(account.id);
+  if (!disconnected) {
+    return res.status(409).json({ error: "already disconnected" });
+  }
+  await log(req, "ghl_account_disconnected", `Disconnected GHL location "${account.ghlLocationId}"`);
+  res.json({ status: "disconnected" });
+});
+
 // Redirects into GHL's own "choose a location, then authorize" screen.
 // The random state is stashed on the session and checked back on the
 // callback below -- standard OAuth CSRF protection (stops a forged

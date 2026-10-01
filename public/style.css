@@ -823,6 +823,30 @@ tbody tr:last-child td {
   flex-shrink: 0;
 }
 
+.ghl-status-active {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.ghl-status-disconnected {
+  color: var(--muted);
+}
+
+.ghl-reconnect-btn {
+  padding: 5px 10px;
+  margin-left: 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.ghl-reconnect-btn:hover {
+  opacity: 0.85;
+}
+
 .transcript-text {
   margin: 6px 0 0;
   font-size: 0.85rem;
