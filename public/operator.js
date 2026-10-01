@@ -20,15 +20,13 @@ let activityPage = 1;
 let activityLoaded = false;
 
 const analyticsSummary = document.getElementById("operator-analytics-summary");
-const analyticsRows = document.getElementById("operator-analytics-rows");
 const costSummary = document.getElementById("operator-cost-summary");
-const costRows = document.getElementById("operator-cost-rows");
-const accountsChartSvg = document.getElementById("operator-accounts-chart");
-const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
 const accountSearchInput = document.getElementById("operator-account-search");
 const accountSearchResults = document.getElementById("operator-search-results");
+const accountSearchScope = document.getElementById("operator-search-scope");
 let cachedTenants = [];
 let searchQuery = "";
+let searchScope = "name"; // "name" | "owner" -- which field the typed search matches against
 
 // A canceled tenant is dead weight on a live financial view -- no owner,
 // no connected GHL account, nothing left to analyze, just a row of
@@ -39,20 +37,23 @@ function activeOnly(list) {
   return list.filter((t) => t.status !== "canceled");
 }
 
-// Shared sort+search core for every tab that lists accounts -- matches by
-// either the account's own name or its owner's login, case-insensitive,
-// always alphabetical by name regardless of the order the API returned
-// (which already sorts this way server-side -- see
-// db.listTenantsForOperator -- but sorting again here means the UI's
-// ordering doesn't silently depend on that staying true). Each tab passes
+function matchesSearch(t, q) {
+  const field = searchScope === "owner" ? t.ownerUsername : t.name;
+  return (field || "").toLowerCase().includes(q);
+}
+
+// Shared sort+search core for every tab that lists accounts. The list is
+// ALWAYS grouped/sorted by account name, regardless of searchScope --
+// deliberately kept simple: switching the search filter to "Owner" only
+// changes what your typed text matches against, it never reorganizes the
+// page itself, so there's one consistent layout to learn rather than the
+// list visibly rearranging every time the filter changes. Each tab passes
 // its own base list (the full set for Accounts, activeOnly() for
 // Analytics/Cost & revenue) so the same search term narrows each tab's
 // own population rather than a single shared list.
 function filterAndSort(baseList) {
   const q = searchQuery.trim().toLowerCase();
-  const filtered = q
-    ? baseList.filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
-    : baseList;
+  const filtered = q ? baseList.filter((t) => matchesSearch(t, q)) : baseList;
   return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
@@ -113,6 +114,21 @@ function renderGroupedRows(tbody, stripEl, tenants, groupIdPrefix, colspan, rowT
   }
 }
 
+// --- Search scope (Account name / Owner) -- picks which field the typed
+// search matches, see matchesSearch() and filterAndSort()'s own comment
+// for why this never changes how the list is grouped/sorted, only what
+// counts as a match. ---
+const SCOPE_PLACEHOLDERS = { name: "Search by account name...", owner: "Search by owner..." };
+accountSearchScope.addEventListener("change", () => {
+  searchScope = accountSearchScope.value;
+  accountSearchInput.placeholder = SCOPE_PLACEHOLDERS[searchScope];
+  // Re-run whatever's currently typed against the new field, rather than
+  // requiring it to be retyped.
+  const value = accountSearchInput.value.trim();
+  if (value) renderSearchDropdown(value);
+  renderAll();
+});
+
 // --- Search dropdown (same interaction as Contacts' sidebar search:
 // type, see a live dropdown of matches, click one to commit it as the
 // filter) -- client-side only, no fetch needed, the full account list is
@@ -144,9 +160,7 @@ document.addEventListener("click", (e) => {
 
 function renderSearchDropdown(query) {
   const q = query.toLowerCase();
-  const matches = cachedTenants
-    .filter((t) => (t.name || "").toLowerCase().includes(q) || (t.ownerUsername || "").toLowerCase().includes(q))
-    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const matches = cachedTenants.filter((t) => matchesSearch(t, q)).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
   accountSearchResults.innerHTML = "";
   accountSearchResults.hidden = false;
@@ -159,8 +173,12 @@ function renderSearchDropdown(query) {
     li.className = "search-result-item";
     li.innerHTML = `${escapeHtml(t.name)}<span class="contact-phone">${escapeHtml(t.ownerUsername || "No owner")}</span>`;
     li.addEventListener("click", () => {
-      accountSearchInput.value = t.name;
-      searchQuery = t.name;
+      // Commit whichever field was actually searched -- if scope is
+      // "owner", the box should hold the owner's name (what matchesSearch
+      // checks against), not the account's own name.
+      const committed = searchScope === "owner" ? t.ownerUsername || "" : t.name || "";
+      accountSearchInput.value = committed;
+      searchQuery = committed;
       accountSearchResults.hidden = true;
       renderAll();
     });
@@ -219,10 +237,8 @@ async function loadTenants() {
   const res = await fetch("/api/operator/tenants");
   if (!res.ok) {
     operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
-    analyticsRows.innerHTML = `<tr><td colspan="7">Could not load analytics.</td></tr>`;
-    analyticsSummary.innerHTML = "";
-    costRows.innerHTML = `<tr><td colspan="10">Could not load cost &amp; revenue.</td></tr>`;
-    costSummary.innerHTML = "";
+    analyticsSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load analytics.</p>`;
+    costSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load cost &amp; revenue.</p>`;
     return;
   }
   cachedTenants = await res.json();
@@ -236,8 +252,6 @@ function renderAll() {
 }
 
 const accountsAzStrip = document.getElementById("accounts-az-strip");
-const analyticsAzStrip = document.getElementById("analytics-az-strip");
-const costAzStrip = document.getElementById("cost-az-strip");
 
 function renderAccounts() {
   const tenants = filterAndSort(cachedTenants);
@@ -253,7 +267,7 @@ function renderAccounts() {
     "accounts",
     4,
     (t) => `
-      <td data-label="Account">${escapeHtml(t.name)}</td>
+      <td data-label="Account"><a href="#account/${encodeURIComponent(t.id)}" class="account-detail-link">${escapeHtml(t.name)}</a></td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
       <td data-label="Actions">${actionsForTenant(t)}</td>
@@ -261,15 +275,17 @@ function renderAccounts() {
   );
 }
 
+// Combined totals only, across every active account matching the current
+// search -- no per-account table here any more (see this tab's own note
+// in operator.html). For one account's own numbers, click into it from
+// Accounts -- see showAccountDetail()/renderAccountDetail() below, which
+// render the identical stat-tile shape for a single tenant.
 function renderAnalytics() {
   // activeOnly: a canceled tenant has nothing left to analyze -- see
   // activeOnly()'s own comment.
   const tenants = filterAndSort(activeOnly(cachedTenants));
   if (tenants.length === 0) {
-    analyticsSummary.innerHTML = "";
-    analyticsAzStrip.innerHTML = "";
-    analyticsRows.innerHTML = `<tr><td colspan="7">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
-    renderAccountsChart([]);
+    analyticsSummary.innerHTML = `<p class="empty-state empty-state-pad">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</p>`;
     return;
   }
 
@@ -293,42 +309,21 @@ function renderAnalytics() {
     <div class="stat-tile"><div class="stat-value">${Math.round(totals.transcribedMinutes * 10) / 10}</div><div class="stat-label">Transcribed minutes</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
   `;
-
-  renderGroupedRows(
-    analyticsRows,
-    analyticsAzStrip,
-    tenants,
-    "analytics",
-    7,
-    (t) => `
-      <td data-label="Account">${escapeHtml(t.name)}</td>
-      <td data-label="GHL accounts">${t.ghlAccountCount}</td>
-      <td data-label="Total calls">${t.totalCalls}</td>
-      <td data-label="Completed calls">${t.completedCalls}</td>
-      <td data-label="Recordings stored">${t.recordingsStored}</td>
-      <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
-      <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
-    `
-  );
-
-  renderAccountsChart(tenants);
 }
 
-// Own tab now (Cost & revenue, separate from Analytics -- see
-// operator.html), but still driven by the same filterAndSort() search/
-// sort as every other account-listing tab. Real cost_ledger sums
-// (routes/operator.js's /tenants -- see that route's own comment), not
-// the live transcribedMinutes-based estimate Analytics shows -- every
-// number here is a permanent receipt at the rate in effect when it
-// happened.
+// Own tab (Cost & revenue, separate from Analytics -- see operator.html),
+// still driven by the same filterAndSort() search as every other
+// account-listing tab, but combined totals only -- same reasoning as
+// renderAnalytics() above. Real cost_ledger sums (routes/operator.js's
+// /tenants -- see that route's own comment), not the live
+// transcribedMinutes-based estimate Analytics shows -- every number here
+// is a permanent receipt at the rate in effect when it happened.
 function renderCostAndRevenue() {
   // activeOnly: see its own comment -- a canceled tenant is the exact
   // kind of zeroed-out row this was built to stop cluttering this tab.
   const tenants = filterAndSort(activeOnly(cachedTenants));
   if (tenants.length === 0) {
-    costSummary.innerHTML = "";
-    costAzStrip.innerHTML = "";
-    costRows.innerHTML = `<tr><td colspan="10">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</td></tr>`;
+    costSummary.innerHTML = `<p class="empty-state empty-state-pad">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</p>`;
     return;
   }
 
@@ -352,214 +347,6 @@ function renderCostAndRevenue() {
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.margin)}</div><div class="stat-label">Margin</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
   `;
-
-  renderGroupedRows(
-    costRows,
-    costAzStrip,
-    tenants,
-    "cost",
-    10,
-    (t) => `
-      <td data-label="Account">${escapeHtml(t.name)}</td>
-      <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
-      <td data-label="Transcription cost">${formatMoney(t.transcriptionAwsCost)}</td>
-      <td data-label="Transcription revenue">${formatMoney(t.transcriptionRevenue)}</td>
-      <td data-label="AI summary cost">${formatMoney(t.aiSummaryAwsCost)}</td>
-      <td data-label="AI summary revenue">${formatMoney(t.aiSummaryRevenue)}</td>
-      <td data-label="Storage cost">${formatMoney(t.storageAwsCost)}</td>
-      <td data-label="Total cost">${formatMoney(t.totalAwsCost)}</td>
-      <td data-label="Total revenue">${formatMoney(t.totalRevenue)}</td>
-      <td data-label="Margin">${formatMoney(t.margin)}</td>
-    `
-  );
-}
-
-// --- Calls-by-account chart (same SVG bar-chart approach as the client
-// Coverage tab's month chart -- see settings.js -- just banded by account
-// instead of by month, since there's no per-operator time series data.) ---
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const CHART = { width: 900, height: 260, margin: { top: 10, right: 10, bottom: 34, left: 40 } };
-
-function svgEl(tag, attrs) {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  return el;
-}
-
-function topRoundedRectPath(x, y, w, h, r) {
-  const rad = Math.max(0, Math.min(r, w / 2, h));
-  if (rad === 0) return `M${x},${y} h${w} v${h} h${-w} Z`;
-  return `M${x},${y + rad} A${rad},${rad} 0 0 1 ${x + rad},${y} H${x + w - rad} A${rad},${rad} 0 0 1 ${x + w},${y + rad} V${y + h} H${x} Z`;
-}
-
-function niceMax(value) {
-  if (value <= 0) return 4;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  for (const step of [1, 2, 2.5, 5, 10]) {
-    const candidate = step * magnitude;
-    if (candidate >= value) return candidate;
-  }
-  return 10 * magnitude;
-}
-
-function truncateLabel(str, max) {
-  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
-}
-
-function renderAccountsChart(tenants) {
-  const { width, height, margin } = CHART;
-  accountsChartSvg.innerHTML = "";
-  accountsChartSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  accountsChartSvg.setAttribute("preserveAspectRatio", "none");
-  if (tenants.length === 0) return;
-
-  const plotW = width - margin.left - margin.right;
-  const plotH = height - margin.top - margin.bottom;
-  // Grouped, not stacked -- every account gets four independent bars
-  // sharing the 0 baseline, so each one (including "Stored") is directly
-  // comparable account-to-account by height alone. A stacked segment
-  // sits on top of the one below it at a floating baseline, which hides
-  // its true height -- the exact "plopped two colors on top of each
-  // other" complaint that sent us back to grouped bars in the first
-  // place, and stacking four series would only make that worse.
-  //
-  // All four numbers get their own bar and their own label, rather than
-  // showing two and expecting the other two to be read off by eye:
-  // Total calls and Completed calls aren't the same population as
-  // "Completed, no recording" -- subtracting the wrong pair (e.g.
-  // completedCalls - recordingsStored) silently gives the wrong gap,
-  // exactly the bug this replaced. "Missing" is t.completedMissing
-  // (computed server-side -- see db.listTenantsForOperator), not
-  // totalCalls minus recordingsStored -- a no-answer/busy/voicemail/
-  // failed/canceled call never had a recording to begin with, so
-  // counting it as "missing" overstates the real gap.
-  //
-  // totalCalls is always >= the other three for a given account, so it
-  // alone sets the scale.
-  const maxVal = niceMax(Math.max(...tenants.map((t) => t.totalCalls)));
-  const baselineY = margin.top + plotH;
-  const bandW = plotW / tenants.length;
-  const barGap = 3;
-  const barW = Math.min(22, Math.max(3, (bandW - 16 - barGap * 3) / 4));
-  const groupW = barW * 4 + barGap * 3;
-  const BAR_SERIES = [
-    { key: "totalCalls", color: "var(--ink)" },
-    { key: "completedCalls", color: "var(--accent)" },
-    { key: "recordingsStored", color: "var(--status-good)" },
-    { key: "completedMissing", color: "var(--status-critical)" },
-  ];
-
-  const tickCount = 4;
-  for (let i = 0; i <= tickCount; i++) {
-    const v = Math.round((maxVal / tickCount) * i);
-    const y = baselineY - (v / maxVal) * plotH;
-    accountsChartSvg.appendChild(svgEl("line", { x1: margin.left, x2: margin.left + plotW, y1: y, y2: y, class: "chart-gridline" }));
-    const label = svgEl("text", { x: margin.left - 8, y: y + 3, "text-anchor": "end", class: "chart-axis-label" });
-    label.textContent = v.toLocaleString();
-    accountsChartSvg.appendChild(label);
-  }
-
-  // Direct value labels above each bar -- without these, the only way to
-  // learn a bar's exact number is to hover it. With four bars per account
-  // now instead of two, they need more horizontal room each, so the
-  // account-count cutoff for showing them at all is lower than the
-  // two-bar version's.
-  const showValueLabels = tenants.length <= 4;
-
-  tenants.forEach((t, i) => {
-    const groupX = margin.left + i * bandW + (bandW - groupW) / 2;
-    const group = svgEl("g", {});
-
-    function valueLabel(x, barHeight, value) {
-      if (!showValueLabels || value <= 0) return;
-      const barTopY = baselineY - barHeight;
-      const el = svgEl("text", { x: x + barW / 2, y: Math.max(margin.top + 8, barTopY - 4), "text-anchor": "middle", class: "chart-axis-label" });
-      el.textContent = value.toLocaleString();
-      group.appendChild(el);
-    }
-
-    let tallestH = 0;
-    BAR_SERIES.forEach((series, seriesIndex) => {
-      const value = t[series.key];
-      const h = (value / maxVal) * plotH;
-      tallestH = Math.max(tallestH, h);
-      const x = groupX + seriesIndex * (barW + barGap);
-      if (value > 0) {
-        const el = svgEl("path", { d: topRoundedRectPath(x, baselineY - h, barW, h, 3) });
-        el.setAttribute("class", "chart-bar-seg");
-        el.setAttribute("fill", series.color);
-        group.appendChild(el);
-      }
-      valueLabel(x, h, value);
-    });
-
-    const hit = svgEl("rect", {
-      x: margin.left + i * bandW,
-      y: margin.top,
-      width: bandW,
-      height: plotH,
-      class: "chart-bar-hit",
-      tabindex: t.totalCalls > 0 ? "0" : "-1",
-    });
-    if (t.totalCalls > 0) {
-      const move = (e) => showAccountsChartTooltip(e, t, i, bandW, tallestH);
-      hit.addEventListener("pointerenter", move);
-      hit.addEventListener("pointermove", move);
-      hit.addEventListener("pointerleave", hideAccountsChartTooltip);
-      hit.addEventListener("focus", move);
-      hit.addEventListener("blur", hideAccountsChartTooltip);
-    }
-    group.appendChild(hit);
-
-    const label = svgEl("text", {
-      x: margin.left + i * bandW + bandW / 2,
-      y: height - 6,
-      "text-anchor": "middle",
-      class: "chart-axis-label",
-    });
-    label.textContent = truncateLabel(t.name, Math.max(4, Math.floor(bandW / 6)));
-    group.appendChild(label);
-
-    accountsChartSvg.appendChild(group);
-  });
-}
-
-function showAccountsChartTooltip(e, t, i, bandW, tallestH) {
-  const rect = accountsChartSvg.getBoundingClientRect();
-  const scaleX = rect.width / CHART.width;
-  const scaleY = rect.height / CHART.height;
-  const { margin } = CHART;
-  const cx = (margin.left + i * bandW + bandW / 2) * scaleX;
-  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - tallestH)) * scaleY;
-
-  accountsChartTooltip.hidden = false;
-  accountsChartTooltip.style.left = `${cx}px`;
-  accountsChartTooltip.style.top = `${Math.max(0, cy - 8)}px`;
-  accountsChartTooltip.textContent = "";
-  const nameLine = document.createElement("div");
-  nameLine.textContent = t.name;
-
-  function tooltipRow(label, value) {
-    const row = document.createElement("div");
-    const valueSpan = document.createElement("span");
-    valueSpan.className = "tooltip-value";
-    valueSpan.textContent = String(value);
-    row.append(`${label}: `, valueSpan);
-    return row;
-  }
-
-  accountsChartTooltip.append(
-    nameLine,
-    tooltipRow("Total calls", t.totalCalls),
-    tooltipRow("Completed calls", t.completedCalls),
-    tooltipRow("Stored", t.recordingsStored),
-    tooltipRow("No recording found", t.completedMissing)
-  );
-}
-
-function hideAccountsChartTooltip() {
-  accountsChartTooltip.hidden = true;
 }
 
 operatorRows.addEventListener("click", async (e) => {
@@ -675,9 +462,11 @@ activityNextBtn.addEventListener("click", () => {
 // --- Tabs ---
 
 const TAB_NAMES = ["accounts", "analytics", "cost", "activity"];
+const accountDetailSection = document.getElementById("tab-account-detail");
 
 function activateTab(tab) {
   if (!TAB_NAMES.includes(tab)) tab = "accounts";
+  accountDetailSection.hidden = true;
   for (const name of TAB_NAMES) {
     document.getElementById(`tab-${name}`).hidden = name !== tab;
     const link = document.querySelector(`#operator-tabs [data-tab="${name}"]`);
@@ -695,10 +484,70 @@ document.getElementById("operator-tabs").addEventListener("click", (e) => {
   activateTab(link.dataset.tab);
 });
 
+// --- Account detail (click an account's name on the Accounts tab) ---
+// Reached via a real <a href="#account/<id>">, not intercepted the way
+// ordinary [data-tab] links are -- native navigation sets location.hash
+// itself (pushing a real history entry, so the browser's own Back button
+// works), and the hashchange listener below reacts to it. Uses the same
+// cachedTenants data every other tab already has in memory, so no extra
+// fetch.
+function renderAccountDetail(t) {
+  document.getElementById("account-detail-name").textContent = t.name;
+  document.getElementById("account-detail-meta").textContent =
+    `Owner: ${t.ownerUsername || "(none)"} -- Status: ${t.status}`;
+
+  document.getElementById("account-detail-analytics-summary").innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${t.ghlAccountCount}</div><div class="stat-label">GHL accounts</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.totalCalls}</div><div class="stat-label">Total calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.completedCalls}</div><div class="stat-label">Completed calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.transcribedMinutes}</div><div class="stat-label">Transcribed minutes</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
+  `;
+
+  document.getElementById("account-detail-cost-summary").innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionAwsCost)}</div><div class="stat-label">Transcription cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionRevenue)}</div><div class="stat-label">Transcription revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryAwsCost)}</div><div class="stat-label">AI summary cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryRevenue)}</div><div class="stat-label">AI summary revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost (no revenue)</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalAwsCost)}</div><div class="stat-label">Total cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.margin)}</div><div class="stat-label">Margin</div></div>
+  `;
+}
+
+function showAccountDetail(tenantId) {
+  const t = cachedTenants.find((x) => x.id === tenantId);
+  if (!t) {
+    activateTab("accounts"); // stale/bad id (e.g. a bookmarked link to a since-purged account) -- fall back rather than show a blank page
+    return;
+  }
+  for (const name of TAB_NAMES) {
+    document.getElementById(`tab-${name}`).hidden = true;
+    const link = document.querySelector(`#operator-tabs [data-tab="${name}"]`);
+    if (link) link.classList.toggle("active", name === "accounts"); // still "within" Accounts, conceptually
+  }
+  accountDetailSection.hidden = false;
+  renderAccountDetail(t);
+}
+
+document.getElementById("account-detail-back-btn").addEventListener("click", () => activateTab("accounts"));
+
+function routeToHash(hash) {
+  if (hash.startsWith("account/")) {
+    showAccountDetail(decodeURIComponent(hash.slice("account/".length)));
+  } else {
+    activateTab(hash);
+  }
+}
+
+window.addEventListener("hashchange", () => routeToHash(location.hash.replace("#", "")));
+
 (async () => {
   const isOperator = await loadSession();
   if (isOperator) {
     await loadTenants();
-    activateTab(location.hash.replace("#", ""));
+    routeToHash(location.hash.replace("#", ""));
   }
 })();

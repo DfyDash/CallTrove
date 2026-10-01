@@ -216,7 +216,18 @@ a:hover {
 .content-header-left {
   flex: 1;
   min-width: 160px;
-  max-width: 360px;
+  max-width: 480px;
+}
+
+.search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-filter-row .search-wrap {
+  flex: 1;
+  min-width: 0;
 }
 
 .operator-search-input {
@@ -225,6 +236,31 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 0.9rem;
+}
+
+.operator-search-scope {
+  flex-shrink: 0;
+  padding: 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--surface);
+}
+
+.account-detail-back {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-detail-back:hover {
+  text-decoration: underline;
 }
 
 .content-header .session-bar {

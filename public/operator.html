@@ -46,12 +46,16 @@
 
       <div class="settings-content">
         <div class="content-header">
-          <div class="content-header-left">
+          <div class="content-header-left search-filter-row">
             <div class="search-wrap">
               <input type="search" id="operator-account-search" class="operator-search-input"
-                placeholder="Search by account name or owner..." autocomplete="off" />
+                placeholder="Search by account name..." autocomplete="off" />
               <ul id="operator-search-results" class="search-results" hidden></ul>
             </div>
+            <select id="operator-search-scope" class="operator-search-scope">
+              <option value="name" selected>Account name</option>
+              <option value="owner">Owner</option>
+            </select>
           </div>
           <div class="content-header-right">
             <div id="session-bar" class="session-bar"></div>
@@ -62,9 +66,9 @@
         <section id="tab-accounts" class="settings-tab-panel">
           <h1>Accounts</h1>
           <p class="settings-note">
-            Every client account on this deployment -- not scoped to any one tenant. Usage
-            and cost numbers live on the Analytics tab; this is account identity and
-            management only.
+            Every client account on this deployment -- not scoped to any one tenant. Click
+            an account's name for its own usage, analytics, and cost &amp; revenue; Analytics
+            and Cost &amp; revenue (in the sidebar) show everything combined.
           </p>
 
           <div id="accounts-az-strip" class="az-strip"></div>
@@ -94,88 +98,50 @@
           </div>
         </section>
 
+        <section id="tab-account-detail" class="settings-tab-panel viz-root" hidden>
+          <button type="button" id="account-detail-back-btn" class="account-detail-back">&larr; Back to Accounts</button>
+          <h1 id="account-detail-name"></h1>
+          <p class="settings-note" id="account-detail-meta"></p>
+
+          <h2>Analytics</h2>
+          <div id="account-detail-analytics-summary" class="stat-grid"></div>
+
+          <h2>Cost &amp; revenue</h2>
+          <p class="settings-note">
+            Real recorded cost and revenue for this account only, same basis as the
+            combined Cost &amp; revenue tab -- permanent ledger entries at the rate in
+            effect when each one happened, not a live estimate.
+          </p>
+          <div id="account-detail-cost-summary" class="stat-grid"></div>
+        </section>
+
         <section id="tab-analytics" class="settings-tab-panel viz-root" hidden>
           <h1>Analytics</h1>
           <p class="settings-note">
-            Usage and estimated cost across every account. Estimated transcribe cost is
-            exactly that, an estimate (transcribed minutes &times; AWS's per-minute rate),
-            not a real AWS bill -- the shared server/database cost isn't included since it
-            doesn't grow per client. For real cost and revenue, see the Cost &amp; revenue tab.
+            Usage and estimated cost across every active account, combined. Estimated
+            transcribe cost is exactly that, an estimate (transcribed minutes &times;
+            AWS's per-minute rate), not a real AWS bill -- the shared server/database cost
+            isn't included since it doesn't grow per client. For one account's own numbers,
+            click into it from the Accounts tab.
           </p>
 
           <div id="operator-analytics-summary" class="stat-grid"></div>
-
-          <div class="chart-card" data-palette="#0ca30c,#d03b3b">
-            <h2>Calls by account</h2>
-            <p class="settings-note">
-              Total calls, completed calls, recordings stored, and completed calls with
-              none -- per account. Calls that never connected (no answer, busy, voicemail,
-              etc.) never had a recording to begin with, so those aren't counted toward
-              the gap.
-            </p>
-            <div class="chart-wrap">
-              <svg id="operator-accounts-chart" class="month-chart" role="img" aria-label="Total calls, completed calls, recordings stored, and completed calls with no recording, per account"></svg>
-              <div id="operator-chart-tooltip" class="chart-tooltip" hidden></div>
-            </div>
-            <div class="chart-legend">
-              <span class="legend-item"><span class="legend-swatch legend-swatch-outbound"></span>Total calls</span>
-              <span class="legend-item"><span class="legend-swatch legend-swatch-inbound"></span>Completed calls</span>
-              <span class="legend-item"><span class="legend-swatch legend-swatch-good"></span>Stored</span>
-              <span class="legend-item"><span class="legend-swatch legend-swatch-critical"></span>No recording found</span>
-            </div>
-          </div>
-
-          <div id="analytics-az-strip" class="az-strip"></div>
-
-          <table id="operator-analytics-table">
-            <thead>
-              <tr>
-                <th>Account</th>
-                <th>GHL accounts</th>
-                <th>Total calls</th>
-                <th>Completed calls</th>
-                <th>Recordings stored</th>
-                <th>Transcribed minutes</th>
-                <th>Est. transcribe cost</th>
-              </tr>
-            </thead>
-            <tbody id="operator-analytics-rows"></tbody>
-          </table>
         </section>
 
         <section id="tab-cost" class="settings-tab-panel viz-root" hidden>
           <h1>Cost &amp; revenue</h1>
           <p class="settings-note">
-            Real recorded cost and revenue, not a live estimate -- each row below comes
-            from a permanent ledger entry written at the moment it happened, at whatever
-            rate was actually in effect then (see the Transcription billing rates in each
-            account's own Settings). Changing a rate in the future never rewrites what a
-            past month actually earned. Storage has no revenue column -- no client-facing
-            storage rate has ever been agreed, so it's tracked purely as AWS cost CallTrove
-            itself absorbs, never billed through.
+            Real recorded cost and revenue across every active account, combined -- not a
+            live estimate, each figure comes from a permanent ledger entry written at the
+            moment it happened, at whatever rate was actually in effect then (see the
+            Transcription billing rates in each account's own Settings). Changing a rate in
+            the future never rewrites what a past month actually earned. Storage has no
+            revenue line -- no client-facing storage rate has ever been agreed, so it's
+            tracked purely as AWS cost CallTrove itself absorbs, never billed through. For
+            one account's own numbers, click into it from the Accounts tab.
           </p>
 
           <div id="operator-cost-summary" class="stat-grid"></div>
-
-          <div id="cost-az-strip" class="az-strip"></div>
-
-          <table id="operator-cost-table">
-            <thead>
-              <tr>
-                <th>Account</th>
-                <th>Owner</th>
-                <th>Transcription cost</th>
-                <th>Transcription revenue</th>
-                <th>AI summary cost</th>
-                <th>AI summary revenue</th>
-                <th>Storage cost</th>
-                <th>Total cost</th>
-                <th>Total revenue</th>
-                <th>Margin</th>
-              </tr>
-            </thead>
-            <tbody id="operator-cost-rows"></tbody>
-          </table>
         </section>
 
         <section id="tab-activity" class="settings-tab-panel" hidden>
