@@ -114,6 +114,7 @@ async function backfillTranscriptionCosts({ dryRun }) {
         awsCost,
         clientRate: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE,
         clientRevenue,
+        attempt: 1,
         backfilled: true,
       });
     }
@@ -151,6 +152,7 @@ async function backfillAiSummaryCosts({ dryRun }) {
         awsCost,
         clientRate: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
         clientRevenue: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
+        attempt: 1,
         backfilled: true,
       });
     }

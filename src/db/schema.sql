@@ -654,3 +654,26 @@ CREATE TABLE IF NOT EXISTS daily_storage_snapshots (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS daily_storage_snapshots_tenant_date_idx
   ON daily_storage_snapshots (tenant_id, snapshot_date);
+
+-- Which attempt (calls.transcription_attempts / ai_summary_attempts at
+-- write time) this ledger row is for. Needed because a transcription or
+-- summary retry is a real, separately incurred AWS cost each time --
+-- routes/api.js's on-demand /calls/:id/transcribe explicitly allows up to
+-- MAX_TRANSCRIPTION_ATTEMPTS retries on the same call, and each one is
+-- billed by AWS whether it succeeds or not. Without this column, a second
+-- attempt on the same call_id+category would have nowhere to go (see
+-- cost_ledger_call_category_idx below). NULL for the 'storage' category
+-- (no concept of "attempt" there) and for rows written before this
+-- column existed.
+ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS attempt INTEGER;
+
+-- Replaces cost_ledger_call_category_idx (call_id, category) -- that
+-- version could only ever hold one row per call per category, so a
+-- failed attempt's real AWS cost had nowhere to be recorded once a later
+-- attempt succeeded (ON CONFLICT DO NOTHING would just drop it). Widening
+-- to include attempt lets each distinct attempt have its own row, while
+-- still guarding against the same attempt being double-billed if a
+-- poller cycle somehow runs twice (the original index's actual purpose).
+DROP INDEX IF EXISTS cost_ledger_call_category_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS cost_ledger_call_category_attempt_idx
+  ON cost_ledger (call_id, category, attempt) WHERE call_id IS NOT NULL;

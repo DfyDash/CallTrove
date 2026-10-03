@@ -52,6 +52,10 @@ async function pollOnce() {
           awsCost,
           clientRate: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
           clientRevenue: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
+          // call.attempts is the count from before incrementSummaryAttempts
+          // ran above in this same cycle, so it's one behind the attempt
+          // actually being billed here.
+          attempt: call.attempts + 1,
         });
       } catch (ledgerErr) {
         console.error(`[callSummary] summarized call ${call.id} but failed to record its cost-ledger entry:`, ledgerErr);

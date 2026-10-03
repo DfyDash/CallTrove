@@ -186,7 +186,7 @@ async function markTranscriptionFailed(callId) {
 async function listPendingTranscriptions() {
   const { rows } = await pool.query(
     `SELECT c.id, c.duration_seconds AS "durationSeconds", c.ghl_account_id AS "ghlAccountId",
-            g.tenant_id AS "tenantId"
+            c.transcription_attempts AS "transcriptionAttempts", g.tenant_id AS "tenantId"
      FROM calls c
      LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
      WHERE c.transcription_status = 'pending'`
@@ -1594,28 +1594,35 @@ async function setAiSummaryEnabled(ghlAccountId, enabled) {
 // permanent receipt per billable event, not a live recalculated
 // estimate) ---
 
-// ON CONFLICT (call_id, category) matches cost_ledger_call_category_idx
-// -- a second write for the same call+category (a retried poller cycle)
-// is a silent no-op, not a double-billed row. Every rate/cost argument is
-// passed in already computed by the caller (src/transcriptionPoller.js,
-// src/callSummaryPoller.js), which reads them from src/billingRates.js
-// at write time -- this function just persists them, it doesn't decide
-// what the rates are.
-async function recordTranscriptionCost({ tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
+// ON CONFLICT (call_id, category, attempt) matches
+// cost_ledger_call_category_attempt_idx -- a second write for the same
+// call+category+attempt (a retried poller cycle checking the same job
+// twice) is a silent no-op, not a double-billed row; a *different*
+// attempt on the same call+category is a real new row, not a conflict.
+// Every rate/cost argument is passed in already computed by the caller
+// (src/transcriptionPoller.js, src/callSummaryPoller.js), which reads
+// them from src/billingRates.js at write time -- this function just
+// persists them, it doesn't decide what the rates are.
+// attempt identifies which transcription try (calls.transcription_attempts
+// at write time) this row is for -- see schema.sql's comment on the
+// attempt column. A failed attempt calls this too (clientRate/clientRevenue
+// null -- never bill for a job that produced nothing usable), so a call
+// retried 3 times before succeeding has 3 real rows, not 1.
+async function recordTranscriptionCost({ tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, attempt, backfilled }) {
   await pool.query(
-    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, backfilled)
-     VALUES ($1, $2, $3, 'transcription', $4, $5, 'minutes', $6, $7, $8, $9, $10)
-     ON CONFLICT (call_id, category) WHERE call_id IS NOT NULL DO NOTHING`,
-    [randomUUID(), tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, Boolean(backfilled)]
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, attempt, backfilled)
+     VALUES ($1, $2, $3, 'transcription', $4, $5, 'minutes', $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, attempt, Boolean(backfilled)]
   );
 }
 
-async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
+async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt, backfilled }) {
   await pool.query(
-    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, backfilled)
-     VALUES ($1, $2, $3, 'ai_summary', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12)
-     ON CONFLICT (call_id, category) WHERE call_id IS NOT NULL DO NOTHING`,
-    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate, clientRevenue, inputTokens, outputTokens, Boolean(backfilled)]
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, attempt, backfilled)
+     VALUES ($1, $2, $3, 'ai_summary', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate, clientRevenue, inputTokens, outputTokens, attempt, Boolean(backfilled)]
   );
 }
 

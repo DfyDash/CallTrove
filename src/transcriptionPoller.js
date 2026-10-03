@@ -37,6 +37,7 @@ async function pollOnce() {
             awsCost,
             clientRate: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE,
             clientRevenue,
+            attempt: call.transcriptionAttempts,
           });
         } catch (ledgerErr) {
           console.error(`[transcription] completed call ${call.id} but failed to record its cost-ledger entry:`, ledgerErr);
@@ -44,6 +45,31 @@ async function pollOnce() {
       } else if (result.status === "failed") {
         await db.markTranscriptionFailed(call.id);
         console.error(`[transcription] failed for call ${call.id}: ${result.reason}`);
+
+        // Real AWS cost, not recoverable even though the job failed -- see
+        // routes/api.js's MAX_TRANSCRIPTION_ATTEMPTS comment: each attempt
+        // is a real, separately billed Transcribe job whether or not it
+        // succeeds. Never bills the client (clientRate/clientRevenue null
+        // -- no usable transcript came out of this attempt), but the real
+        // AWS cost still needs to be visible: 2 failed retries before a
+        // 3rd succeeds is 3x the real AWS cost, not 1x.
+        try {
+          const minutes = (call.durationSeconds || 0) / 60;
+          const awsCost = minutes * billingRates.AWS_TRANSCRIBE_PER_MINUTE;
+          await db.recordTranscriptionCost({
+            tenantId: call.tenantId,
+            ghlAccountId: call.ghlAccountId,
+            callId: call.id,
+            minutes,
+            awsRate: billingRates.AWS_TRANSCRIBE_PER_MINUTE,
+            awsCost,
+            clientRate: null,
+            clientRevenue: null,
+            attempt: call.transcriptionAttempts,
+          });
+        } catch (ledgerErr) {
+          console.error(`[transcription] failed call ${call.id} but failed to record its cost-ledger entry:`, ledgerErr);
+        }
       }
       // still pending: leave it, checked again next cycle
     } catch (err) {
