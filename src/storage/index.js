@@ -49,13 +49,21 @@ function getS3Client() {
 // prefix-free -- it's a driver-agnostic identifier, not an S3 path.
 const s3ObjectKey = (key) => `recordings/${key}`;
 
-async function s3Save(key, buffer) {
+// tenantId is written as an S3 object tag (not folded into the key) so an
+// independent per-tenant byte count can be read straight from AWS -- via
+// S3 Inventory configured to include this tag -- as a cross-check against
+// calls.size_bytes summed in our own DB, entirely outside the app's own
+// tracking. Cost allocation tags only work at the bucket level (AWS has no
+// per-object cost breakdown), so this tag is for that bytes-stored audit,
+// not for a dollar figure out of Cost Explorer.
+async function s3Save(key, buffer, tenantId) {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
   await getS3Client().send(
     new PutObjectCommand({
       Bucket: process.env.S3_BUCKET,
       Key: s3ObjectKey(key),
       Body: buffer,
+      Tagging: tenantId ? `tenant_id=${encodeURIComponent(tenantId)}` : undefined,
     })
   );
   return key;
@@ -87,8 +95,8 @@ async function s3GetPresignedUrl(key, downloadFilename) {
 
 // --- public interface ---
 
-async function saveRecording(key, buffer) {
-  if (driver === "s3") return s3Save(key, buffer);
+async function saveRecording(key, buffer, tenantId) {
+  if (driver === "s3") return s3Save(key, buffer, tenantId);
   return localSave(key, buffer);
 }
 
