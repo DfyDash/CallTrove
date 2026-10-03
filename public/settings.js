@@ -239,7 +239,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "backfill", "activity", "access", "danger"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "backfill", "activity", "access", "danger"];
 const tabLoaded = {};
 
 function activateTab(tab) {
@@ -258,6 +258,7 @@ function activateTab(tab) {
   if (tab === "accounts" && !tabLoaded.accounts) loadGhlAccountsTab();
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
+  if (tab === "billing" && !tabLoaded.billing) loadBilling();
   if (tab === "backfill" && !tabLoaded.backfill) loadBackfillStatus();
   if (tab === "activity" && !tabLoaded.activity) loadAuditLog();
   if (tab === "access" && !tabLoaded.access) loadAccessLog();
@@ -1494,6 +1495,68 @@ aiSummaryToggle.addEventListener("change", async () => {
   aiSummaryToggle.disabled = false;
   tabLoaded.activity = false;
 });
+
+// --- Billing (client-facing -- what this tenant is actually being
+// charged, read from the same cost_ledger receipts the operator's own
+// Cost & revenue tab reads) ---
+
+function formatMoney(n) {
+  return `$${Number(n).toFixed(2)}`;
+}
+
+function billingMonthLabel(yyyyMmDd) {
+  // yyyy-mm-dd, always the first of the month -- parsed as UTC (the "Z"
+  // suffix) so the displayed month never shifts a day backward for
+  // anyone west of UTC, same reasoning as the db layer returning this as
+  // a plain string instead of a Date in the first place.
+  return new Date(`${yyyyMmDd}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+async function loadBilling() {
+  const res = await fetch("/api/admin/billing");
+  if (!res.ok) return;
+  const billing = await res.json();
+
+  const { usedGB, freeGB, remainingGB, overageGB, overageRate } = billing.storage;
+  document.getElementById("billing-storage-label").textContent = `${usedGB.toFixed(1)} GB of ${freeGB} GB free`;
+  document.getElementById("billing-storage-fill").style.width = `${Math.min(100, (usedGB / freeGB) * 100)}%`;
+  if (overageGB > 0) {
+    document.getElementById("billing-storage-remaining").textContent = `${overageGB.toFixed(1)} GB over`;
+    document.getElementById("billing-storage-note").textContent =
+      `You're ${overageGB.toFixed(1)} GB past the free allowance, billed at ${formatMoney(overageRate)}/GB-month.`;
+  } else {
+    document.getElementById("billing-storage-remaining").textContent = `${remainingGB.toFixed(1)} GB remaining`;
+    document.getElementById("billing-storage-note").textContent = `The first ${freeGB} GB is free. Past that, storage is ${formatMoney(overageRate)}/GB-month.`;
+  }
+
+  const cur = billing.currentPeriod;
+  document.getElementById("billing-transcription-amount").textContent = formatMoney(cur.transcriptionRevenue);
+  document.getElementById("billing-transcription-label").textContent = `Transcription (${cur.transcriptionMinutes.toFixed(0)} min)`;
+  document.getElementById("billing-summary-amount").textContent = formatMoney(cur.aiSummaryRevenue);
+  document.getElementById("billing-summary-label").textContent = `AI summaries (${cur.aiSummaryCalls} calls)`;
+  document.getElementById("billing-total-amount").textContent = formatMoney(cur.total);
+
+  const rowsEl = document.getElementById("billing-history-rows");
+  const emptyEl = document.getElementById("billing-history-empty");
+  if (billing.pastMonths.length === 0) {
+    rowsEl.innerHTML = "";
+    emptyEl.hidden = false;
+  } else {
+    emptyEl.hidden = true;
+    rowsEl.innerHTML = billing.pastMonths
+      .map(
+        (m) => `<tr>
+          <td>${escapeHtml(billingMonthLabel(m.month))}</td>
+          <td>${formatMoney(m.transcriptionRevenue)}</td>
+          <td>${formatMoney(m.aiSummaryRevenue)}</td>
+          <td>${formatMoney(m.storageRevenue)}</td>
+          <td class="amount">${formatMoney(m.total)}</td>
+        </tr>`
+      )
+      .join("");
+  }
+  tabLoaded.billing = true;
+}
 
 // --- Historical backfill & export ---
 

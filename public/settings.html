@@ -55,6 +55,7 @@
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
+          <a href="#billing" class="nav-link" data-tab="billing">Billing</a>
           <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
           <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
@@ -446,6 +447,55 @@
           <p class="settings-note">
             You're not being charged for this yet -- billing hasn't been turned on. These prices are what you'll pay once it is.
           </p>
+        </section>
+
+        <!-- Billing -->
+        <section id="tab-billing" class="settings-tab-panel" hidden>
+          <h1>Billing</h1>
+          <p class="settings-note">
+            Your real usage this month, at the agreed rates. Billing hasn't been turned on yet -- these are what you'd owe, not an active charge.
+          </p>
+
+          <div class="settings-section">
+            <h2>Storage</h2>
+            <div class="storage-meter">
+              <div class="storage-meter-top">
+                <span id="billing-storage-label">— of 100 GB free</span>
+                <span id="billing-storage-remaining" class="settings-note" style="margin:0"></span>
+              </div>
+              <div class="storage-meter-track"><div id="billing-storage-fill" class="storage-meter-fill" style="width:0%"></div></div>
+              <p id="billing-storage-note" class="settings-note"></p>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2>This month so far</h2>
+            <div class="stat-grid">
+              <div class="stat-tile">
+                <div id="billing-transcription-amount" class="stat-value">$0.00</div>
+                <div id="billing-transcription-label" class="stat-label">Transcription</div>
+              </div>
+              <div class="stat-tile">
+                <div id="billing-summary-amount" class="stat-value">$0.00</div>
+                <div id="billing-summary-label" class="stat-label">AI summaries</div>
+              </div>
+              <div class="stat-tile">
+                <div id="billing-total-amount" class="stat-value">$0.00</div>
+                <div class="stat-label">Total so far</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2>Past months</h2>
+            <table>
+              <thead>
+                <tr><th>Month</th><th>Transcription</th><th>AI summaries</th><th>Storage</th><th class="amount">Total</th></tr>
+              </thead>
+              <tbody id="billing-history-rows"></tbody>
+            </table>
+            <p id="billing-history-empty" class="settings-note" hidden>No completed months yet.</p>
+          </div>
         </section>
 
         <!-- Import past calls & export -->

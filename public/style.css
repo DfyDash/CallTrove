@@ -1863,6 +1863,40 @@ body {
   overflow-x: hidden;
 }
 
+/* Billing tab (client-facing usage + storage meter) */
+.storage-meter {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.storage-meter-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.storage-meter-track {
+  height: 8px;
+  background: var(--head-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.storage-meter-fill {
+  height: 100%;
+  background: var(--good);
+  border-radius: 4px;
+}
+
+td.amount, th.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 860px) {
   .layout {
     flex-direction: column;

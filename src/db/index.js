@@ -1626,6 +1626,94 @@ async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens
   );
 }
 
+// --- client-facing billing (routes/admin.js's GET /billing) ---
+//
+// client_revenue IS NOT NULL on every query below, deliberately: a failed
+// transcription/summary attempt writes a cost-only ledger row (see
+// transcriptionPoller.js's comment on why) with client_revenue null --
+// real AWS cost CallTrove absorbs, never billed to the client. Without
+// this filter, a retried call's minutes/calls would be double-counted
+// here even though only the successful attempt was ever charged for,
+// showing the client a usage figure that doesn't match their own total.
+
+// This calendar month's billed transcription/AI-summary usage so far --
+// storage isn't included here since its cost_ledger entry for the
+// CURRENT (still open) month doesn't exist yet (storageCostJob.js only
+// writes one once the month closes); see getTotalStoredBytesForTenant
+// for the live, real-time storage figure shown instead.
+async function getTenantCurrentPeriodUsage(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT category,
+            coalesce(sum(client_revenue), 0)::numeric AS revenue,
+            coalesce(sum(quantity), 0)::numeric AS quantity,
+            count(*)::int AS calls
+     FROM cost_ledger
+     WHERE tenant_id = $1
+       AND category IN ('transcription', 'ai_summary')
+       AND client_revenue IS NOT NULL
+       AND created_at >= date_trunc('month', now())
+     GROUP BY category`,
+    [tenantId]
+  );
+  const result = { transcriptionRevenue: 0, transcriptionMinutes: 0, aiSummaryRevenue: 0, aiSummaryCalls: 0 };
+  for (const row of rows) {
+    if (row.category === "transcription") {
+      result.transcriptionRevenue = Number(row.revenue);
+      result.transcriptionMinutes = Number(row.quantity);
+    } else if (row.category === "ai_summary") {
+      result.aiSummaryRevenue = Number(row.revenue);
+      result.aiSummaryCalls = row.calls; // quantity is total tokens, not call count -- see cost_ledger's own comment
+    }
+  }
+  return result;
+}
+
+// Prior calendar months' billed transcription/AI-summary usage, one row
+// per month per category -- combined with past storage entries (already
+// one row per month via period_start) by routes/admin.js into a single
+// per-month history. Capped to a year back; this is a client-facing
+// summary, not an export.
+//
+// month is returned as a plain 'YYYY-MM-DD' string (to_char, not a raw
+// date_trunc timestamptz) specifically so it can be string-matched
+// against getTenantPastStorageByMonth's period_start below without
+// relying on how node-postgres happens to parse a timestamptz vs. a
+// plain DATE column back into a JS Date -- that's two different column
+// types reaching JS through two different parsers, and a timezone-offset
+// mismatch between them would silently bucket storage into the wrong
+// month.
+async function getTenantPastUsageByMonth(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM-DD') AS month, category,
+            coalesce(sum(client_revenue), 0)::numeric AS revenue
+     FROM cost_ledger
+     WHERE tenant_id = $1
+       AND category IN ('transcription', 'ai_summary')
+       AND client_revenue IS NOT NULL
+       AND created_at < date_trunc('month', now())
+       AND created_at >= date_trunc('month', now()) - interval '12 months'
+     GROUP BY date_trunc('month', created_at), category
+     ORDER BY month DESC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+// Past months' storage charges -- already one row per month (period_start
+// is the month's first day, see storageCostJob.js), unlike transcription/
+// ai_summary above which are per-call receipts bucketed by month here.
+async function getTenantPastStorageByMonth(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT to_char(period_start, 'YYYY-MM-DD') AS month, coalesce(client_revenue, 0)::numeric AS revenue
+     FROM cost_ledger
+     WHERE tenant_id = $1 AND category = 'storage'
+       AND period_start >= date_trunc('month', now()) - interval '12 months'
+     ORDER BY period_start DESC`,
+    [tenantId]
+  );
+  return rows;
+}
+
 // One row per tenant per period (src/storageCostJob.js) -- ghl_account_id
 // is left NULL, since this sums bytes across every account the tenant
 // owns, not any one of them (see schema.sql's cost_ledger comment).
@@ -1891,6 +1979,9 @@ module.exports = {
   setAiSummaryEnabled,
   recordTranscriptionCost,
   recordAiSummaryCost,
+  getTenantCurrentPeriodUsage,
+  getTenantPastUsageByMonth,
+  getTenantPastStorageByMonth,
   recordStorageCost,
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,

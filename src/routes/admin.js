@@ -10,6 +10,7 @@ const email = require("../email");
 const { getBuffer } = require("../storage");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
+const billingRates = require("../billingRates");
 
 const router = express.Router();
 
@@ -410,6 +411,73 @@ router.get("/settings", requireAccount, async (req, res) => {
     autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId),
     aiSummaryEnabled: await db.getAiSummaryEnabled(req.ghlAccountId),
     ...schedule,
+  });
+});
+
+// Client-facing billing -- what this tenant is actually being charged,
+// read from the same cost_ledger receipts the operator's own Cost &
+// revenue tab reads, never a separate estimate (see schema.sql's
+// cost_ledger comment). Tenant-wide, not scoped to one GHL account the
+// way requireAccount/?accountId= routes are -- the tenant is what's
+// actually billed, same scope routes/operator.js uses for its own
+// cross-tenant totals.
+//
+// No base-subscription line here: there's no recurring base-fee billing
+// mechanism in this codebase yet (no Paddle integration, no 'base'
+// cost_ledger category) -- this shows only what's real today:
+// transcription, AI summaries, and storage.
+router.get("/billing", async (req, res) => {
+  const tenantId = req.session.user.tenantId;
+
+  const current = await db.getTenantCurrentPeriodUsage(tenantId);
+
+  const storedBytes = await db.getTotalStoredBytesForTenant(tenantId);
+  const BYTES_PER_GB = 1024 ** 3;
+  const usedGB = storedBytes / BYTES_PER_GB;
+  const freeGB = billingRates.CLIENT_STORAGE_FREE_GB;
+
+  const [pastUsage, pastStorage] = await Promise.all([
+    db.getTenantPastUsageByMonth(tenantId),
+    db.getTenantPastStorageByMonth(tenantId),
+  ]);
+
+  // Combine the two differently-shaped historical queries (transcription/
+  // ai_summary are per-call receipts bucketed by month; storage is
+  // already one row per month) into a single per-month history, keyed by
+  // the plain 'YYYY-MM-DD' string both queries already return.
+  const byMonth = new Map();
+  function monthEntry(month) {
+    if (!byMonth.has(month)) byMonth.set(month, { month, transcriptionRevenue: 0, aiSummaryRevenue: 0, storageRevenue: 0 });
+    return byMonth.get(month);
+  }
+  for (const row of pastUsage) {
+    const entry = monthEntry(row.month);
+    if (row.category === "transcription") entry.transcriptionRevenue = Number(row.revenue);
+    else if (row.category === "ai_summary") entry.aiSummaryRevenue = Number(row.revenue);
+  }
+  for (const row of pastStorage) {
+    monthEntry(row.month).storageRevenue = Number(row.revenue);
+  }
+  const pastMonths = [...byMonth.values()]
+    .sort((a, b) => (a.month < b.month ? 1 : -1))
+    .map((m) => ({ ...m, total: m.transcriptionRevenue + m.aiSummaryRevenue + m.storageRevenue }));
+
+  res.json({
+    currentPeriod: {
+      transcriptionRevenue: current.transcriptionRevenue,
+      transcriptionMinutes: current.transcriptionMinutes,
+      aiSummaryRevenue: current.aiSummaryRevenue,
+      aiSummaryCalls: current.aiSummaryCalls,
+      total: current.transcriptionRevenue + current.aiSummaryRevenue,
+    },
+    storage: {
+      usedGB,
+      freeGB,
+      remainingGB: Math.max(0, freeGB - usedGB),
+      overageGB: Math.max(0, usedGB - freeGB),
+      overageRate: billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
+    },
+    pastMonths,
   });
 });
 
