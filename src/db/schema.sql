@@ -717,10 +717,24 @@ UPDATE calls SET storage_tier = 'standard' WHERE storage_key IS NOT NULL AND sto
 -- acceptance. Rows are kept permanently and never updated/deleted -- see
 -- the append-only trigger below -- since a signature record that could be
 -- silently edited afterward isn't a real record of consent.
+--
+-- user_id has NO foreign key to users(id) -- same reasoning as
+-- audit_log.actor_id and phi_access_log.user_id above (captured at write
+-- time, not joined later, so it survives the signer's own account being
+-- deleted). This isn't optional here the way it's merely nice-to-have on
+-- those two: a real production bug (caught by testing this feature after
+-- deploy, not found in review) showed that a REFERENCES users(id) on an
+-- append-only table is a real landmine -- the row can never be deleted or
+-- have user_id nulled out, so a tenant that ever accepted the BAA could
+-- never be purged at all once its users were deleted, permanently
+-- breaking tenantPurge for every HIPAA tenant. tenant_id keeps its FK to
+-- tenants(id), which is safe: a tenant row itself is never deleted by
+-- this app, purge only removes its users/contacts/calls/accounts (see
+-- audit_log's own tenant_id FK comment for the same point).
 CREATE TABLE IF NOT EXISTS baa_acceptances (
   id              UUID PRIMARY KEY,
   tenant_id       UUID NOT NULL REFERENCES tenants(id),
-  user_id         UUID NOT NULL REFERENCES users(id),
+  user_id         UUID NOT NULL,
   full_name       TEXT NOT NULL,
   title           TEXT NOT NULL,
   baa_version     TEXT NOT NULL,
@@ -729,6 +743,10 @@ CREATE TABLE IF NOT EXISTS baa_acceptances (
   user_agent      TEXT,
   accepted_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Drops the FK a first version of this migration mistakenly created, for
+-- any database that already applied it before this fix -- a no-op on a
+-- fresh database that never had it.
+ALTER TABLE baa_acceptances DROP CONSTRAINT IF EXISTS baa_acceptances_user_id_fkey;
 CREATE INDEX IF NOT EXISTS baa_acceptances_tenant_idx ON baa_acceptances (tenant_id, accepted_at DESC);
 
 DROP TRIGGER IF EXISTS baa_acceptances_append_only ON baa_acceptances;
