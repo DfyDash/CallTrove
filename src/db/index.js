@@ -231,6 +231,27 @@ async function markSummaryFailed(callId) {
   await pool.query(`UPDATE calls SET ai_summary_status = 'failed' WHERE id = $1`, [callId]);
 }
 
+// --- transcript cleanup (src/transcriptCleanup.js, Bedrock, on-demand
+// only -- see routes/api.js's POST /calls/:id/clean-transcript) ---
+
+async function incrementTranscriptCleanupAttempts(callId) {
+  await pool.query(`UPDATE calls SET transcript_cleanup_attempts = transcript_cleanup_attempts + 1 WHERE id = $1`, [callId]);
+}
+
+// cleanedText/changes are both null/empty when Bedrock found nothing to
+// correct -- a real, meaningful result (see schema.sql's comment on
+// transcript_cleaned), not an error.
+async function markTranscriptCleanupComplete(callId, cleanedText, changes) {
+  await pool.query(
+    `UPDATE calls SET transcript_cleanup_status = 'completed', transcript_cleaned = $2, transcript_cleanup_changes = $3 WHERE id = $1`,
+    [callId, cleanedText, changes ? JSON.stringify(changes) : null]
+  );
+}
+
+async function markTranscriptCleanupFailed(callId) {
+  await pool.query(`UPDATE calls SET transcript_cleanup_status = 'failed' WHERE id = $1`, [callId]);
+}
+
 async function markGhlNoteWritten(callId) {
   await pool.query(`UPDATE calls SET ghl_note_written_at = now() WHERE id = $1`, [callId]);
 }
@@ -925,6 +946,9 @@ async function getCall(callId) {
             c.transcription_attempts AS "transcriptionAttempts",
             c.transcript, c.transcript_words AS "transcriptWords",
             c.transcript_edited_at AS "transcriptEditedAt", c.transcript_edited_by AS "transcriptEditedBy",
+            c.transcript_cleanup_status AS "transcriptCleanupStatus",
+            c.transcript_cleanup_attempts AS "transcriptCleanupAttempts",
+            c.transcript_cleaned AS "transcriptCleaned", c.transcript_cleanup_changes AS "transcriptCleanupChanges",
             c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
@@ -1715,6 +1739,20 @@ async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens
   );
 }
 
+// clientRate/clientRevenue are always null for now -- no client-facing
+// price has been set for this feature yet (see schema.sql's comment on
+// the 'transcript_cleanup' category). Only ever written when Bedrock was
+// actually called (routes/api.js skips this entirely when nothing was
+// flagged for cleanup, since that costs nothing).
+async function recordTranscriptCleanupCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, attempt)
+     VALUES ($1, $2, $3, 'transcript_cleanup', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate ?? null, clientRevenue ?? null, inputTokens, outputTokens, attempt]
+  );
+}
+
 // --- client-facing billing (routes/admin.js's GET /billing) ---
 //
 // client_revenue IS NOT NULL on every query below, deliberately: a failed
@@ -2051,6 +2089,9 @@ module.exports = {
   incrementSummaryAttempts,
   markSummaryComplete,
   markSummaryFailed,
+  incrementTranscriptCleanupAttempts,
+  markTranscriptCleanupComplete,
+  markTranscriptCleanupFailed,
   markGhlNoteWritten,
   getGhlAccountById,
   updateCallHandler,
@@ -2106,6 +2147,7 @@ module.exports = {
   setAiSummaryEnabled,
   recordTranscriptionCost,
   recordAiSummaryCost,
+  recordTranscriptCleanupCost,
   getTenantCurrentPeriodUsage,
   getTenantPastUsageByMonth,
   getTenantPastStorageByMonth,

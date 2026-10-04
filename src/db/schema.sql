@@ -776,3 +776,41 @@ ALTER TABLE daily_storage_snapshots ADD COLUMN IF NOT EXISTS storage_tier TEXT;
 -- recorded for real.
 UPDATE daily_storage_snapshots s SET storage_tier = t.storage_tier
   FROM tenants t WHERE t.id = s.tenant_id AND s.storage_tier IS NULL;
+
+-- Transcript cleanup (src/transcriptCleanup.js, Bedrock) -- reconsiders
+-- only the specific words AWS Transcribe itself flagged low-confidence,
+-- using the surrounding context it can already see. Own status column,
+-- independent of transcription_status/ai_summary_status, same reasoning
+-- as ai_summary_status being independent of transcription_status: a call
+-- can be transcribed with no cleanup ever attempted, or attempted and
+-- failed, without that meaning anything about the transcript itself.
+-- transcript_cleaned is NULL whenever nothing needed correcting (a real,
+-- meaningful "checked, found nothing" result -- not the same as never
+-- having run) or cleanup hasn't completed yet; the ORIGINAL transcript
+-- and transcript_words are never touched by this, so a person can always
+-- see the ASR engine's own first-pass output regardless of what
+-- (if anything) Bedrock later suggested. transcript_cleanup_changes
+-- mirrors the same {original, corrected, reason} shape Bedrock returns,
+-- kept for display so a person sees exactly what changed and why,
+-- never a silent rewrite.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleanup_status TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_transcript_cleanup_status_check;
+ALTER TABLE calls ADD CONSTRAINT calls_transcript_cleanup_status_check
+  CHECK (transcript_cleanup_status IN ('none', 'pending', 'completed', 'failed'));
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleaned TEXT;
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleanup_changes JSONB;
+-- Mirrors transcription_attempts/ai_summary_attempts' exact purpose:
+-- bounds how many times a call can be (re)submitted for cleanup, since a
+-- successful Bedrock call is real billable cost whether or not it found
+-- anything to fix.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleanup_attempts INTEGER NOT NULL DEFAULT 0;
+
+-- New billable category alongside transcription/ai_summary/storage --
+-- see src/transcriptCleanup.js and routes/api.js's POST
+-- /calls/:id/clean-transcript. No client-facing price exists yet
+-- (clientRevenue is written NULL, same "no policy yet" convention as
+-- storage entries from before overage pricing existed), so this is cost
+-- tracking only until a real rate is decided.
+ALTER TABLE cost_ledger DROP CONSTRAINT IF EXISTS cost_ledger_category_check;
+ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_category_check
+  CHECK (category IN ('transcription', 'ai_summary', 'storage', 'transcript_cleanup'));

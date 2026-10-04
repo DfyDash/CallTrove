@@ -458,6 +458,47 @@ function transcriptEditedNoteHtml(data) {
   return `<p class="transcript-edited-note">Edited by ${escapeHtml(data.editedBy || "someone")} on ${escapeHtml(when)}</p>`;
 }
 
+// How many words renderTranscriptWordsHtml actually flagged -- the same
+// threshold, so this always matches what's visibly highlighted above it.
+function countFlaggedWords(words) {
+  if (!Array.isArray(words)) return 0;
+  return words.filter((w) => typeof w.confidence === "number" && w.confidence < LOW_CONFIDENCE_THRESHOLD).length;
+}
+
+// Bedrock-based transcript cleanup (see src/transcriptCleanup.js) --
+// reconsiders only the words flagged above, using the surrounding
+// context. Section is omitted entirely when the feature's off server-side,
+// or when there's nothing flagged to begin with (nothing to offer).
+function transcriptCleanupSectionHtml(data, flaggedCount) {
+  if (!data.cleanupEnabled || flaggedCount === 0) return "";
+
+  if (data.cleanupStatus === "completed") {
+    if (!data.cleanupChanges || data.cleanupChanges.length === 0) {
+      return `<div class="transcript-cleanup-result"><p class="settings-note">Checked ${flaggedCount} flagged word(s) -- none needed correcting.</p></div>`;
+    }
+    const items = data.cleanupChanges
+      .map(
+        (c) =>
+          `<li><s>${escapeHtml(c.original)}</s> &rarr; <strong>${escapeHtml(c.corrected)}</strong>${c.reason ? ` <span class="settings-note">(${escapeHtml(c.reason)})</span>` : ""}</li>`
+      )
+      .join("");
+    return `
+      <div class="transcript-cleanup-result">
+        <p class="settings-note">Checked ${flaggedCount} flagged word(s), corrected ${data.cleanupChanges.length}:</p>
+        <ul class="transcript-cleanup-changes">${items}</ul>
+      </div>
+    `;
+  }
+
+  const label = data.cleanupStatus === "failed" ? "Cleanup failed -- try again" : `Clean up ${flaggedCount} low-confidence word(s)`;
+  return `
+    <div class="transcript-cleanup-prompt">
+      <button type="button" class="transcript-cleanup-btn">${label}</button>
+      <span class="transcript-cleanup-error login-error" hidden></span>
+    </div>
+  `;
+}
+
 // Renders the read (not editing) view of a transcript into its
 // .transcript-body -- shared by the initial lazy-load, "Cancel" out of
 // edit mode, and right after a successful save.
@@ -465,12 +506,39 @@ function renderTranscriptView(body, callId, data) {
   const textHtml = data.words && data.words.length
     ? renderTranscriptWordsHtml(data.words)
     : escapeHtml(data.transcript || "(empty transcript)");
+  const flaggedCount = countFlaggedWords(data.words);
   body.innerHTML = `
     <p class="transcript-text">${textHtml}</p>
     ${transcriptEditedNoteHtml(data)}
+    ${transcriptCleanupSectionHtml(data, flaggedCount)}
     <button type="button" class="transcript-edit-btn" data-call="${callId}">Edit</button>
   `;
   body.querySelector(".transcript-edit-btn").addEventListener("click", () => renderTranscriptEditor(body, callId, data));
+
+  const cleanupBtn = body.querySelector(".transcript-cleanup-btn");
+  if (cleanupBtn) {
+    cleanupBtn.addEventListener("click", async () => {
+      cleanupBtn.disabled = true;
+      cleanupBtn.textContent = "Cleaning up...";
+      const errorEl = body.querySelector(".transcript-cleanup-error");
+      errorEl.hidden = true;
+      const res = await fetch(`/api/calls/${callId}/clean-transcript`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken },
+      });
+      const resBody = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errorEl.textContent = resBody.error || "Could not clean up this transcript.";
+        errorEl.hidden = false;
+        cleanupBtn.disabled = false;
+        cleanupBtn.textContent = `Clean up ${flaggedCount} low-confidence word(s)`;
+        return;
+      }
+      data.cleanupStatus = "completed";
+      data.cleanupChanges = resBody.changes;
+      renderTranscriptView(body, callId, data);
+    });
+  }
 }
 
 // Switches a transcript's body into a plain-text editor -- see

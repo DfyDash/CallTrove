@@ -14,6 +14,8 @@
 // reachable through cross-region inference, not an in-region endpoint, so
 // there is no plausible default to guess here; this deliberately has none.
 
+const { stripJsonCodeFence } = require("./bedrockJson");
+
 const REGION = process.env.BEDROCK_REGION || process.env.S3_REGION;
 const MODEL_ID = process.env.BEDROCK_MODEL_ID;
 
@@ -97,7 +99,7 @@ async function summarizeTranscript(transcriptText) {
 
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(stripJsonCodeFence(text));
   } catch (err) {
     throw new Error(`Bedrock did not return valid JSON: ${text.slice(0, 200)}`);
   }

@@ -956,7 +956,8 @@ tbody tr:last-child td {
 
 .transcript-edit-btn,
 .transcript-save-btn,
-.transcript-cancel-btn {
+.transcript-cancel-btn,
+.transcript-cleanup-btn {
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -965,6 +966,32 @@ tbody tr:last-child td {
   font-size: 0.78rem;
   cursor: pointer;
   margin-top: 4px;
+}
+
+.transcript-cleanup-prompt {
+  margin-top: 4px;
+}
+
+.transcript-cleanup-result {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.transcript-cleanup-changes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+}
+
+.transcript-cleanup-changes li {
+  margin: 2px 0;
+}
+
+.transcript-cleanup-changes s {
+  color: var(--muted);
 }
 
 .transcript-edit-actions {
