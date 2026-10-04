@@ -44,8 +44,8 @@ it's checking, so a "no" is immediately actionable.
 
 ## 5. Backup & recovery
 
-- [ ] RDS automated backup retention is actually turned on and set to a real window (confirm in the RDS console — this has not been explicitly verified as of the 2026-10 review; **flag for follow-up**).
-- [ ] A test restore has been performed at some point (not just assumed to work).
+- [x] RDS automated backup retention is actually turned on and set to a real window — confirmed 2026-10-04: 7-day retention, daily automated snapshots, point-in-time recovery current as of the check.
+- [x] A test restore has been performed at some point (not just assumed to work) — confirmed 2026-10-04: restored the latest automated snapshot to a separate temporary instance and compared row counts against production (tenants, calls, users, cost_ledger, audit_log, phi_access_log) — all matched exactly. Temporary instance deleted after verification.
 - [ ] `daily_storage_snapshots` / cost ledger data is intact, no gaps.
 
 ## 6. Data retention & deletion
