@@ -375,7 +375,18 @@ router.get("/calls/:id/recording", async (req, res) => {
     success: true,
   });
 
-  const playback = await getPlayback(call.storageKey, filename, call.storageTier);
+  let playback;
+  try {
+    playback = await getPlayback(call.storageKey, filename, call.storageTier);
+  } catch (err) {
+    // No global async-error handler in this app (see the sibling
+    // /transcribe route's own try/catch) -- without this, a rejected
+    // promise here (e.g. storage/index.js's bucketForTier throwing on a
+    // misconfigured tier) would just hang the request with no response
+    // at all, rather than a clean error.
+    console.error(`[api] failed to get playback for call ${call.id}:`, err);
+    return res.status(500).json({ error: "failed to load recording" });
+  }
   if (playback.redirectUrl) {
     return res.redirect(playback.redirectUrl);
   }

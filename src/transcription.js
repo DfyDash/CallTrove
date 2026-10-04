@@ -64,7 +64,13 @@ async function startJob(callId, buffer, extension, tier = "standard") {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
   const { StartTranscriptionJobCommand } = require("@aws-sdk/client-transcribe");
 
-  const bucket = billingRates.storageTier(tier).bucket;
+  // requireTierBucket throws rather than failing deep inside the AWS SDK
+  // with a cryptic "Bucket: undefined" error -- isEnabled() above only
+  // confirms the *standard* tier's bucket is configured (it's a
+  // tier-agnostic gate used by callers that don't know a specific call's
+  // tier yet, like the poller's own startup check), so a misconfigured or
+  // later-unset S3_BUCKET_HIPAA wouldn't be caught by that alone.
+  const bucket = billingRates.requireTierBucket(tier);
   const key = inputKeyFor(callId, extension);
   await getS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer }));
 

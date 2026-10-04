@@ -100,6 +100,21 @@ function storageTier(tier) {
   return STORAGE_TIERS.standard;
 }
 
+// Resolves a tier's bucket, throwing a clear error if it isn't actually
+// configured -- for the two places (src/storage/index.js, src/
+// transcription.js) that are genuinely about to touch S3 for that tier.
+// Deliberately separate from storageTier() above, which must stay
+// non-throwing: routes/operator.js's tier-assignment route reads a
+// possibly-missing bucket on purpose, to decide whether to *allow* a
+// tenant to be switched onto a tier at all.
+function requireTierBucket(tier) {
+  const bucket = storageTier(tier).bucket;
+  if (!bucket) {
+    throw new Error(`No S3 bucket configured for storage tier "${tier}" -- set its bucket env var (see STORAGE_TIERS above) before anything can use this tier.`);
+  }
+  return bucket;
+}
+
 module.exports = {
   AWS_TRANSCRIBE_PER_MINUTE,
   AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS,
@@ -109,4 +124,5 @@ module.exports = {
   CLIENT_AI_SUMMARY_PER_CALL,
   STORAGE_TIERS,
   storageTier,
+  requireTierBucket,
 };

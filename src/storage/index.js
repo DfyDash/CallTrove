@@ -10,8 +10,11 @@ const driver = process.env.STORAGE_DRIVER || "local";
 // unchanged rather than requiring every one to be updated in lockstep.
 const DEFAULT_TIER = "standard";
 
+// billingRates.requireTierBucket throws rather than silently returning
+// undefined -- an S3 call made with Bucket: undefined fails deep inside
+// the AWS SDK with a cryptic validation error, not here with a clear one.
 function bucketForTier(tier) {
-  return billingRates.storageTier(tier || DEFAULT_TIER).bucket;
+  return billingRates.requireTierBucket(tier || DEFAULT_TIER);
 }
 
 // --- local disk driver (default, zero AWS setup needed for the prototype) ---
