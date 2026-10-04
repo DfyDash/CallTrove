@@ -98,13 +98,18 @@ async function s3GetBuffer(key, tier) {
 // "null", and deleting that version is a normal, permanent delete -- so
 // this is safe to deploy before, during, or after Versioning is turned on.
 //
-// Needs s3:ListBucketVersions (the IAM action gating ListObjectVersions --
-// a distinct permission from s3:ListBucket, which only covers the plain
-// ListObjectsV2 API) on top of the object-level actions (Get/Put/Delete/
-// PutObjectTagging) this app's IAM policy already granted -- a genuinely
-// new permission, not covered by the existing s3:DeleteObject grant.
-// Scope it to the recordings/ prefix the same way the object-level
-// actions are (an s3:prefix condition), not the whole bucket.
+// Needs two IAM permissions this app's policy didn't already have --
+// confirmed the hard way, by an actual AccessDenied in production the
+// first time this ran against a real versioned bucket, not assumed:
+//   - s3:ListBucketVersions, for ListObjectVersions below (a distinct
+//     permission from s3:ListBucket, which only covers the plain
+//     ListObjectsV2 API) -- bucket-level, scoped to recordings/* via an
+//     s3:prefix condition, same as the object-level actions.
+//   - s3:DeleteObjectVersion, for actually deleting a *specific* version
+//     by VersionId below. This is NOT covered by s3:DeleteObject, which
+//     only permits a plain (current-version-only) delete -- object-level,
+//     goes in the same recordings/* resource grant as Get/Put/DeleteObject/
+//     PutObjectTagging.
 async function s3PermanentlyDelete(key, tier) {
   const { ListObjectVersionsCommand, DeleteObjectsCommand } = require("@aws-sdk/client-s3");
   const bucket = bucketForTier(tier);
