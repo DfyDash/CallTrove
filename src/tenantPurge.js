@@ -28,7 +28,7 @@
 // survive.
 require("dotenv").config();
 const db = require("./db");
-const { deleteRecording } = require("./storage");
+const { permanentlyDeleteRecording } = require("./storage");
 
 async function listReady() {
   const tenants = await db.listTenantsReadyForPurge();
@@ -93,12 +93,27 @@ async function purgeTenant(tenantId) {
   }
 
   const recordings = await db.listStorageKeysForTenant(tenantId);
+  const failures = [];
   for (const { storageKey, storageTier } of recordings) {
     try {
-      await deleteRecording(storageKey, storageTier);
+      await permanentlyDeleteRecording(storageKey, storageTier);
     } catch (err) {
-      console.error(`[tenantPurge] failed to delete recording ${storageKey}, continuing:`, err);
+      console.error(`[tenantPurge] failed to delete recording ${storageKey}:`, err);
+      failures.push(storageKey);
     }
+  }
+
+  // All-or-nothing: db.purgeTenantData destroys calls.storage_key, the
+  // only pointer back to an S3 object -- if even one recording's delete
+  // failed, the DB must NOT be purged, or that object becomes
+  // permanently unreachable (and still billed) with no record that it
+  // ever needed a retry. Leaving the tenant in cancellation_pending keeps
+  // this safe to simply re-run once whatever failed is fixed.
+  if (failures.length > 0) {
+    throw new Error(
+      `Purge aborted for "${tenant.name}" (${tenantId}): failed to permanently delete ${failures.length} of ${recordings.length} recording(s) -- ` +
+        `no data was removed from the database, tenant remains cancellation_pending, safe to retry. Failed keys: ${failures.join(", ")}`
+    );
   }
 
   await db.purgeTenantData(tenantId);
