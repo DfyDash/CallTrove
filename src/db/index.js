@@ -1842,8 +1842,9 @@ async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes, st
 // is deliberately tier-agnostic (the true overall average, regardless of
 // which tier applied on which day) -- it's the basis for the real AWS
 // cost, which doesn't depend on which tier a client is billed under; see
-// getStorageDaysByTierForTenantPeriod for the per-tier breakdown used to
-// blend the client-facing free-GB allowance and rate.
+// getStorageStatsByTierForTenantPeriod for the per-tier breakdown used to
+// prorate the client-facing free-GB allowance and rate across each tier's
+// own days.
 async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, periodEnd) {
   const { rows } = await pool.query(
     `SELECT coalesce(avg(total_bytes), 0)::numeric AS "avgBytes", count(*)::int AS "dayCount"
@@ -1854,19 +1855,21 @@ async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, perio
   return rows[0];
 }
 
-// How many of this period's snapshot days fall under each storage tier --
-// the basis for a day-weighted blend of each tier's free-GB allowance and
-// overage rate (src/storageCostJob.js), so a tenant who switched tiers
-// mid-period is charged as "X days under the old tier's terms, Y days
-// under the new one's", not the whole period under whichever tier they
-// happened to end up on. coalesce to 'standard' covers snapshot rows
+// Per tier, how many of this period's snapshot days fell under it and
+// what the average bytes stored were ON JUST THOSE DAYS -- the basis for
+// src/storageCostJob.js's sub-period billing: a tenant who switched tiers
+// mid-period is judged "X days averaging this much, under the old tier's
+// free allowance and rate; Y days averaging that much, under the new
+// one's", each independently and each prorated to its own share of the
+// period, rather than one blended allowance applied to the whole
+// period's overall average. coalesce to 'standard' covers snapshot rows
 // written before the storage_tier column existed and never backfilled
 // (shouldn't happen after schema.sql's migration, but a missing tier here
 // should never crash billing -- 'standard' is the conservative default,
 // same fallback billingRates.storageTier() itself uses for an unknown tier).
-async function getStorageDaysByTierForTenantPeriod(tenantId, periodStart, periodEnd) {
+async function getStorageStatsByTierForTenantPeriod(tenantId, periodStart, periodEnd) {
   const { rows } = await pool.query(
-    `SELECT coalesce(storage_tier, 'standard') AS tier, count(*)::int AS days
+    `SELECT coalesce(storage_tier, 'standard') AS tier, count(*)::int AS days, avg(total_bytes)::numeric AS "avgBytes"
      FROM daily_storage_snapshots
      WHERE tenant_id = $1 AND snapshot_date >= $2 AND snapshot_date < $3
      GROUP BY tier`,
@@ -2095,7 +2098,7 @@ module.exports = {
   recordStorageCost,
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,
-  getStorageDaysByTierForTenantPeriod,
+  getStorageStatsByTierForTenantPeriod,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

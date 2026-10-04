@@ -93,38 +93,47 @@ async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, period
   // STORAGE_TIERS comment) -- sized well above any normal account's real
   // usage either way, so this is $0 for everyone except a genuine outlier.
   //
-  // Day-weighted blend across whichever tier(s) were actually active
+  // Sub-period proration across whichever tier(s) were actually active
   // during this period -- NOT just "storageTier" (the tenant's CURRENT
-  // tier, passed in only for the no-daily-history fallback below). A
-  // tenant who switched tiers mid-period spent some days under one
-  // tier's free-GB allowance and rate, some under the other's; applying
-  // one tier to the whole period's average would misprice every day
-  // spent on the other tier. See schema.sql's comment on
-  // daily_storage_snapshots.storage_tier for the bug this replaced.
-  let freeGB;
-  let overagePerGbMonth;
+  // tier, passed in only for the no-daily-history fallback below), and
+  // deliberately NOT a single blended free-GB allowance applied to the
+  // whole period's overall average either (an earlier version of this
+  // function did that -- it's simpler but can be off by several times
+  // the correct charge, since it compares the *whole month's* usage
+  // against a blended ceiling instead of judging each tier's own days on
+  // their own terms). Each tier's days are judged against that tier's
+  // own free allowance, using the average usage during just those days,
+  // then prorated to that tier's share of the period before applying its
+  // $/GB-month rate -- the rate is inherently a full-month rate, so X
+  // days of overage is X/totalDays of a GB-month, not a whole one. See
+  // schema.sql's comment on daily_storage_snapshots.storage_tier for the
+  // original bug (one tier applied to the whole period) this replaced.
+  let clientRevenue;
+  let effectiveRate; // day-weighted, informational only -- see below
   if (usingFallback) {
-    // No daily history at all for this period -- can't blend by day,
-    // so fall back to the tenant's current tier, same approximation
-    // this whole branch already represents (clientRevenue stays null
-    // regardless, per the comment above).
-    const tier = billingRates.storageTier(storageTier);
-    freeGB = tier.freeGB;
-    overagePerGbMonth = tier.overagePerGbMonth;
+    // No daily history at all for this period -- can't prorate by day,
+    // so fall back to the tenant's current tier against the whole
+    // period's estimated usage, same approximation this whole branch
+    // already represents. clientRevenue stays null regardless (see the
+    // comment above on why a fallback figure is never a safe real charge).
+    clientRevenue = null;
+    effectiveRate = billingRates.storageTier(storageTier).overagePerGbMonth;
   } else {
-    const byTier = await db.getStorageDaysByTierForTenantPeriod(tenantId, toDateString(periodStart), toDateString(periodEnd));
+    const byTier = await db.getStorageStatsByTierForTenantPeriod(tenantId, toDateString(periodStart), toDateString(periodEnd));
     const totalDays = byTier.reduce((sum, row) => sum + row.days, 0) || 1;
-    freeGB = 0;
-    overagePerGbMonth = 0;
+    let revenue = 0;
+    let weightedRate = 0;
     for (const row of byTier) {
       const rowTier = billingRates.storageTier(row.tier);
-      const weight = row.days / totalDays;
-      freeGB += rowTier.freeGB * weight;
-      overagePerGbMonth += rowTier.overagePerGbMonth * weight;
+      const gbThisTier = Number(row.avgBytes) / BYTES_PER_GB;
+      const overageGbThisTier = Math.max(0, gbThisTier - rowTier.freeGB);
+      const monthFraction = row.days / totalDays;
+      revenue += overageGbThisTier * rowTier.overagePerGbMonth * monthFraction;
+      weightedRate += rowTier.overagePerGbMonth * monthFraction;
     }
+    clientRevenue = revenue;
+    effectiveRate = weightedRate;
   }
-  const billableGB = Math.max(0, gb - freeGB);
-  const clientRevenue = usingFallback ? null : billableGB * overagePerGbMonth;
 
   await db.recordStorageCost({
     tenantId,
@@ -133,7 +142,11 @@ async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, period
     gbMonths: gb,
     awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
     awsCost,
-    clientRate: overagePerGbMonth,
+    // A day-weighted average of whichever tier rate(s) applied -- stored
+    // for display/reference only (schema.sql's cost_ledger.client_rate
+    // has no other consumer that does math with it). The real charge is
+    // clientRevenue above, computed per-tier, not derived from this rate.
+    clientRate: effectiveRate,
     clientRevenue,
   });
 }
@@ -214,4 +227,4 @@ function start() {
   cycle();
 }
 
-module.exports = { start, runOnce, lastCompletedMonth, checkNegativeMargins };
+module.exports = { start, runOnce, lastCompletedMonth, checkNegativeMargins, recordMonthlyCostIfDue };
