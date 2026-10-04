@@ -78,6 +78,8 @@ For each marked word, decide whether the speech-to-text engine likely MISHEARD i
 
 This is casual spoken conversation, not an essay. It will naturally include things that are NOT transcription errors and must be left exactly as transcribed: filler words ("uh", "um"), run-on or incomplete sentences, repeated words, and informal tag questions like "...correct?" or "...right?" tacked onto a statement to ask for confirmation. "You did fill out the form, correct?" means "isn't that right?" -- it is not asking whether the form was filled out *correctly*, and "correct" here is already the right word, not an error to fix. When in doubt, assume the person simply talks that way and leave the word unchanged.
 
+Judge the SIZE of the gap between the marked word and whatever you think was actually meant. You cannot hear the audio -- you cannot tell "the engine mangled a clearly-spoken word" apart from "the person actually said it that way" when the two would look identical in writing, so do not guess at that distinction. Instead: if the marked word is only a small step off from a word that already fits -- missing a trailing sound (a dropped "g" or "s"), a minor spelling variant, a clipped or softened ending ("billin" for "billing", "goin" for "going") -- leave it exactly as transcribed. That small a gap is exactly what casual pronunciation and ordinary transcription noise produce on their own, even when nothing was actually misheard, and "rounding it up" to the fuller, more standard spelling would be polishing style, not fixing a transcription error. Only correct a marked word when the gap is large -- a substantially different word, not a trimmed or softened version of one that was already basically there.
+
 Respond with ONLY a single JSON object, no other text, matching exactly this shape:
 {
   "correctedText": "the full transcript with every marker removed, corrections applied only to genuine mishearings",
@@ -94,6 +96,46 @@ If nothing needed correcting, "changes" must be an empty array and "correctedTex
 // specific name, never as general license to insert or prefer it.
 function buildKnownNameNote(handledByName) {
   return `\n\nOne more fact, independently verified (not something the speakers necessarily said correctly): the person who handled this call is named "${handledByName}". A marked word is, by definition, one the speech-to-text engine was very unsure about -- at that low a confidence, its guess can look quite different in writing from the real word even though it sounded similar when actually spoken (a short, oddly-clipped fragment is a very plausible garbled rendering of a longer name spoken quickly on a phone line, even if the two don't look alike on the page). If a marked word could plausibly be the engine's garbled attempt at hearing this specific name -- judge by how it could have sounded, not by how similar the letters look written out -- correct it to the real name. Do not use this fact for anything else: not to change any other word, not to assume the name must appear somewhere, and not to "improve" a marked word that isn't plausibly a mishearing of this name just because it's unusual or a proper noun.`;
+}
+
+// Deterministic backstop for the "billin" -> "billing" failure mode found
+// in real testing: told directly not to round a casually-clipped ending up
+// to its fuller spelling, the model sometimes does it anyway -- even while
+// its own stated "reason" names the clipping explicitly. Prompting alone
+// wasn't reliable enough, so this catches the specific, narrow shape of
+// that mistake in code regardless of what the model decided: a "change"
+// that is really just the original word with a short suffix tacked on is
+// never a different word, so it's never a mishearing -- it's always
+// rejected, no matter how the model justified it.
+function isMereCompletion(original, corrected) {
+  const o = original.toLowerCase();
+  const c = corrected.toLowerCase();
+  const added = c.length - o.length;
+  return c.startsWith(o) && added >= 1 && added <= 3;
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Changes rejected by isMereCompletion are still baked into the model's
+// own correctedText (it wrote the fuller word into the prose directly,
+// not just into the changes list) -- so rejecting one from the list alone
+// isn't enough; the actual wording has to be reverted too, or the
+// corrected transcript would show a word nothing in "changes" accounts
+// for. Only the first occurrence is touched, matching the one marked
+// instance this change came from.
+function rejectMereCompletions(correctedText, changes) {
+  let text = correctedText;
+  const kept = [];
+  for (const change of changes) {
+    if (isMereCompletion(change.original, change.corrected)) {
+      text = text.replace(new RegExp(`\\b${escapeRegExp(change.corrected)}\\b`), change.original);
+      continue;
+    }
+    kept.push(change);
+  }
+  return { text, kept };
 }
 
 // Same bound and same reasoning as callSummary.js's MAX_TRANSCRIPT_CHARS.
@@ -166,13 +208,14 @@ async function cleanTranscript(words, { handledByName } = {}) {
   // let one leak into a transcript someone actually reads -- the prompt
   // instructs it to always remove them, but nothing here should trust
   // that blindly for text a person is going to see.
-  const correctedText = parsed.correctedText.split(MARK_OPEN).join("").split(MARK_CLOSE).join("");
+  const markerStripped = parsed.correctedText.split(MARK_OPEN).join("").split(MARK_CLOSE).join("");
+  const { text: correctedText, kept: keptChanges } = rejectMereCompletions(markerStripped, changes);
 
   return {
     bedrockCalled: true,
-    changed: changes.length > 0,
+    changed: keptChanges.length > 0,
     correctedText,
-    changes,
+    changes: keptChanges,
     inputTokens,
     outputTokens,
   };
