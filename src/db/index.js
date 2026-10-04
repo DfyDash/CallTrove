@@ -1818,12 +1818,18 @@ async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, a
 // today's row -- once the day turns over, this tenant+date is never
 // touched again (a later cycle is always writing a *new* day's row by
 // then), which is what makes a past day's figure permanent.
-async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes) {
+//
+// storageTier is stamped from the tenant's tier AT THE MOMENT this
+// snapshot is taken, same as calls.storage_tier -- see schema.sql's
+// comment on this column for why that matters (a mid-month tier switch
+// must not let the eventual monthly charge apply the wrong tier's
+// free-GB allowance to days spent on the other one).
+async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes, storageTier) {
   await pool.query(
-    `INSERT INTO daily_storage_snapshots (id, tenant_id, snapshot_date, total_bytes, updated_at)
-     VALUES ($1, $2, $3, $4, now())
-     ON CONFLICT (tenant_id, snapshot_date) DO UPDATE SET total_bytes = $4, updated_at = now()`,
-    [randomUUID(), tenantId, snapshotDate, totalBytes]
+    `INSERT INTO daily_storage_snapshots (id, tenant_id, snapshot_date, total_bytes, storage_tier, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now())
+     ON CONFLICT (tenant_id, snapshot_date) DO UPDATE SET total_bytes = $4, storage_tier = $5, updated_at = now()`,
+    [randomUUID(), tenantId, snapshotDate, totalBytes, storageTier]
   );
 }
 
@@ -1832,7 +1838,12 @@ async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes) {
 // that average is based on, so src/storageCostJob.js can tell "a real
 // daily average across the month" apart from "no daily history exists
 // for this period at all" (an older month, or the transition month this
-// feature was deployed mid-way through) and fall back accordingly.
+// feature was deployed mid-way through) and fall back accordingly. This
+// is deliberately tier-agnostic (the true overall average, regardless of
+// which tier applied on which day) -- it's the basis for the real AWS
+// cost, which doesn't depend on which tier a client is billed under; see
+// getStorageDaysByTierForTenantPeriod for the per-tier breakdown used to
+// blend the client-facing free-GB allowance and rate.
 async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, periodEnd) {
   const { rows } = await pool.query(
     `SELECT coalesce(avg(total_bytes), 0)::numeric AS "avgBytes", count(*)::int AS "dayCount"
@@ -1841,6 +1852,27 @@ async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, perio
     [tenantId, periodStart, periodEnd]
   );
   return rows[0];
+}
+
+// How many of this period's snapshot days fall under each storage tier --
+// the basis for a day-weighted blend of each tier's free-GB allowance and
+// overage rate (src/storageCostJob.js), so a tenant who switched tiers
+// mid-period is charged as "X days under the old tier's terms, Y days
+// under the new one's", not the whole period under whichever tier they
+// happened to end up on. coalesce to 'standard' covers snapshot rows
+// written before the storage_tier column existed and never backfilled
+// (shouldn't happen after schema.sql's migration, but a missing tier here
+// should never crash billing -- 'standard' is the conservative default,
+// same fallback billingRates.storageTier() itself uses for an unknown tier).
+async function getStorageDaysByTierForTenantPeriod(tenantId, periodStart, periodEnd) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(storage_tier, 'standard') AS tier, count(*)::int AS days
+     FROM daily_storage_snapshots
+     WHERE tenant_id = $1 AND snapshot_date >= $2 AND snapshot_date < $3
+     GROUP BY tier`,
+    [tenantId, periodStart, periodEnd]
+  );
+  return rows;
 }
 
 // --- audit_log (who changed what admin setting/account, and when) ---
@@ -2063,6 +2095,7 @@ module.exports = {
   recordStorageCost,
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,
+  getStorageDaysByTierForTenantPeriod,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

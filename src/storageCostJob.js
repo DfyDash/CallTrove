@@ -61,9 +61,9 @@ function toDateString(d) {
   return d.toISOString().slice(0, 10);
 }
 
-async function recordTodaysSnapshot(tenantId, now) {
+async function recordTodaysSnapshot(tenantId, now, storageTier) {
   const totalBytes = await db.getTotalStoredBytesForTenant(tenantId);
-  await db.upsertDailyStorageSnapshot(tenantId, toDateString(now), totalBytes);
+  await db.upsertDailyStorageSnapshot(tenantId, toDateString(now), totalBytes, storageTier);
 }
 
 async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, periodEnd) {
@@ -92,9 +92,39 @@ async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, period
   // Safety-net overage only, against THIS tenant's own tier (billingRates.js's
   // STORAGE_TIERS comment) -- sized well above any normal account's real
   // usage either way, so this is $0 for everyone except a genuine outlier.
-  const tier = billingRates.storageTier(storageTier);
-  const billableGB = Math.max(0, gb - tier.freeGB);
-  const clientRevenue = usingFallback ? null : billableGB * tier.overagePerGbMonth;
+  //
+  // Day-weighted blend across whichever tier(s) were actually active
+  // during this period -- NOT just "storageTier" (the tenant's CURRENT
+  // tier, passed in only for the no-daily-history fallback below). A
+  // tenant who switched tiers mid-period spent some days under one
+  // tier's free-GB allowance and rate, some under the other's; applying
+  // one tier to the whole period's average would misprice every day
+  // spent on the other tier. See schema.sql's comment on
+  // daily_storage_snapshots.storage_tier for the bug this replaced.
+  let freeGB;
+  let overagePerGbMonth;
+  if (usingFallback) {
+    // No daily history at all for this period -- can't blend by day,
+    // so fall back to the tenant's current tier, same approximation
+    // this whole branch already represents (clientRevenue stays null
+    // regardless, per the comment above).
+    const tier = billingRates.storageTier(storageTier);
+    freeGB = tier.freeGB;
+    overagePerGbMonth = tier.overagePerGbMonth;
+  } else {
+    const byTier = await db.getStorageDaysByTierForTenantPeriod(tenantId, toDateString(periodStart), toDateString(periodEnd));
+    const totalDays = byTier.reduce((sum, row) => sum + row.days, 0) || 1;
+    freeGB = 0;
+    overagePerGbMonth = 0;
+    for (const row of byTier) {
+      const rowTier = billingRates.storageTier(row.tier);
+      const weight = row.days / totalDays;
+      freeGB += rowTier.freeGB * weight;
+      overagePerGbMonth += rowTier.overagePerGbMonth * weight;
+    }
+  }
+  const billableGB = Math.max(0, gb - freeGB);
+  const clientRevenue = usingFallback ? null : billableGB * overagePerGbMonth;
 
   await db.recordStorageCost({
     tenantId,
@@ -103,7 +133,7 @@ async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, period
     gbMonths: gb,
     awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
     awsCost,
-    clientRate: tier.overagePerGbMonth,
+    clientRate: overagePerGbMonth,
     clientRevenue,
   });
 }
@@ -151,7 +181,7 @@ async function runOnce(now = new Date()) {
 
   for (const { id: tenantId, storageTier } of tenants) {
     try {
-      await recordTodaysSnapshot(tenantId, now);
+      await recordTodaysSnapshot(tenantId, now, storageTier);
     } catch (err) {
       console.error(`[storageCost] failed to record today's snapshot for tenant ${tenantId}:`, err);
     }

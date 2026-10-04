@@ -753,3 +753,26 @@ DROP TRIGGER IF EXISTS baa_acceptances_append_only ON baa_acceptances;
 CREATE TRIGGER baa_acceptances_append_only
   BEFORE UPDATE OR DELETE ON baa_acceptances
   FOR EACH ROW EXECUTE FUNCTION reject_log_mutation();
+
+-- Which storage tier was actually active on each snapshot day -- stamped
+-- at write time (src/db/index.js's upsertDailyStorageSnapshot), same
+-- "stamp at the moment, don't derive from today's live value" pattern as
+-- calls.storage_tier. Without this, src/storageCostJob.js's monthly
+-- cost_ledger entry (write-once, never correctable afterward) could only
+-- apply whichever tier a tenant happened to be on when the job finally
+-- ran -- so a tenant who switched from standard (100GB free) to hipaa
+-- (150GB free) partway through a month would have their ENTIRE month's
+-- charge computed under whichever tier they ended up on, not correctly
+-- blended across the days actually spent on each. Billing isn't live
+-- yet, so this never produced a wrong real charge -- caught by thinking
+-- through the tier-switch scenario, not by an incident.
+ALTER TABLE daily_storage_snapshots ADD COLUMN IF NOT EXISTS storage_tier TEXT;
+-- Backfill for rows written before this column existed: best-effort,
+-- using each tenant's CURRENT tier (there's no way to know what it
+-- actually was on a past day that predates this column -- same
+-- "best-effort reconstruction, not a real historical record" reasoning
+-- as cost_ledger's own backfilled flag). Only touches rows this
+-- migration left NULL; never overwrites a tier a later snapshot already
+-- recorded for real.
+UPDATE daily_storage_snapshots s SET storage_tier = t.storage_tier
+  FROM tenants t WHERE t.id = s.tenant_id AND s.storage_tier IS NULL;
