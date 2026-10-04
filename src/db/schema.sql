@@ -697,3 +697,41 @@ ALTER TABLE tenants ADD CONSTRAINT tenants_storage_tier_check
 -- that's the one bucket that existed before this column did.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS storage_tier TEXT;
 UPDATE calls SET storage_tier = 'standard' WHERE storage_key IS NOT NULL AND storage_tier IS NULL;
+
+-- BAA acceptance: the self-serve "accept the BAA" gate a tenant must pass
+-- before it can be switched to the 'hipaa' storage tier -- mirrors how AWS
+-- Artifact itself handles its own BAA (the customer's own account accepts
+-- it in-app, electronically, non-negotiable, not AWS staff accepting on
+-- their behalf). Only the tenant's own owner can create a row here (see
+-- routes/admin.js's POST /baa/accept, gated the same way as tenant
+-- cancel/restore) -- never the operator on a tenant's behalf, so the
+-- signer is always attributable to a real person at the client, not
+-- CallTrove staff, which is what makes this a real electronic signature
+-- under the ESIGN Act rather than just an internal checkbox.
+-- full_name/title are typed by the signer, not just a bare checkbox click,
+-- mirroring the Print Name/Title fields on the actual signed cover page.
+-- baa_version/baa_text_hash record exactly which version of src/baaText.js
+-- was shown and a sha256 of its exact rendered text (including this
+-- tenant's own name) at the moment of acceptance, so a later change to the
+-- BAA text can never be read as retroactively covering an earlier
+-- acceptance. Rows are kept permanently and never updated/deleted -- see
+-- the append-only trigger below -- since a signature record that could be
+-- silently edited afterward isn't a real record of consent.
+CREATE TABLE IF NOT EXISTS baa_acceptances (
+  id              UUID PRIMARY KEY,
+  tenant_id       UUID NOT NULL REFERENCES tenants(id),
+  user_id         UUID NOT NULL REFERENCES users(id),
+  full_name       TEXT NOT NULL,
+  title           TEXT NOT NULL,
+  baa_version     TEXT NOT NULL,
+  baa_text_hash   TEXT NOT NULL,
+  ip_address      TEXT,
+  user_agent      TEXT,
+  accepted_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS baa_acceptances_tenant_idx ON baa_acceptances (tenant_id, accepted_at DESC);
+
+DROP TRIGGER IF EXISTS baa_acceptances_append_only ON baa_acceptances;
+CREATE TRIGGER baa_acceptances_append_only
+  BEFORE UPDATE OR DELETE ON baa_acceptances
+  FOR EACH ROW EXECUTE FUNCTION reject_log_mutation();

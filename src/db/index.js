@@ -1253,6 +1253,35 @@ async function setTenantStorageTier(tenantId, tier) {
   return rows[0] || null;
 }
 
+// See schema.sql's comment on baa_acceptances for why this is the real
+// electronic-signature record (typed name/title, not just a checkbox) and
+// why it's only ever written by the tenant's own owner accepting for
+// themselves -- routes/admin.js's POST /baa/accept is the only caller.
+async function recordBaaAcceptance({ tenantId, userId, fullName, title, baaVersion, baaTextHash, ipAddress, userAgent }) {
+  const { rows } = await pool.query(
+    `INSERT INTO baa_acceptances (id, tenant_id, user_id, full_name, title, baa_version, baa_text_hash, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, tenant_id AS "tenantId", user_id AS "userId", full_name AS "fullName", title,
+               baa_version AS "baaVersion", baa_text_hash AS "baaTextHash", accepted_at AS "acceptedAt"`,
+    [randomUUID(), tenantId, userId, fullName, title, baaVersion, baaTextHash, ipAddress || null, userAgent || null]
+  );
+  return rows[0];
+}
+
+// The one acceptance that counts for "has this tenant accepted the BAA" --
+// most recent row, if any. A tenant could in principle have more than one
+// (re-accepting after a text version bump), so this is always "latest",
+// never "any".
+async function getLatestBaaAcceptance(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", user_id AS "userId", full_name AS "fullName", title,
+            baa_version AS "baaVersion", baa_text_hash AS "baaTextHash", accepted_at AS "acceptedAt"
+     FROM baa_acceptances WHERE tenant_id = $1 ORDER BY accepted_at DESC LIMIT 1`,
+    [tenantId]
+  );
+  return rows[0] || null;
+}
+
 // The owner-only trigger: locks the tenant's logins out (see
 // requireAuth in src/auth.js, which checks this status on every
 // request) and schedules the actual data purge for later rather than
@@ -1933,6 +1962,8 @@ module.exports = {
   updateTenantOwner,
   getTenantById,
   setTenantStorageTier,
+  recordBaaAcceptance,
+  getLatestBaaAcceptance,
   listActiveTenants,
   listTenantMargins,
   getTotalStoredBytesForTenant,

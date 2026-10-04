@@ -241,7 +241,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "backfill", "activity", "access", "danger"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "baa", "backfill", "activity", "access", "danger"];
 const tabLoaded = {};
 
 function activateTab(tab) {
@@ -261,6 +261,7 @@ function activateTab(tab) {
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
   if (tab === "billing" && !tabLoaded.billing) loadBilling();
+  if (tab === "baa" && !tabLoaded.baa) loadBaa();
   if (tab === "backfill" && !tabLoaded.backfill) loadBackfillStatus();
   if (tab === "activity" && !tabLoaded.activity) loadAuditLog();
   if (tab === "access" && !tabLoaded.access) loadAccessLog();
@@ -1513,6 +1514,69 @@ function billingMonthLabel(yyyyMmDd) {
   // a plain string instead of a Date in the first place.
   return new Date(`${yyyyMmDd}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
+
+// --- HIPAA / BAA ---
+
+const baaTextEl = document.getElementById("baa-text");
+const baaAcceptedBanner = document.getElementById("baa-accepted-banner");
+const baaAcceptedSummary = document.getElementById("baa-accepted-summary");
+const baaAcceptFormWrap = document.getElementById("baa-accept-form-wrap");
+const baaAcceptForm = document.getElementById("baa-accept-form");
+const baaAcceptError = document.getElementById("baa-accept-error");
+const baaNotOwnerNote = document.getElementById("baa-not-owner-note");
+let baaHash = "";
+
+async function loadBaa() {
+  const res = await fetch("/api/admin/baa");
+  if (!res.ok) return;
+  const baa = await res.json();
+  tabLoaded.baa = true;
+
+  baaTextEl.textContent = baa.text;
+  baaHash = baa.hash;
+
+  if (baa.acceptance) {
+    const when = new Date(baa.acceptance.acceptedAt).toLocaleString();
+    baaAcceptedSummary.textContent = `${baa.acceptance.fullName} (${baa.acceptance.title}) on ${when}.`;
+    baaAcceptedBanner.hidden = false;
+    baaAcceptFormWrap.hidden = true;
+    baaNotOwnerNote.hidden = true;
+  } else if (baa.canAccept) {
+    baaAcceptedBanner.hidden = true;
+    baaAcceptFormWrap.hidden = false;
+    baaNotOwnerNote.hidden = true;
+  } else {
+    baaAcceptedBanner.hidden = true;
+    baaAcceptFormWrap.hidden = true;
+    baaNotOwnerNote.hidden = false;
+  }
+}
+
+baaAcceptForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  baaAcceptError.hidden = true;
+  const btn = document.getElementById("baa-accept-btn");
+  btn.disabled = true;
+  const res = await fetch("/api/admin/baa/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({
+      fullName: document.getElementById("baa-full-name").value.trim(),
+      title: document.getElementById("baa-title").value.trim(),
+      agree: document.getElementById("baa-agree-checkbox").checked,
+      confirmHash: baaHash,
+    }),
+  });
+  btn.disabled = false;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    baaAcceptError.textContent = body.error || "could not record acceptance";
+    baaAcceptError.hidden = false;
+    return;
+  }
+  tabLoaded.baa = false;
+  loadBaa();
+});
 
 async function loadBilling() {
   const res = await fetch("/api/admin/billing");

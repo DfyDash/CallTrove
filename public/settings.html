@@ -56,6 +56,7 @@
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
           <a href="#billing" class="nav-link" data-tab="billing">Billing</a>
+          <a href="#baa" class="nav-link" data-tab="baa">HIPAA / BAA</a>
           <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
           <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
@@ -497,6 +498,45 @@
             </table>
             <p id="billing-history-empty" class="settings-note" hidden>No completed months yet.</p>
           </div>
+        </section>
+
+        <!-- HIPAA / BAA -->
+        <section id="tab-baa" class="settings-tab-panel" hidden>
+          <h1>HIPAA / BAA</h1>
+          <p class="settings-note">
+            CallTrove's Business Associate Agreement. This is not negotiable --
+            you either accept it as shown, or your account stays on the
+            standard (non-HIPAA) tier. Only your account's owner can accept it,
+            and it's the same self-serve, electronic-acceptance model AWS
+            itself uses for its own BAA.
+          </p>
+
+          <div id="baa-accepted-banner" class="baa-accepted-banner" hidden>
+            <strong>Accepted.</strong> <span id="baa-accepted-summary"></span>
+          </div>
+
+          <div class="settings-section">
+            <h2>Agreement</h2>
+            <pre id="baa-text" class="baa-text-box"></pre>
+          </div>
+
+          <div id="baa-accept-form-wrap" class="settings-section" hidden>
+            <h2>Accept</h2>
+            <form id="baa-accept-form" class="admin-form">
+              <label>Full legal name <input type="text" name="fullName" id="baa-full-name" required autocomplete="name" /></label>
+              <label>Title <input type="text" name="title" id="baa-title" required autocomplete="organization-title" /></label>
+              <label class="cancel-warning-box">
+                <input type="checkbox" id="baa-agree-checkbox" required />
+                <span>I have read this Business Associate Agreement and agree to it on behalf of my company.</span>
+              </label>
+              <button type="submit" id="baa-accept-btn">I Agree &amp; Accept</button>
+              <span id="baa-accept-error" class="login-error" hidden></span>
+            </form>
+          </div>
+
+          <p id="baa-not-owner-note" class="settings-note" hidden>
+            Only your account's owner can accept this agreement.
+          </p>
         </section>
 
         <!-- Import past calls & export -->

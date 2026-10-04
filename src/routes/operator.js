@@ -173,6 +173,23 @@ router.post("/tenants/:id/storage-tier", requireCsrf, async (req, res) => {
 
   const tenant = await db.getTenantById(req.params.id);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
+
+  // Hard, server-side gate -- not negotiable, not an operator override: a
+  // tenant can only move to the 'hipaa' tier once its own owner has
+  // accepted the BAA themselves (routes/admin.js's POST /baa/accept,
+  // self-serve, same shape as AWS's own BAA acceptance in AWS Artifact).
+  // The operator enabling this tier for a tenant is not the same thing as
+  // the tenant's owner having agreed to it -- those are two different
+  // people, and only the owner's own acceptance counts.
+  if (tier === "hipaa") {
+    const acceptance = await db.getLatestBaaAcceptance(tenant.id);
+    if (!acceptance) {
+      return res.status(409).json({
+        error: `"${tenant.name}" cannot be moved to the hipaa tier -- its owner has not accepted the BAA yet (Settings > BAA, in their own account)`,
+      });
+    }
+  }
+
   if (tenant.storageTier === tier) {
     return res.json({ status: "unchanged", storageTier: tier });
   }

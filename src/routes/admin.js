@@ -12,6 +12,7 @@ const { sanitizeForFilename } = require("../filenames");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
 const billingRates = require("../billingRates");
+const { BAA_VERSION, buildBaaText } = require("../baaText");
 
 const router = express.Router();
 
@@ -119,6 +120,74 @@ router.post("/tenant/restore", requireCsrf, async (req, res) => {
   await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
   await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });
+});
+
+// --- BAA acceptance (self-serve, owner-only -- see schema.sql's comment
+// on baa_acceptances for why this is gated to the owner, same bar as
+// tenant cancel/restore above: it's a company-binding legal acceptance,
+// not something any admin on the tenant should be able to trigger). ---
+
+// Read-only, any admin can view the agreement text and whether it's been
+// accepted -- only the accept action itself (below) is owner-gated. hash
+// is returned alongside the text so the client echoes it back unmodified
+// on accept, letting the server confirm the text that was actually shown
+// is the exact text being agreed to (see POST /baa/accept).
+router.get("/baa", async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+
+  const text = buildBaaText({ companyName: tenant.name });
+  const hash = createHash("sha256").update(text, "utf8").digest("hex");
+  const acceptance = await db.getLatestBaaAcceptance(tenant.id);
+
+  res.json({
+    text,
+    hash,
+    version: BAA_VERSION,
+    canAccept: tenant.ownerUserId === req.session.user.id,
+    acceptance,
+  });
+});
+
+router.post("/baa/accept", requireCsrf, async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  if (tenant.ownerUserId !== req.session.user.id) {
+    return res.status(403).json({ error: "only the account owner can accept the BAA" });
+  }
+
+  const fullName = (req.body?.fullName || "").trim();
+  const title = (req.body?.title || "").trim();
+  if (!fullName || !title) {
+    return res.status(400).json({ error: "full name and title are required" });
+  }
+  if (req.body?.agree !== true) {
+    return res.status(400).json({ error: "you must check the box to agree" });
+  }
+
+  // Recomputed server-side from the tenant's current name, never trusted
+  // from the client -- confirms the signer actually agreed to the real,
+  // current text, not a stale or tampered copy. confirmHash is the hash
+  // GET /baa just handed the client; a mismatch means the text changed
+  // (or was tampered with) between viewing and submitting.
+  const text = buildBaaText({ companyName: tenant.name });
+  const hash = createHash("sha256").update(text, "utf8").digest("hex");
+  if (req.body?.confirmHash !== hash) {
+    return res.status(409).json({ error: "the agreement text has changed since you loaded this page -- please review it again before accepting" });
+  }
+
+  const acceptance = await db.recordBaaAcceptance({
+    tenantId: tenant.id,
+    userId: req.session.user.id,
+    fullName,
+    title,
+    baaVersion: BAA_VERSION,
+    baaTextHash: hash,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+  await log(req, "baa_accepted", `BAA accepted for "${tenant.name}" by ${fullName} (${title})`);
+  res.json({ status: "accepted", acceptance });
 });
 
 // Auto-links any user whose login username matches a GHL user's email

@@ -1319,6 +1319,29 @@ tbody tr:last-child td {
   border-radius: 8px;
 }
 
+.baa-text-box {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.baa-accepted-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--good);
+  border-radius: 8px;
+  background: var(--good-soft);
+  color: var(--good);
+  font-size: 0.85rem;
+}
+
 /* --- Contacts (A-Z) page --- */
 
 .contacts-page {
