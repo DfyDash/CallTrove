@@ -80,6 +80,10 @@ router.get("/me", async (req, res) => {
     accounts,
     currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
     transcriptionEnabled: transcription.isEnabled(),
+    // Settings > Billing names the tenant in its intro line -- already
+    // fetching the tenant row above for cancellationPending below, so
+    // this is free.
+    tenantName: tenant ? tenant.name : null,
     csrfToken: req.session.csrfToken,
     // Set only during the grace period (before lockout, which requireAuth
     // enforces once purgeAt actually passes) -- lets every page show a

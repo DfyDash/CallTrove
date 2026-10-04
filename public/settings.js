@@ -79,6 +79,8 @@ async function loadSession() {
   document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
   renderCancellationBanner(me);
   if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
+  const billingSubhead = document.getElementById("billing-subhead");
+  if (billingSubhead && me.tenantName) billingSubhead.textContent = `Current charges applied to ${me.tenantName} are shown below.`;
 
   // Same resolution/switcher pattern as app.js -- see the comment on
   // currentAccountId's declaration above.
