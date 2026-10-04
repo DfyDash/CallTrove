@@ -90,8 +90,14 @@ const STORAGE_TIERS = {
 // missing tier (e.g. a tenant row written before this column existed, or
 // a bad value that somehow got in despite the CHECK constraint) rather
 // than throwing -- storage cost/display code should degrade, not crash.
+// hasOwnProperty (not a plain STORAGE_TIERS[tier] lookup) matters here:
+// tier can be arbitrary caller/request input, and a bare [] lookup also
+// matches inherited Object.prototype names ("constructor", "toString",
+// "hasOwnProperty" itself, ...) -- that would silently return a function
+// instead of falling back to 'standard', not throw, so it's easy to miss.
 function storageTier(tier) {
-  return STORAGE_TIERS[tier] || STORAGE_TIERS.standard;
+  if (Object.prototype.hasOwnProperty.call(STORAGE_TIERS, tier)) return STORAGE_TIERS[tier];
+  return STORAGE_TIERS.standard;
 }
 
 module.exports = {

@@ -11,14 +11,22 @@
 // this module manages its own transient S3 upload independent of
 // STORAGE_DRIVER -- transcription works even when recordings are stored
 // on local disk.
+//
+// The transient upload must land in the SAME tier's bucket as the
+// recording itself (billingRates.js's STORAGE_TIERS), not always the
+// legacy single bucket -- a HIPAA-tier call's audio must never pass
+// through the standard-tier bucket, even transiently. startJob takes the
+// tier explicitly; checkJob/cleanupInput never need it, since they parse
+// the actual bucket straight out of the job's own stored Media.MediaFileUri
+// rather than assuming a fixed bucket.
+const billingRates = require("./billingRates");
 
 const REGION = process.env.S3_REGION;
-const BUCKET = process.env.S3_BUCKET;
 const LANGUAGE_CODE = process.env.TRANSCRIBE_LANGUAGE_CODE || "en-US";
 const INPUT_PREFIX = "transcribe-input";
 
 function isEnabled() {
-  return process.env.TRANSCRIPTION_ENABLED === "true" && !!BUCKET && !!REGION;
+  return process.env.TRANSCRIPTION_ENABLED === "true" && !!billingRates.storageTier("standard").bucket && !!REGION;
 }
 
 let transcribeClient;
@@ -50,19 +58,22 @@ function inputKeyFor(callId, extension) {
 // Uploads the recording to a transient S3 key and starts an async
 // Transcribe job against it. Returns nothing -- progress is checked later
 // by jobName (deterministic from callId), not by anything returned here.
-async function startJob(callId, buffer, extension) {
+// tier defaults to 'standard' so any pre-tiering caller keeps working
+// unchanged, same convention as src/storage/index.js.
+async function startJob(callId, buffer, extension, tier = "standard") {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
   const { StartTranscriptionJobCommand } = require("@aws-sdk/client-transcribe");
 
+  const bucket = billingRates.storageTier(tier).bucket;
   const key = inputKeyFor(callId, extension);
-  await getS3Client().send(new PutObjectCommand({ Bucket: BUCKET, Key: key, Body: buffer }));
+  await getS3Client().send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: buffer }));
 
   await getTranscribeClient().send(
     new StartTranscriptionJobCommand({
       TranscriptionJobName: jobNameFor(callId),
       LanguageCode: LANGUAGE_CODE,
       MediaFormat: extension === "wav" ? "wav" : "mp3",
-      Media: { MediaFileUri: `s3://${BUCKET}/${key}` },
+      Media: { MediaFileUri: `s3://${bucket}/${key}` },
     })
   );
 }
@@ -105,11 +116,14 @@ async function checkJob(callId) {
 
 async function cleanupInput(job) {
   const uri = job.Media && job.Media.MediaFileUri;
-  const marker = `${BUCKET}/`;
-  const key = uri && uri.includes(marker) ? uri.slice(uri.indexOf(marker) + marker.length) : null;
-  if (!key) return;
+  // Parsed straight out of the job's own URI (s3://bucket/key) rather than
+  // assumed to be one fixed bucket -- this job's input could be in either
+  // tier's bucket depending on which tier startJob used for it.
+  const match = uri && /^s3:\/\/([^/]+)\/(.+)$/.exec(uri);
+  if (!match) return;
+  const [, bucket, key] = match;
   const { DeleteObjectCommand } = require("@aws-sdk/client-s3");
-  await getS3Client().send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key })).catch(() => {});
+  await getS3Client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key })).catch(() => {});
 }
 
 module.exports = { isEnabled, startJob, checkJob };

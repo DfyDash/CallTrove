@@ -482,7 +482,7 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   try {
     const buffer = await getBuffer(call.storageKey, call.storageTier);
     const extension = call.storageKey.split(".").pop();
-    await transcription.startJob(call.id, buffer, extension);
+    await transcription.startJob(call.id, buffer, extension, call.storageTier);
     await db.markTranscriptionPending(call.id);
     await logAccess(req, { action: "transcription_requested", callId: call.id, success: true });
     res.json({ status: "pending" });

@@ -104,7 +104,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
 
     if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled(ghlAccountId))) {
       try {
-        await transcription.startJob(callRowId, taggedBuffer, extension);
+        await transcription.startJob(callRowId, taggedBuffer, extension, storageTier);
         await db.markTranscriptionPending(callRowId);
       } catch (err) {
         console.error(`[poller] failed to start auto-transcription for call ${message.id}:`, err);

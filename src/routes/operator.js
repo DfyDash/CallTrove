@@ -141,7 +141,14 @@ router.post("/tenants/:id/purge", requireCsrf, async (req, res) => {
 // so this is never a data-migration trigger.
 router.post("/tenants/:id/storage-tier", requireCsrf, async (req, res) => {
   const tier = (req.body || {}).tier;
-  if (!(tier in billingRates.STORAGE_TIERS)) {
+  // hasOwnProperty, not `tier in STORAGE_TIERS` -- `in` also matches
+  // inherited Object.prototype names ("constructor", "toString", ...),
+  // which would let an invalid tier slip past this check entirely on a
+  // local-disk deployment (the S3-bucket check below happens to catch it
+  // on an S3 deployment, but only there) and then fail the DB's own
+  // storage_tier CHECK constraint unhandled, hanging the request instead
+  // of returning this 400.
+  if (typeof tier !== "string" || !Object.prototype.hasOwnProperty.call(billingRates.STORAGE_TIERS, tier)) {
     return res.status(400).json({ error: `tier must be one of: ${Object.keys(billingRates.STORAGE_TIERS).join(", ")}` });
   }
   // Refuses a tier whose bucket isn't actually configured yet -- better to
