@@ -942,7 +942,7 @@ async function getCall(callId) {
   const { rows } = await pool.query(
     `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.recording_status AS "recordingStatus",
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
-            c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
+            c.handled_by_id AS "handledById", c.handled_by_name AS "handledByName", c.transcription_status AS "transcriptionStatus",
             c.transcription_attempts AS "transcriptionAttempts",
             c.transcript, c.transcript_words AS "transcriptWords",
             c.transcript_edited_at AS "transcriptEditedAt", c.transcript_edited_by AS "transcriptEditedBy",

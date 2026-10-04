@@ -85,6 +85,17 @@ Respond with ONLY a single JSON object, no other text, matching exactly this sha
 }
 If nothing needed correcting, "changes" must be an empty array and "correctedText" must be the original wording with the markers simply removed. Never invent content the transcript doesn't support.`;
 
+// Appended only when the call has a known, verified handler name (sourced
+// from GHL's own Messages API -- see src/db/index.js's handled_by_name --
+// never an account/tenant display name, which is just an internal label
+// with no guaranteed relationship to what's actually said aloud; see the
+// real near-miss this was scoped down from). Deliberately narrow: usable
+// only to resolve a marked word that looks like a garbled attempt at THIS
+// specific name, never as general license to insert or prefer it.
+function buildKnownNameNote(handledByName) {
+  return `\n\nOne more fact, independently verified (not something the speakers necessarily said correctly): the person who handled this call is named "${handledByName}". A marked word is, by definition, one the speech-to-text engine was very unsure about -- at that low a confidence, its guess can look quite different in writing from the real word even though it sounded similar when actually spoken (a short, oddly-clipped fragment is a very plausible garbled rendering of a longer name spoken quickly on a phone line, even if the two don't look alike on the page). If a marked word could plausibly be the engine's garbled attempt at hearing this specific name -- judge by how it could have sounded, not by how similar the letters look written out -- correct it to the real name. Do not use this fact for anything else: not to change any other word, not to assume the name must appear somewhere, and not to "improve" a marked word that isn't plausibly a mishearing of this name just because it's unusual or a proper noun.`;
+}
+
 // Same bound and same reasoning as callSummary.js's MAX_TRANSCRIPT_CHARS.
 const MAX_TRANSCRIPT_CHARS = 100_000;
 
@@ -95,7 +106,7 @@ const MAX_TRANSCRIPT_CHARS = 100_000;
 // Returns { changed: false } with no Bedrock call at all when nothing is
 // flagged -- a transcript with no low-confidence words costs nothing to
 // "clean up" and shouldn't pretend otherwise.
-async function cleanTranscript(words) {
+async function cleanTranscript(words, { handledByName } = {}) {
   if (!Array.isArray(words) || words.length === 0) {
     throw new Error("no word-level transcript data available to clean up");
   }
@@ -110,10 +121,12 @@ async function cleanTranscript(words) {
 
   const { InvokeModelCommand } = require("@aws-sdk/client-bedrock-runtime");
 
+  const system = handledByName ? `${SYSTEM_PROMPT}${buildKnownNameNote(handledByName)}` : SYSTEM_PROMPT;
+
   const body = JSON.stringify({
     anthropic_version: "bedrock-2023-05-31",
     max_tokens: 4096,
-    system: SYSTEM_PROMPT,
+    system,
     messages: [{ role: "user", content: `Transcript:\n\n${markedText}` }],
   });
 

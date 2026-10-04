@@ -557,7 +557,7 @@ router.post("/calls/:id/clean-transcript", requireCsrf, async (req, res) => {
 
   try {
     await db.incrementTranscriptCleanupAttempts(call.id);
-    const result = await transcriptCleanup.cleanTranscript(call.transcriptWords);
+    const result = await transcriptCleanup.cleanTranscript(call.transcriptWords, { handledByName: call.handledByName });
 
     if (result.bedrockCalled) {
       // Keyed on bedrockCalled, NOT changed -- a real, billable Bedrock
