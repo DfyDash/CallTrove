@@ -72,13 +72,15 @@ function buildMarkedText(words) {
   return { text, flaggedCount };
 }
 
-const SYSTEM_PROMPT = `You clean up a phone-call transcript. Some words are wrapped like ${MARK_OPEN}this${MARK_CLOSE} -- these are the only words you may reconsider; the speech-to-text engine was least confident about exactly these ones. Everything else is unmarked and is already correct -- never change it.
+const SYSTEM_PROMPT = `You clean up a phone-call transcript of real, casual spoken conversation. Some words are wrapped like ${MARK_OPEN}this${MARK_CLOSE} -- these are the only words you may reconsider; the speech-to-text engine was least confident about exactly these ones. Everything else is unmarked and is already correct -- never change it.
 
-For each marked word, decide from the surrounding context whether it's likely correct as transcribed, or whether a different word (often a homophone or similar-sounding word) clearly fits the context better. Only change a marked word when you're genuinely confident a different word is correct -- when in doubt, keep the original wording.
+For each marked word, decide whether the speech-to-text engine likely MISHEARD it -- transcribed a different, wrong word in place of what the speaker actually said (often a homophone or similar-sounding word). Only change a marked word when a different word is clearly what was actually said. Never change a word just because different wording would read more smoothly, sound more formal, or be more grammatically "correct" as written prose -- that is not a transcription error, and fixing it would change what the person actually said, not just how it was transcribed.
+
+This is casual spoken conversation, not an essay. It will naturally include things that are NOT transcription errors and must be left exactly as transcribed: filler words ("uh", "um"), run-on or incomplete sentences, repeated words, and informal tag questions like "...correct?" or "...right?" tacked onto a statement to ask for confirmation. "You did fill out the form, correct?" means "isn't that right?" -- it is not asking whether the form was filled out *correctly*, and "correct" here is already the right word, not an error to fix. When in doubt, assume the person simply talks that way and leave the word unchanged.
 
 Respond with ONLY a single JSON object, no other text, matching exactly this shape:
 {
-  "correctedText": "the full transcript with every marker removed, corrections applied where confident",
+  "correctedText": "the full transcript with every marker removed, corrections applied only to genuine mishearings",
   "changes": [{"original": "want", "corrected": "went", "reason": "short reason, grounded in the surrounding context"}]
 }
 If nothing needed correcting, "changes" must be an empty array and "correctedText" must be the original wording with the markers simply removed. Never invent content the transcript doesn't support.`;
