@@ -73,16 +73,19 @@ async function insertCall({
 // HeadObject backfill existing recordings needed (src/scripts/
 // backfillCostLedger.js) because this didn't exist before. Basis for
 // storage cost (src/storageCostJob.js, schema.sql's cost_ledger comment).
-async function markCallStored(callId, storageKey, durationSeconds, sizeBytes) {
+// storageTier records which tier's bucket this recording actually landed
+// in (see schema.sql's comment on calls.storage_tier) -- defaults to
+// 'standard' so every pre-tiering caller keeps working unchanged.
+async function markCallStored(callId, storageKey, durationSeconds, sizeBytes, storageTier = "standard") {
   if (durationSeconds !== undefined && durationSeconds !== null) {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3, size_bytes = $4 WHERE id = $1`,
-      [callId, storageKey, durationSeconds, sizeBytes || null]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3, size_bytes = $4, storage_tier = $5 WHERE id = $1`,
+      [callId, storageKey, durationSeconds, sizeBytes || null, storageTier]
     );
   } else {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored', size_bytes = $3 WHERE id = $1`,
-      [callId, storageKey, sizeBytes || null]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', size_bytes = $3, storage_tier = $4 WHERE id = $1`,
+      [callId, storageKey, sizeBytes || null, storageTier]
     );
   }
 }
@@ -801,7 +804,7 @@ async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
     conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
   }
   const { rows } = await pool.query(
-    `SELECT c.id, c.storage_key AS "storageKey", c.occurred_at AS "occurredAt",
+    `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.occurred_at AS "occurredAt",
             c.direction, ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
      JOIN ghl_accounts g ON g.id = c.ghl_account_id
@@ -898,7 +901,7 @@ async function listCoverageGaps(tenantId, { page = 1, pageSize = 20 } = {}) {
 
 async function getCall(callId) {
   const { rows } = await pool.query(
-    `SELECT c.id, c.storage_key AS "storageKey", c.recording_status AS "recordingStatus",
+    `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.recording_status AS "recordingStatus",
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
             c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
             c.transcription_attempts AS "transcriptionAttempts",
@@ -1163,9 +1166,12 @@ async function updateTenantOwner(tenantId, ownerUserId) {
 // already been purged (src/tenantPurge.js deletes its recordings), so
 // there's nothing left to bill; 'cancellation_pending' still has its data
 // for the whole grace period and keeps being billed normally until then.
-async function listAllTenantIds() {
-  const { rows } = await pool.query(`SELECT id FROM tenants WHERE status != 'canceled'`);
-  return rows.map((r) => r.id);
+// id + storageTier per active (non-canceled) tenant -- storageCostJob.js
+// needs the tier to look up that tenant's own free-GB/overage-rate from
+// billingRates.js's STORAGE_TIERS, not a flat rate shared by everyone.
+async function listActiveTenants() {
+  const { rows } = await pool.query(`SELECT id, storage_tier AS "storageTier" FROM tenants WHERE status != 'canceled'`);
+  return rows;
 }
 
 // Cumulative margin (all-time, every category) per active tenant -- the
@@ -1207,12 +1213,25 @@ async function getTotalStoredBytesForTenant(tenantId) {
 
 async function getTenantById(id) {
   const { rows } = await pool.query(
-    `SELECT id, name, owner_user_id AS "ownerUserId", status,
+    `SELECT id, name, owner_user_id AS "ownerUserId", status, storage_tier AS "storageTier",
             cancellation_requested_at AS "cancellationRequestedAt",
             purge_at AS "purgeAt", canceled_at AS "canceledAt"
      FROM tenants WHERE id = $1`,
     [id]
   );
+  return rows[0] || null;
+}
+
+// Operator-only (see routes/operator.js's own tier route) -- which bucket
+// pool a tenant is billed/stored against going forward. Never touches
+// calls already saved under the old tier; see schema.sql's comment on
+// calls.storage_tier for why that's stamped per-recording instead of
+// derived from this live value.
+async function setTenantStorageTier(tenantId, tier) {
+  const { rows } = await pool.query(`UPDATE tenants SET storage_tier = $2 WHERE id = $1 RETURNING id, name, storage_tier AS "storageTier"`, [
+    tenantId,
+    tier,
+  ]);
   return rows[0] || null;
 }
 
@@ -1275,11 +1294,11 @@ async function purgeTenantData(tenantId) {
 // before the DB rows referencing them are gone.
 async function listStorageKeysForTenant(tenantId) {
   const { rows } = await pool.query(
-    `SELECT storage_key AS "storageKey" FROM calls
+    `SELECT storage_key AS "storageKey", storage_tier AS "storageTier" FROM calls
      WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1) AND storage_key IS NOT NULL`,
     [tenantId]
   );
-  return rows.map((r) => r.storageKey);
+  return rows;
 }
 
 // Cross-tenant, for src/routes/operator.js only (see requireOperator) --
@@ -1295,7 +1314,7 @@ async function listStorageKeysForTenant(tenantId) {
 async function listTenantsForOperator() {
   const { rows } = await pool.query(`
     SELECT
-      t.id, t.name, t.status, t.created_at AS "createdAt", t.purge_at AS "purgeAt",
+      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
       u.username AS "ownerUsername",
       (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
@@ -1324,8 +1343,8 @@ async function listTenantsForOperator() {
       -- the route computes from today's rate), these are the actual
       -- recorded receipts, each at the rate that was in effect when it
       -- happened. storageRevenue is the safety-net overage charge only
-      -- (billingRates.js's CLIENT_STORAGE_FREE_GB comment) -- $0 for a
-      -- normal account, never a general storage rate.
+      -- (billingRates.js's STORAGE_TIERS comment) -- $0 for a normal
+      -- account, never a general storage rate.
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionAwsCost",
       (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionRevenue",
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryAwsCost",
@@ -1483,11 +1502,17 @@ async function listUserAccountAccessForTenant(tenantId) {
 // permission-checking layer, always scoped to one tenant since they
 // answer "what can this logged-in user see"), the poller isn't handling
 // a request for any one tenant, so it needs everything at once.
+// storageTier here is the *tenant's* current storage tier -- joined in so
+// src/poller.js can stamp every newly-saved recording with the right
+// bucket without a separate per-account lookup each cycle.
 async function listAllActiveGhlAccounts() {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
-     FROM ghl_accounts WHERE uninstalled_at IS NULL`
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.uninstalled_at IS NULL`
   );
   return rows;
 }
@@ -1500,9 +1525,12 @@ async function listAllActiveGhlAccounts() {
 // need every account regardless of tenant.
 async function listActiveGhlAccountsForTenant(tenantId) {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
-     FROM ghl_accounts WHERE uninstalled_at IS NULL AND tenant_id = $1`,
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.uninstalled_at IS NULL AND ga.tenant_id = $1`,
     [tenantId]
   );
   return rows;
@@ -1722,9 +1750,9 @@ async function getTenantPastStorageByMonth(tenantId) {
 // that's already been billed is a no-op.
 // clientRate/clientRevenue are nullable -- a storage entry recorded
 // before the free-tier/overage policy existed (see billingRates.js's
-// CLIENT_STORAGE_FREE_GB comment) has none, and stays that way: this is
-// a receipt, so a policy that didn't exist yet when the entry was
-// written is never applied to it retroactively.
+// STORAGE_TIERS comment) has none, and stays that way: this is a
+// receipt, so a policy that didn't exist yet when the entry was written
+// is never applied to it retroactively.
 async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
   await pool.query(
     `INSERT INTO cost_ledger (id, tenant_id, category, period_start, period_end, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, backfilled)
@@ -1886,7 +1914,8 @@ module.exports = {
   createTenant,
   updateTenantOwner,
   getTenantById,
-  listAllTenantIds,
+  setTenantStorageTier,
+  listActiveTenants,
   listTenantMargins,
   getTotalStoredBytesForTenant,
   requestTenantCancellation,

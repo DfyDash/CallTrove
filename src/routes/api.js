@@ -375,7 +375,7 @@ router.get("/calls/:id/recording", async (req, res) => {
     success: true,
   });
 
-  const playback = await getPlayback(call.storageKey, filename);
+  const playback = await getPlayback(call.storageKey, filename, call.storageTier);
   if (playback.redirectUrl) {
     return res.redirect(playback.redirectUrl);
   }
@@ -480,7 +480,7 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   }
 
   try {
-    const buffer = await getBuffer(call.storageKey);
+    const buffer = await getBuffer(call.storageKey, call.storageTier);
     const extension = call.storageKey.split(".").pop();
     await transcription.startJob(call.id, buffer, extension);
     await db.markTranscriptionPending(call.id);

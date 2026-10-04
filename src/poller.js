@@ -51,7 +51,7 @@ function getDisposition(message) {
 // with neither, and keeps working exactly as before multi-account
 // support existed. src/poller.js's own per-account loop below passes
 // both explicitly.
-async function processCallMessage(conversation, message, { checkAutoTranscribe = false, api = ghlApi, ghlAccountId, tenantId } = {}) {
+async function processCallMessage(conversation, message, { checkAutoTranscribe = false, api = ghlApi, ghlAccountId, tenantId, storageTier } = {}) {
   const contactId = conversation.contactId;
   if (!contactId) return;
 
@@ -98,8 +98,8 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
       timezone: await api.getAccountTimezone(),
     });
     const key = `${contactId}/${callRowId}.${extension}`;
-    await saveRecording(key, taggedBuffer, tenantId);
-    await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length);
+    await saveRecording(key, taggedBuffer, tenantId, storageTier);
+    await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length, storageTier);
     console.log(`[poller] stored recording for call ${message.id}`);
 
     if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled(ghlAccountId))) {
@@ -121,7 +121,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
 // why this exists). Never touches calls backfill.js inserted -- those are
 // old enough that "still processing" isn't a plausible explanation, so a
 // 'failed' there really does mean GHL has no recording for it.
-async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS, { api = ghlApi, ghlAccountId, tenantId } = {}) {
+async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS, { api = ghlApi, ghlAccountId, tenantId, storageTier } = {}) {
   const candidates = await db.listRetryableFailedCalls(maxAgeMs, ghlAccountId);
 
   for (const call of candidates) {
@@ -156,8 +156,8 @@ async function retryFailedRecordings(maxAgeMs = FAILED_RECORDING_RETRY_WINDOW_MS
         timezone: await api.getAccountTimezone(),
       });
       const key = `${call.contactId}/${call.id}.${extension}`;
-      await saveRecording(key, taggedBuffer, tenantId);
-      await db.markCallStored(call.id, key, durationSeconds, taggedBuffer.length);
+      await saveRecording(key, taggedBuffer, tenantId, storageTier);
+      await db.markCallStored(call.id, key, durationSeconds, taggedBuffer.length, storageTier);
       console.log(`[poller] retry succeeded for call ${call.ghlCallId} (recording was still processing)`);
     } catch (err) {
       // Still not ready, or genuinely never going to have one -- leave it
@@ -177,7 +177,7 @@ async function pollOneAccount(account) {
   const api = await accountCredentials.clientForAccount(account);
   if (!api.isConfigured()) return;
 
-  await retryFailedRecordings(FAILED_RECORDING_RETRY_WINDOW_MS, { api, ghlAccountId: account.id, tenantId: account.tenantId });
+  await retryFailedRecordings(FAILED_RECORDING_RETRY_WINDOW_MS, { api, ghlAccountId: account.id, tenantId: account.tenantId, storageTier: account.storageTier });
 
   let checkpoint = await db.getAccountLastSyncedAt(account.id);
   if (!checkpoint) {
@@ -205,7 +205,13 @@ async function pollOneAccount(account) {
 
   for (const { conversation, message } of newMessages) {
     try {
-      await processCallMessage(conversation, message, { checkAutoTranscribe: true, api, ghlAccountId: account.id, tenantId: account.tenantId });
+      await processCallMessage(conversation, message, {
+        checkAutoTranscribe: true,
+        api,
+        ghlAccountId: account.id,
+        tenantId: account.tenantId,
+        storageTier: account.storageTier,
+      });
       checkpoint = new Date(message.dateAdded);
       await db.setAccountLastSyncedAt(account.id, checkpoint);
     } catch (err) {

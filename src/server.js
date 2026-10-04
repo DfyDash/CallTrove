@@ -15,6 +15,7 @@ const callSummaryPoller = require("./callSummaryPoller");
 const callDigestJob = require("./callDigestJob");
 const storageCostJob = require("./storageCostJob");
 const alerting = require("./alerting");
+const billingRates = require("./billingRates");
 const db = require("./db");
 
 const app = express();
@@ -27,10 +28,15 @@ app.set("trust proxy", 1); // behind nginx, which terminates TLS
 // mediaSrc: recording playback redirects to a presigned S3 URL when
 // STORAGE_DRIVER=s3 (a different origin than the app itself), so that
 // origin has to be allowed explicitly or the browser silently refuses to
-// load the audio -- the <audio> element renders, but nothing plays.
+// load the audio -- the <audio> element renders, but nothing plays. Both
+// storage-tier buckets (billingRates.js's STORAGE_TIERS) need to be
+// allowed, not just one -- a HIPAA-tier account's recordings redirect to
+// a different bucket origin than a standard-tier account's.
 const mediaSrc = ["'self'"];
-if (process.env.STORAGE_DRIVER === "s3" && process.env.S3_BUCKET) {
-  mediaSrc.push(`https://${process.env.S3_BUCKET}.s3.${process.env.S3_REGION || "us-east-1"}.amazonaws.com`);
+if (process.env.STORAGE_DRIVER === "s3") {
+  const region = process.env.S3_REGION || "us-east-1";
+  const buckets = new Set(Object.values(billingRates.STORAGE_TIERS).map((t) => t.bucket).filter(Boolean));
+  for (const bucket of buckets) mediaSrc.push(`https://${bucket}.s3.${region}.amazonaws.com`);
 }
 
 app.use(

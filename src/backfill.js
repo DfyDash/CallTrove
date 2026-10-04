@@ -90,7 +90,7 @@ async function runForAccount(account, api, totals, { dryRun = false } = {}) {
           continue;
         }
         try {
-          await processCallMessage(conversation, message, { api, ghlAccountId: account.id, tenantId: account.tenantId });
+          await processCallMessage(conversation, message, { api, ghlAccountId: account.id, tenantId: account.tenantId, storageTier: account.storageTier });
           totals.callsSaved += 1;
         } catch (err) {
           totals.callsFailed += 1;

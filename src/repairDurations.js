@@ -22,7 +22,7 @@ function contentTypeFor(storageKey) {
 
 async function run({ dryRun = false } = {}) {
   const { rows: calls } = await db.pool.query(
-    `SELECT id, ghl_call_id AS "ghlCallId", storage_key AS "storageKey", duration_seconds AS "durationSeconds"
+    `SELECT id, ghl_call_id AS "ghlCallId", storage_key AS "storageKey", storage_tier AS "storageTier", duration_seconds AS "durationSeconds"
      FROM calls WHERE storage_key IS NOT NULL ORDER BY occurred_at ASC`
   );
 
@@ -35,7 +35,7 @@ async function run({ dryRun = false } = {}) {
   for (const call of calls) {
     let buffer;
     try {
-      buffer = await getBuffer(call.storageKey);
+      buffer = await getBuffer(call.storageKey, call.storageTier);
     } catch (err) {
       console.error(`  [skip] ${call.ghlCallId}: couldn't read ${call.storageKey} from storage:`, err.message);
       unreadable++;

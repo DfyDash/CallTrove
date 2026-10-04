@@ -8,6 +8,7 @@ const express = require("express");
 const db = require("../db");
 const tenantPurge = require("../tenantPurge");
 const billingRates = require("../billingRates");
+const storage = require("../storage");
 const { requireOperator, requireCsrf } = require("../auth");
 
 const router = express.Router();
@@ -39,7 +40,7 @@ function num(v) {
 // rates the way the estimate is. totalAwsCost/totalRevenue/margin are
 // computed here from those real sums -- storageRevenue is a safety-net
 // overage charge, $0 for a normal account (see billingRates.js's
-// CLIENT_STORAGE_FREE_GB comment), not a general storage rate.
+// STORAGE_TIERS comment), not a general storage rate.
 router.get("/tenants", async (req, res) => {
   const tenants = await db.listTenantsForOperator();
   res.json(
@@ -130,6 +131,39 @@ router.post("/tenants/:id/purge", requireCsrf, async (req, res) => {
   } catch (err) {
     res.status(409).json({ error: err.message });
   }
+});
+
+// Which bucket pool a tenant's recordings are saved to going forward
+// (billingRates.js's STORAGE_TIERS) -- a pricing/BAA decision, so operator-
+// only, same as cancel/restore/purge above. Only ever affects recordings
+// saved from this point on; existing ones keep whatever tier was stamped
+// on them at save time (see schema.sql's comment on calls.storage_tier),
+// so this is never a data-migration trigger.
+router.post("/tenants/:id/storage-tier", requireCsrf, async (req, res) => {
+  const tier = (req.body || {}).tier;
+  if (!(tier in billingRates.STORAGE_TIERS)) {
+    return res.status(400).json({ error: `tier must be one of: ${Object.keys(billingRates.STORAGE_TIERS).join(", ")}` });
+  }
+  // Refuses a tier whose bucket isn't actually configured yet -- better to
+  // block the switch than let the next recording for this tenant fail to
+  // save because S3_BUCKET_HIPAA (or similar) was never set.
+  if (storage.driver === "s3" && !billingRates.storageTier(tier).bucket) {
+    return res.status(409).json({ error: `the "${tier}" tier has no S3 bucket configured -- set its bucket env var before assigning a tenant to it` });
+  }
+
+  const tenant = await db.getTenantById(req.params.id);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  if (tenant.storageTier === tier) {
+    return res.json({ status: "unchanged", storageTier: tier });
+  }
+
+  const updated = await db.setTenantStorageTier(tenant.id, tier);
+  await log(
+    req,
+    "tenant_storage_tier_changed",
+    `Storage tier for "${tenant.name}" (${tenant.id}) changed from ${tenant.storageTier} to ${tier} by operator`
+  );
+  res.json({ status: "updated", storageTier: updated.storageTier });
 });
 
 module.exports = router;

@@ -574,8 +574,8 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS digest_schedule_customized BOO
 --     not tied to any single call -- S3 bills storage as an ongoing
 --     monthly charge on whatever's stored, not a one-time event like the
 --     two above. client_revenue is a safety-net overage charge only (see
---     billingRates.js's CLIENT_STORAGE_FREE_GB/CLIENT_STORAGE_OVERAGE_
---     PER_GB_MONTH comment) -- $0 for a normal account, since the free
+--     billingRates.js's STORAGE_TIERS comment) -- $0 for a normal
+--     account, since the free
 --     allowance is sized well above any realistic single-location
 --     account's usage; it only ever charges a genuine high-volume
 --     outlier. A storage entry recorded before this policy existed has
@@ -677,3 +677,23 @@ ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS attempt INTEGER;
 DROP INDEX IF EXISTS cost_ledger_call_category_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS cost_ledger_call_category_attempt_idx
   ON cost_ledger (call_id, category, attempt) WHERE call_id IS NOT NULL;
+
+-- Two storage tiers, same underlying protections (every bucket this app
+-- writes to carries identical encryption/access/logging config -- this
+-- isn't a "more secure" vs "less secure" split). 'hipaa' buys a larger
+-- free allowance and comes with a signed BAA; 'standard' is everyone's
+-- default. See billingRates.js's STORAGE_TIERS for the actual free-GB/
+-- overage-rate/bucket values per tier.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS storage_tier TEXT NOT NULL DEFAULT 'standard';
+ALTER TABLE tenants DROP CONSTRAINT IF EXISTS tenants_storage_tier_check;
+ALTER TABLE tenants ADD CONSTRAINT tenants_storage_tier_check
+  CHECK (storage_tier IN ('standard', 'hipaa'));
+
+-- Which tier's bucket a given recording actually lives in -- stamped at
+-- save time from the tenant's storage_tier *at that moment*, not derived
+-- from the tenant's current tier on every read. A tenant can move tiers
+-- later; without this, every recording saved before that switch would be
+-- looked up in the wrong bucket. Backfilled to 'standard' below since
+-- that's the one bucket that existed before this column did.
+ALTER TABLE calls ADD COLUMN IF NOT EXISTS storage_tier TEXT;
+UPDATE calls SET storage_tier = 'standard' WHERE storage_key IS NOT NULL AND storage_tier IS NULL;

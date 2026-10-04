@@ -92,17 +92,17 @@ async function purgeTenant(tenantId) {
     throw new Error(`Tenant "${tenant.name}" (${tenantId}) is still inside its grace period (eligible ${tenant.purgeAt}) -- refusing to purge.`);
   }
 
-  const storageKeys = await db.listStorageKeysForTenant(tenantId);
-  for (const key of storageKeys) {
+  const recordings = await db.listStorageKeysForTenant(tenantId);
+  for (const { storageKey, storageTier } of recordings) {
     try {
-      await deleteRecording(key);
+      await deleteRecording(storageKey, storageTier);
     } catch (err) {
-      console.error(`[tenantPurge] failed to delete recording ${key}, continuing:`, err);
+      console.error(`[tenantPurge] failed to delete recording ${storageKey}, continuing:`, err);
     }
   }
 
   await db.purgeTenantData(tenantId);
-  return { tenant, recordingsDeleted: storageKeys.length };
+  return { tenant, recordingsDeleted: recordings.length };
 }
 
 module.exports = { listReady, showStatus, restoreTenant, purgeTenant };

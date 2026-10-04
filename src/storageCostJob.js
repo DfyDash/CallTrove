@@ -66,7 +66,7 @@ async function recordTodaysSnapshot(tenantId, now) {
   await db.upsertDailyStorageSnapshot(tenantId, toDateString(now), totalBytes);
 }
 
-async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
+async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, periodEnd) {
   const { avgBytes, dayCount } = await db.getAverageStoredBytesForTenantPeriod(
     tenantId,
     toDateString(periodStart),
@@ -89,12 +89,12 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
   const gb = bytesBasis / BYTES_PER_GB;
   const awsCost = gb * billingRates.AWS_S3_STANDARD_PER_GB_MONTH;
 
-  // Safety-net overage only -- the free allowance (billingRates.js's
-  // CLIENT_STORAGE_FREE_GB comment) is sized well above any normal
-  // account's real usage, so this is $0 for everyone except a genuine
-  // outlier.
-  const billableGB = Math.max(0, gb - billingRates.CLIENT_STORAGE_FREE_GB);
-  const clientRevenue = usingFallback ? null : billableGB * billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH;
+  // Safety-net overage only, against THIS tenant's own tier (billingRates.js's
+  // STORAGE_TIERS comment) -- sized well above any normal account's real
+  // usage either way, so this is $0 for everyone except a genuine outlier.
+  const tier = billingRates.storageTier(storageTier);
+  const billableGB = Math.max(0, gb - tier.freeGB);
+  const clientRevenue = usingFallback ? null : billableGB * tier.overagePerGbMonth;
 
   await db.recordStorageCost({
     tenantId,
@@ -103,7 +103,7 @@ async function recordMonthlyCostIfDue(tenantId, periodStart, periodEnd) {
     gbMonths: gb,
     awsRate: billingRates.AWS_S3_STANDARD_PER_GB_MONTH,
     awsCost,
-    clientRate: billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
+    clientRate: tier.overagePerGbMonth,
     clientRevenue,
   });
 }
@@ -147,16 +147,16 @@ async function checkNegativeMargins() {
 
 async function runOnce(now = new Date()) {
   const { periodStart, periodEnd } = lastCompletedMonth(now);
-  const tenantIds = await db.listAllTenantIds();
+  const tenants = await db.listActiveTenants();
 
-  for (const tenantId of tenantIds) {
+  for (const { id: tenantId, storageTier } of tenants) {
     try {
       await recordTodaysSnapshot(tenantId, now);
     } catch (err) {
       console.error(`[storageCost] failed to record today's snapshot for tenant ${tenantId}:`, err);
     }
     try {
-      await recordMonthlyCostIfDue(tenantId, periodStart, periodEnd);
+      await recordMonthlyCostIfDue(tenantId, storageTier, periodStart, periodEnd);
     } catch (err) {
       console.error(`[storageCost] failed to record storage cost for tenant ${tenantId}:`, err);
     }

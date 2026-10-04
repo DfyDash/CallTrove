@@ -50,12 +50,19 @@ async function headObjectSize(storageKey) {
   // this process) -- HeadObject directly instead, which is the cheap,
   // metadata-only way to ask S3 for an object's size without downloading
   // it. Local-disk deployments fall back to statSync.
+  //
+  // Bucket is always the 'standard' tier's: this backfill only ever
+  // targets rows with size_bytes still NULL, and every call site that
+  // captures size at save time (src/poller.js, after storage tiering
+  // shipped) already sets it -- so anything left for this script to find
+  // necessarily predates tiering entirely, back when there was only the
+  // one (now 'standard') bucket.
   const { driver } = require("./storage");
   if (driver === "s3") {
     const { S3Client, HeadObjectCommand } = require("@aws-sdk/client-s3");
     const client = new S3Client({ region: process.env.S3_REGION });
     const res = await client.send(
-      new HeadObjectCommand({ Bucket: process.env.S3_BUCKET, Key: `recordings/${storageKey}` })
+      new HeadObjectCommand({ Bucket: billingRates.storageTier("standard").bucket, Key: `recordings/${storageKey}` })
     );
     return res.ContentLength;
   }

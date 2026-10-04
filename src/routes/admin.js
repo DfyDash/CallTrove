@@ -428,13 +428,15 @@ router.get("/settings", requireAccount, async (req, res) => {
 // transcription, AI summaries, and storage.
 router.get("/billing", async (req, res) => {
   const tenantId = req.session.user.tenantId;
+  const tenant = await db.getTenantById(tenantId);
 
   const current = await db.getTenantCurrentPeriodUsage(tenantId);
 
   const storedBytes = await db.getTotalStoredBytesForTenant(tenantId);
   const BYTES_PER_GB = 1024 ** 3;
   const usedGB = storedBytes / BYTES_PER_GB;
-  const freeGB = billingRates.CLIENT_STORAGE_FREE_GB;
+  const tier = billingRates.storageTier(tenant.storageTier);
+  const freeGB = tier.freeGB;
 
   const [pastUsage, pastStorage] = await Promise.all([
     db.getTenantPastUsageByMonth(tenantId),
@@ -480,7 +482,7 @@ router.get("/billing", async (req, res) => {
       freeGB,
       remainingGB: Math.max(0, freeGB - usedGB),
       overageGB: Math.max(0, usedGB - freeGB),
-      overageRate: billingRates.CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
+      overageRate: tier.overagePerGbMonth,
     },
     pastMonths,
   });
@@ -858,7 +860,7 @@ router.get("/download-all", async (req, res) => {
   for (const call of calls) {
     let buffer;
     try {
-      buffer = await getBuffer(call.storageKey);
+      buffer = await getBuffer(call.storageKey, call.storageTier);
     } catch (err) {
       console.error(`[admin] skipping call ${call.id} in export, couldn't read recording:`, err);
       continue;

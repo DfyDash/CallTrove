@@ -208,7 +208,7 @@ async function loadSession() {
   if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
 
   if (!me.isOperator) {
-    operatorRows.innerHTML = `<tr><td colspan="4">Operator access required.</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="5">Operator access required.</td></tr>`;
     return false;
   }
   return true;
@@ -216,6 +216,18 @@ async function loadSession() {
 
 function formatMoney(n) {
   return `$${Number(n).toFixed(2)}`;
+}
+
+// Disabled for a canceled tenant -- nothing left to provision storage
+// for, and switching it would have no effect anyway.
+function storageTierSelect(t) {
+  const tier = t.storageTier || "standard";
+  const disabled = t.status === "canceled" ? "disabled" : "";
+  const option = (value, label) => `<option value="${value}" ${tier === value ? "selected" : ""}>${label}</option>`;
+  return `<select class="storage-tier-select" data-id="${escapeHtml(t.id)}" ${disabled}>
+      ${option("standard", "Standard")}
+      ${option("hipaa", "HIPAA")}
+    </select>`;
 }
 
 function actionsForTenant(t) {
@@ -236,7 +248,7 @@ function actionsForTenant(t) {
 async function loadTenants() {
   const res = await fetch("/api/operator/tenants");
   if (!res.ok) {
-    operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="5">Could not load accounts.</td></tr>`;
     analyticsSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load analytics.</p>`;
     costSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load cost &amp; revenue.</p>`;
     return;
@@ -257,7 +269,7 @@ function renderAccounts() {
   const tenants = filterAndSort(cachedTenants);
   if (tenants.length === 0) {
     accountsAzStrip.innerHTML = "";
-    operatorRows.innerHTML = `<tr><td colspan="4">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="5">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
   renderGroupedRows(
@@ -265,11 +277,12 @@ function renderAccounts() {
     accountsAzStrip,
     tenants,
     "accounts",
-    4,
+    5,
     (t) => `
       <td data-label="Account"><a href="#account/${encodeURIComponent(t.id)}" class="account-detail-link">${escapeHtml(t.name)}</a></td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
+      <td data-label="Storage tier">${storageTierSelect(t)}</td>
       <td data-label="Actions">${actionsForTenant(t)}</td>
     `
   );
@@ -391,6 +404,29 @@ operatorRows.addEventListener("click", async (e) => {
     purgeConfirm.hidden = false;
     purgeConfirmInput.focus();
   }
+});
+
+operatorRows.addEventListener("change", async (e) => {
+  const select = e.target.closest(".storage-tier-select");
+  if (!select) return;
+
+  const tenant = cachedTenants.find((t) => t.id === select.dataset.id);
+  const previousTier = tenant ? tenant.storageTier || "standard" : "standard";
+  const tier = select.value;
+  select.disabled = true;
+  const res = await fetch(`/api/operator/tenants/${select.dataset.id}/storage-tier`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ tier }),
+  });
+  select.disabled = false;
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Could not change storage tier");
+    select.value = previousTier;
+    return;
+  }
+  loadTenants();
 });
 
 cancelPurgeBtn.addEventListener("click", () => {

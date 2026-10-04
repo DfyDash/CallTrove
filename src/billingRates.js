@@ -48,16 +48,51 @@ const CLIENT_AI_SUMMARY_PER_CALL = Number(process.env.CLIENT_AI_SUMMARY_RATE_PER
 // Storage safety net against a disproportionately high-volume account
 // (a call-center-scale client would otherwise absorb the flat monthly
 // fee's entire margin in storage alone) -- NOT meant to charge normal
-// accounts anything: 100GB comfortably covers a typical single-location
-// account for years (CallTrove's own real account ran about 22GB/year
-// at its actual call volume), so this is a ceiling for outliers, not a
-// quota anyone normal should ever see. $0.08/GB-month past that is
-// roughly 3.5x AWS's own $0.023/GB-month cost, and about 6.6x cheaper
-// than GHL's own equivalent call-recording storage rate (their
-// $0.0005/minute converts to roughly $0.53/GB-month) -- confirmed
-// against GHL's official LC Phone Pricing & Billing Guide, not guessed.
-const CLIENT_STORAGE_FREE_GB = Number(process.env.CLIENT_STORAGE_FREE_GB || 100);
-const CLIENT_STORAGE_OVERAGE_PER_GB_MONTH = Number(process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH || 0.08);
+// accounts anything: even the smaller (standard) tier's 100GB comfortably
+// covers a typical single-location account for years (CallTrove's own
+// real account ran about 22GB/year at its actual call volume), so this is
+// a ceiling for outliers, not a quota anyone normal should ever see.
+// $0.08/GB-month past that is roughly 3.5x AWS's own $0.023/GB-month
+// cost, and about 6.6x cheaper than GHL's own equivalent call-recording
+// storage rate (their $0.0005/minute converts to roughly $0.53/GB-month)
+// -- confirmed against GHL's official LC Phone Pricing & Billing Guide,
+// not guessed.
+//
+// Two tiers, each tenant assigned to exactly one (tenants.storage_tier):
+// 'standard' is the default; 'hipaa' trades a higher price for more free
+// storage and a signed BAA. Both tiers' buckets carry identical
+// encryption/access/logging config -- this is a pricing/paperwork split,
+// not a "more secure vs. less secure" one. Each tier writes to its own S3
+// bucket (src/storage/index.js resolves which one per call), so the two
+// pools of recordings never mix even though the protections are the
+// same.
+const STORAGE_TIERS = {
+  standard: {
+    freeGB: Number(process.env.CLIENT_STORAGE_FREE_GB_STANDARD || process.env.CLIENT_STORAGE_FREE_GB || 100),
+    overagePerGbMonth: Number(
+      process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH_STANDARD || process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH || 0.08
+    ),
+    // Falls back to the legacy single-bucket env var so an existing
+    // deployment (one bucket, every tenant 'standard' by default) keeps
+    // working unchanged until S3_BUCKET_HIPAA is actually set up.
+    bucket: process.env.S3_BUCKET_STANDARD || process.env.S3_BUCKET,
+  },
+  hipaa: {
+    freeGB: Number(process.env.CLIENT_STORAGE_FREE_GB_HIPAA || 150),
+    overagePerGbMonth: Number(
+      process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH_HIPAA || process.env.CLIENT_STORAGE_OVERAGE_RATE_PER_GB_MONTH || 0.08
+    ),
+    bucket: process.env.S3_BUCKET_HIPAA,
+  },
+};
+
+// Looks up a tier's config, falling back to 'standard' for an unknown or
+// missing tier (e.g. a tenant row written before this column existed, or
+// a bad value that somehow got in despite the CHECK constraint) rather
+// than throwing -- storage cost/display code should degrade, not crash.
+function storageTier(tier) {
+  return STORAGE_TIERS[tier] || STORAGE_TIERS.standard;
+}
 
 module.exports = {
   AWS_TRANSCRIBE_PER_MINUTE,
@@ -66,6 +101,6 @@ module.exports = {
   AWS_S3_STANDARD_PER_GB_MONTH,
   CLIENT_TRANSCRIPTION_PER_MINUTE,
   CLIENT_AI_SUMMARY_PER_CALL,
-  CLIENT_STORAGE_FREE_GB,
-  CLIENT_STORAGE_OVERAGE_PER_GB_MONTH,
+  STORAGE_TIERS,
+  storageTier,
 };
