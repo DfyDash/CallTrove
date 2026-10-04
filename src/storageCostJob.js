@@ -37,12 +37,19 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const BYTES_PER_GB = 1024 ** 3;
 
-// Negative-margin safety net: a client whose cumulative AWS cost has
-// overtaken their cumulative revenue (see db.listTenantMargins) gets
-// flagged promptly instead of waiting for a month-end reconciliation to
-// notice -- this is the actual mechanism meant to catch a disproportionately
-// high-volume account before it quietly erodes margin for a billing cycle
-// or more. Re-sent at most once per cooldown per tenant while it stays
+// Usage-cost safety net: a client whose cumulative AWS usage cost has
+// overtaken the cumulative PER-USE revenue tracked for that same usage
+// (see db.listTenantMargins) gets flagged promptly instead of waiting for
+// a month-end reconciliation to notice -- this is the actual mechanism
+// meant to catch a disproportionately high-volume account before it
+// quietly erodes margin for a billing cycle or more. Deliberately NOT a
+// true profit/loss check: there's no base-subscription-fee tracking in
+// this system yet (see routes/admin.js's /billing comment), so this only
+// ever compares AWS cost against the metered transcription/AI-summary/
+// storage-overage markup -- a profitable subscriber can still trip this
+// if their usage alone outpaces that markup, which is exactly why the
+// alert email says so explicitly rather than calling it "unprofitable".
+// Re-sent at most once per cooldown per tenant while it stays
 // negative, same reasoning as src/alerting.js's ALERT_COOLDOWN_MS.
 const MARGIN_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const marginAlertState = new Map(); // tenantId -> last alerted timestamp
@@ -153,7 +160,7 @@ async function recordMonthlyCostIfDue(tenantId, storageTier, periodStart, period
 
 async function checkNegativeMargins() {
   if (!email.isEnabled() || !ALERT_TO) {
-    console.log("[storageCost] would check negative margins, but email isn't configured (ALERT_EMAIL_TO/Resend) -- skipping");
+    console.log("[storageCost] would check AWS-cost-vs-usage-revenue gaps, but email isn't configured (ALERT_EMAIL_TO/Resend) -- skipping");
     return;
   }
   const margins = await db.listTenantMargins();
@@ -174,16 +181,16 @@ async function checkNegativeMargins() {
     try {
       await email.sendEmail({
         to: ALERT_TO,
-        subject: `CallTrove alert: "${t.name}" has gone margin-negative`,
-        text: `"${t.name}"'s cumulative AWS cost ($${totalCost.toFixed(2)}) has overtaken its cumulative revenue ($${totalRevenue.toFixed(2)}) -- a lifetime margin of $${margin.toFixed(2)}.\n\nWhat this means: this account is now costing more than it's bringing in, across its entire history with CallTrove. Usually means either a genuine high-volume outlier (storage, transcription, or AI summary usage well above a typical account) or a rate that needs revisiting for this client specifically.\n\nCheck Operator > Accounts > "${t.name}" for the breakdown by category.\n\nYou'll get another email like this at most once a day while it stays negative.`,
+        subject: `CallTrove: "${t.name}"'s AWS usage cost is outpacing its per-use revenue`,
+        text: `"${t.name}"'s cumulative AWS usage cost ($${totalCost.toFixed(2)}) is higher than the per-use revenue tracked for that same usage ($${totalRevenue.toFixed(2)}) -- a gap of $${Math.abs(margin).toFixed(2)}.\n\nThis is NOT the account's overall profit or loss -- it only compares AWS cost (storage, transcription, AI summaries) against the per-use markup charged on those same things. It does not include any base subscription fee, since that isn't tracked in this system yet. A real paying customer can show up here and still be profitable overall once their subscription is counted.\n\nWhat it usually means: a genuine high-volume outlier (storage, transcription, or AI summary usage well above a typical account) or a per-use rate that needs revisiting for this client specifically.\n\nCheck Operator > Accounts > "${t.name}" for the breakdown by category.\n\nYou'll get another email like this at most once a day while the gap stays open.`,
       });
       // Only start the cooldown once the send actually succeeded -- a
       // failed send (SES throttling, network blip) should retry next
-      // cycle, not go quiet on a genuinely negative-margin tenant for up
+      // cycle, not go quiet on a tenant with a genuine cost-vs-revenue gap for up
       // to 24h with no email ever delivered.
       marginAlertState.set(t.id, now);
     } catch (err) {
-      console.error(`[storageCost] failed to send negative-margin alert for tenant ${t.id}:`, err);
+      console.error(`[storageCost] failed to send usage-cost alert for tenant ${t.id}:`, err);
     }
   }
 }
@@ -208,7 +215,7 @@ async function runOnce(now = new Date()) {
   try {
     await checkNegativeMargins();
   } catch (err) {
-    console.error("[storageCost] negative-margin check failed:", err);
+    console.error("[storageCost] usage-cost-vs-revenue check failed:", err);
   }
 }
 
