@@ -129,6 +129,19 @@ router.post("/tenants/:id/purge", requireCsrf, async (req, res) => {
     );
     res.json({ status: "canceled", recordingsDeleted: result.recordingsDeleted });
   } catch (err) {
+    // Logged even on failure (operator actions have no tenant_id -- see
+    // db.logAudit's comment -- the tenant is still named in err.message
+    // itself) so a repeatedly-failing purge leaves a real trail instead
+    // of only ever surfacing in whoever's browser happened to be looking
+    // when it failed. Its own try/catch: the operator must still get the
+    // real 409 even if this logging call itself fails (e.g. a transient
+    // DB problem -- plausible exactly when purge is already failing for
+    // infra reasons), not a hung request with no response at all.
+    try {
+      await log(req, "tenant_purge_failed", err.message || String(err));
+    } catch (logErr) {
+      console.error("[operator] failed to log purge failure:", logErr);
+    }
     res.status(409).json({ error: err.message });
   }
 });

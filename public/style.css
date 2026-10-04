@@ -1673,6 +1673,29 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
+/* [hidden] already handles the not-shown state (display: none, from the
+   UA stylesheet) -- this only needs to set how it looks once that
+   attribute is removed, never force a display value that would fight it. */
+.purge-overdue-banner {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 8px;
+}
+
+.purge-overdue-row-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
 .digest-upsell {
   font-size: 0.78rem;
   color: var(--muted);

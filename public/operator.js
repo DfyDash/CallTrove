@@ -11,6 +11,15 @@ const purgeConfirmInput = document.getElementById("purge-confirm-input");
 const confirmPurgeBtn = document.getElementById("confirm-purge-btn");
 const cancelPurgeBtn = document.getElementById("cancel-purge-btn");
 const purgeError = document.getElementById("purge-error");
+const purgeOverdueBanner = document.getElementById("purge-overdue-banner");
+
+// How many days past becoming purge-eligible an account can sit still
+// un-purged before it's flagged as needing attention, rather than just
+// quietly waiting for someone to notice -- see tenantPurge.js's
+// all-or-nothing purge: a repeatedly-failing purge otherwise leaves an
+// account stuck in cancellation_pending with nothing surfacing that on
+// its own.
+const PURGE_OVERDUE_DAYS = 2;
 
 const activityRows = document.getElementById("operator-activity-rows");
 const activityPrevBtn = document.getElementById("operator-activity-prev-btn");
@@ -230,6 +239,18 @@ function storageTierSelect(t) {
     </select>`;
 }
 
+// Whole days since a tenant became eligible for purge and still wasn't
+// (0 if not eligible yet, not pending, or just became eligible today).
+function daysPastEligible(t) {
+  if (t.status !== "cancellation_pending" || !t.purgeAt) return 0;
+  const ms = Date.now() - new Date(t.purgeAt).getTime();
+  return ms > 0 ? Math.floor(ms / (24 * 60 * 60 * 1000)) : 0;
+}
+
+function isPurgeOverdue(t) {
+  return daysPastEligible(t) >= PURGE_OVERDUE_DAYS;
+}
+
 function actionsForTenant(t) {
   if (t.status === "active") {
     return `<button type="button" class="cancel-tenant-btn" data-id="${escapeHtml(t.id)}">Cancel</button>`;
@@ -237,10 +258,16 @@ function actionsForTenant(t) {
   if (t.status === "cancellation_pending") {
     const purgeAt = new Date(t.purgeAt);
     const eligible = purgeAt <= new Date();
+    const overdueDays = daysPastEligible(t);
     return `<button type="button" class="restore-tenant-btn" data-id="${escapeHtml(t.id)}">Restore</button>
       <button type="button" class="purge-tenant-btn delete-btn" data-id="${escapeHtml(t.id)}" data-name="${escapeHtml(t.name)}" ${eligible ? "" : "disabled"}>
         ${eligible ? "Delete" : `Eligible ${purgeAt.toLocaleDateString()}`}
-      </button>`;
+      </button>
+      ${
+        isPurgeOverdue(t)
+          ? `<span class="purge-overdue-row-badge" title="Eligible for purge ${overdueDays} day(s) ago but still not purged -- check the Activity log for why it's failing">${overdueDays}d overdue</span>`
+          : ""
+      }`;
   }
   return `<span class="settings-note">-</span>`; // canceled -- nothing left to do
 }
@@ -265,7 +292,23 @@ function renderAll() {
 
 const accountsAzStrip = document.getElementById("accounts-az-strip");
 
+// Always computed off the full, unfiltered list -- an overdue purge must
+// stay visible regardless of whatever search is currently typed in, or
+// it could sit hidden behind a filter indefinitely, same problem this
+// banner exists to prevent in the first place.
+function renderPurgeOverdueBanner() {
+  const overdue = cachedTenants.filter(isPurgeOverdue);
+  purgeOverdueBanner.hidden = overdue.length === 0;
+  purgeOverdueBanner.textContent =
+    overdue.length === 0
+      ? ""
+      : `⚠ ${overdue.length} account${overdue.length === 1 ? "" : "s"} overdue for purge -- eligible but still not deleted: ${overdue
+          .map((t) => `"${t.name}" (${daysPastEligible(t)}d)`)
+          .join(", ")}`;
+}
+
 function renderAccounts() {
+  renderPurgeOverdueBanner();
   const tenants = filterAndSort(cachedTenants);
   if (tenants.length === 0) {
     accountsAzStrip.innerHTML = "";
