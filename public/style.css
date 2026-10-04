@@ -523,6 +523,7 @@ a:hover {
    being crammed into the filter bar next to unrelated controls. */
 .contact-context {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
@@ -549,6 +550,20 @@ a:hover {
 .contact-context-name {
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.contact-export-link {
+  margin-left: auto;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+}
+/* Same gotcha as .nav-link[hidden] above: .button-link's own display:
+   inline-block would otherwise beat the [hidden] attribute's UA-stylesheet
+   display:none, leaving this admin-only export button visibly rendered
+   (and clickable, just 403'd server-side) for a non-admin viewing a
+   contact. */
+.contact-export-link[hidden] {
+  display: none;
 }
 
 .filter-dates {

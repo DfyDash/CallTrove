@@ -15,6 +15,7 @@ const dispositionSelect = document.getElementById("disposition-select");
 const statGrid = document.getElementById("stat-grid");
 const contactContext = document.getElementById("contact-context");
 const contactContextName = document.getElementById("contact-context-name");
+const contactExportLink = document.getElementById("contact-export-link");
 const backToContactsBtn = document.getElementById("back-to-contacts-btn");
 const dateFromInput = document.getElementById("date-from");
 const dateToInput = document.getElementById("date-to");
@@ -27,6 +28,11 @@ const nextPageBtn = document.getElementById("next-page-btn");
 let viewAs = "";
 let transcriptionEnabled = false;
 let csrfToken = "";
+// Gates the "export everything for this contact" link -- a bulk-download
+// tool for someone else's full call/transcript history is an admin-only
+// action, same boundary routes/admin.js's /download-all route itself
+// enforces server-side; this only controls whether the link is shown.
+let isAdmin = false;
 // Picked up from ?accountId= on initial load (set by the switcher itself
 // navigating here -- see loadSession below) and threaded onto every API
 // call afterward. This is the multi-tenant boundary on the client side --
@@ -126,10 +132,12 @@ async function loadSession() {
     });
   }
 
-  if (me.role === "admin") {
+  isAdmin = me.role === "admin";
+  if (isAdmin) {
     adminNav.hidden = false;
     await loadViewAsOptions();
   }
+  updateContactContextUi();
 }
 
 async function loadViewAsOptions() {
@@ -236,14 +244,18 @@ function updateContactContextUi() {
     backToContactsBtn.textContent = "← Back to all contacts";
     contactContextName.textContent = `Viewing: ${state.contactLabel}`;
     contactContext.hidden = false;
+    contactExportLink.hidden = !isAdmin;
+    contactExportLink.href = `/api/admin/download-all?contactId=${encodeURIComponent(state.contactId)}`;
   } else if (state.hasRecording !== null) {
     backToContactsBtn.textContent = "← Clear filter";
     contactContextName.textContent = state.hasRecording
       ? "Showing calls with a recording"
       : "Showing calls with no recording found";
     contactContext.hidden = false;
+    contactExportLink.hidden = true;
   } else {
     contactContext.hidden = true;
+    contactExportLink.hidden = true;
   }
 }
 

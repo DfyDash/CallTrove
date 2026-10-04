@@ -8,6 +8,7 @@ const accountCredentials = require("../accountCredentials");
 const backfill = require("../backfill");
 const email = require("../email");
 const { getBuffer } = require("../storage");
+const { sanitizeForFilename } = require("../filenames");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
 const billingRates = require("../billingRates");
@@ -825,25 +826,38 @@ router.get("/phi-access-log", async (req, res) => {
   res.json(result);
 });
 
-// Bulk export -- everyone's recordings (optionally date-filtered) as one
-// streamed ZIP, not one-by-one. The main use case is getting a full copy
-// of everything before an account is canceled and its storage purged (see
-// the account-cancellation flow), but it's useful any time an admin wants
-// an offline copy. Streams straight to the response as each file is read
-// (archiver + one getBuffer() at a time) rather than buffering the whole
-// export in memory or on disk first.
+// Bulk export -- everyone's recordings (optionally date- or contact-
+// filtered) as one streamed ZIP, not one-by-one. Two use cases share this
+// route: getting a full copy of everything before an account is canceled
+// and its storage purged (date-filtered or unfiltered), and -- with
+// contactId -- answering one individual's HIPAA rights request (access,
+// amendment, accounting of disclosures) within the BAA's 10 business day
+// window, complete with transcripts, not just audio, so there's nothing
+// left to assemble by hand. Streams straight to the response as each file
+// is read (archiver + one getBuffer() at a time) rather than buffering
+// the whole export in memory or on disk first.
 router.get("/download-all", async (req, res) => {
-  const { dateFrom, dateTo } = req.query;
-  const calls = await db.listAllCallsWithRecordings(req.session.user.tenantId, { dateFrom, dateTo });
+  const { dateFrom, dateTo, contactId } = req.query;
+  const calls = await db.listAllCallsWithRecordings(req.session.user.tenantId, { dateFrom, dateTo, contactId });
 
   await log(
     req,
     "bulk_export",
     `Started bulk export of ${calls.length} call recording${calls.length === 1 ? "" : "s"}` +
-      (dateFrom || dateTo ? ` (${dateFrom || "…"} to ${dateTo || "…"})` : "")
+      (dateFrom || dateTo ? ` (${dateFrom || "…"} to ${dateTo || "…"})` : "") +
+      (contactId ? ` for contact ${contactId}` : "")
   );
 
-  const zipName = `calltrove-export-${new Date().toISOString().slice(0, 10)}.zip`;
+  // Named after the contact specifically for a contact-scoped export --
+  // whoever receives this ZIP (the admin requesting it, or whoever they
+  // hand it to for an individual-rights response) shouldn't have to open
+  // it just to confirm whose data is inside. Falls back to the generic
+  // name if no calls matched (nothing to read a contact name from) or the
+  // contact has neither a name nor phone on file.
+  const contactLabel = contactId && calls[0] ? sanitizeForFilename(calls[0].contactName || calls[0].contactPhone || "") : "";
+  const zipName = contactLabel
+    ? `calltrove-export-${contactLabel}-${new Date().toISOString().slice(0, 10)}.zip`
+    : `calltrove-export-${new Date().toISOString().slice(0, 10)}.zip`;
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${zipName}"`);
 
@@ -858,24 +872,70 @@ router.get("/download-all", async (req, res) => {
   archive.pipe(res);
 
   for (const call of calls) {
-    let buffer;
-    try {
-      buffer = await getBuffer(call.storageKey, call.storageTier);
-    } catch (err) {
-      console.error(`[admin] skipping call ${call.id} in export, couldn't read recording:`, err);
-      continue;
-    }
-    if (!buffer) continue;
-
     // call.id.slice(0, 8) makes the filename unique on its own (a UUID
     // collision in the first 8 hex chars is astronomically unlikely), no
-    // separate collision-tracking needed.
+    // separate collision-tracking needed. Computed before the recording
+    // fetch below, not after -- the transcript append must not be skipped
+    // just because the recording read happened to fail (a transient S3
+    // issue has nothing to do with whether the transcript, independently
+    // stored in the DB, is available).
     const ext = call.storageKey.split(".").pop();
-    const who = (call.contactName || call.contactPhone || "unknown").replace(/[^a-zA-Z0-9]+/g, "_");
+    const who = sanitizeForFilename(call.contactName || call.contactPhone || "unknown");
     const date = call.occurredAt ? new Date(call.occurredAt).toISOString().slice(0, 10) : "unknown-date";
-    const name = `${who}/${date}_${call.direction || "call"}_${call.id.slice(0, 8)}.${ext}`;
+    const baseName = `${who}/${date}_${call.direction || "call"}_${call.id.slice(0, 8)}`;
 
-    archive.append(buffer, { name });
+    let recordingIncluded = false;
+    try {
+      const buffer = await getBuffer(call.storageKey, call.storageTier);
+      if (buffer) {
+        archive.append(buffer, { name: `${baseName}.${ext}` });
+        recordingIncluded = true;
+      }
+    } catch (err) {
+      console.error(`[admin] skipping recording for call ${call.id} in export, couldn't read it:`, err);
+    }
+
+    // Alongside the audio, not a separate pass -- a complete individual-
+    // rights response needs the transcript too, not just the recording.
+    // Nothing added for a call with no transcript (never transcribed, or
+    // transcription failed) -- an empty placeholder file would just be
+    // noise with nothing it's actually standing in for.
+    const transcriptIncluded = !!call.transcript;
+    if (transcriptIncluded) {
+      archive.append(call.transcript, { name: `${baseName}_transcript.txt` });
+    }
+
+    // Per-call PHI access trail for a contact-scoped export only -- this
+    // is specifically what answers a HIPAA "accounting of disclosures"
+    // request (45 CFR 164.528): a record of exactly which of this
+    // person's recordings/transcripts actually went into a given
+    // disclosure, not just the summary count the audit log entry above
+    // has. Not written for the plain tenant-wide backup export -- that's
+    // not a disclosure to or about any one individual.
+    if (contactId) {
+      // Best effort, like the cost-ledger writes elsewhere in this app
+      // (e.g. transcriptionPoller.js) -- a logging failure here must not
+      // abort the export itself. Headers and some ZIP bytes may already
+      // be streamed to the client by this point in the loop; a thrown
+      // error here would just hang or truncate the download with no
+      // error the admin could even see, for what would otherwise be a
+      // perfectly good export.
+      try {
+        await db.logPhiAccess({
+          userId: req.session.user.id,
+          username: req.session.user.username,
+          action: "bulk_export_included",
+          callId: call.id,
+          success: recordingIncluded || transcriptIncluded,
+          denialReason: recordingIncluded || transcriptIncluded ? null : "recording and transcript both unavailable",
+          ipAddress: req.ip,
+          userAgent: req.get("user-agent"),
+          tenantId: req.session.user.tenantId,
+        });
+      } catch (err) {
+        console.error(`[admin] failed to log PHI access for call ${call.id} during contact export:`, err);
+      }
+    }
   }
 
   await archive.finalize();

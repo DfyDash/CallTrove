@@ -5,6 +5,7 @@ const totp = require("../totp");
 const emailOtp = require("../emailOtp");
 const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
+const { sanitizeForFilename } = require("../filenames");
 const transcription = require("../transcription");
 const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
@@ -331,7 +332,7 @@ router.get("/calls/stats", requireAccount, async (req, res) => {
 
 function buildDownloadFilename(call) {
   const ext = call.storageKey.split(".").pop();
-  const who = (call.name || call.phone || call.contactId || "call").replace(/[^a-zA-Z0-9]+/g, "_");
+  const who = sanitizeForFilename(call.name || call.phone || call.contactId || "call");
   const date = call.occurredAt ? new Date(call.occurredAt).toISOString().slice(0, 10) : "unknown-date";
   return `${who}_${date}_${call.direction || "call"}.${ext}`;
 }

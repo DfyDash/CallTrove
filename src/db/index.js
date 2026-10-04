@@ -792,7 +792,13 @@ async function setDigestSchedule(ghlAccountId, { digestTime1, digestTime2, diges
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
 // (routes/admin.js), which needs every matching row to stream, not one
 // page. dateFrom/dateTo are optional, same semantics as listCalls().
-async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
+// contactId scopes to one contact's calls only -- used both for the
+// plain "export everything" case (no contactId) and for the client-facing
+// "export everything for this contact" button (routes/admin.js), which
+// exists specifically to answer an individual's HIPAA rights request
+// (access/amendment/accounting of disclosures) within the BAA's 10
+// business day window without a manual per-call scramble.
+async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo, contactId } = {}) {
   const conditions = ["c.storage_key IS NOT NULL", "g.tenant_id = $1"];
   const params = [tenantId];
   if (dateFrom) {
@@ -803,9 +809,21 @@ async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
     params.push(dateTo);
     conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
   }
+  if (contactId) {
+    params.push(contactId);
+    conditions.push(`c.ghl_contact_id = $${params.length}`);
+  }
+  // transcript text is only pulled for a contact-scoped export (the
+  // individual-rights use case actually needs it bundled in) -- the
+  // plain tenant-wide pre-cancellation backup doesn't, and this route's
+  // whole point is streaming one recording buffer at a time rather than
+  // holding everything in memory at once; loading every call's full
+  // transcript text up front for a large, unfiltered tenant would work
+  // against that.
+  const transcriptColumn = contactId ? "c.transcript," : "";
   const { rows } = await pool.query(
     `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.occurred_at AS "occurredAt",
-            c.direction, ct.name AS "contactName", ct.phone AS "contactPhone"
+            c.direction, ${transcriptColumn} ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
      JOIN ghl_accounts g ON g.id = c.ghl_account_id
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
