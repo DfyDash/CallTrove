@@ -37,18 +37,22 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 const BYTES_PER_GB = 1024 ** 3;
 
-// Usage-cost safety net: a client whose cumulative AWS usage cost has
-// overtaken the cumulative PER-USE revenue tracked for that same usage
-// (see db.listTenantMargins) gets flagged promptly instead of waiting for
-// a month-end reconciliation to notice -- this is the actual mechanism
-// meant to catch a disproportionately high-volume account before it
-// quietly erodes margin for a billing cycle or more. Deliberately NOT a
-// true profit/loss check: there's no base-subscription-fee tracking in
-// this system yet (see routes/admin.js's /billing comment), so this only
-// ever compares AWS cost against the metered transcription/AI-summary/
-// storage-overage markup -- a profitable subscriber can still trip this
-// if their usage alone outpaces that markup, which is exactly why the
-// alert email says so explicitly rather than calling it "unprofitable".
+// Usage-cost safety net: a client whose cumulative AWS transcription/
+// AI-summary cost has overtaken the cumulative per-use revenue from
+// those same two things (see db.listTenantMargins, and its comment on
+// why storage is deliberately excluded here -- its revenue is $0 by
+// design for any normal account, which made this alert fire constantly
+// and meaninglessly before that exclusion) gets flagged promptly instead
+// of waiting for a month-end reconciliation to notice -- this is the
+// actual mechanism meant to catch a disproportionately high-volume
+// account before it quietly erodes margin for a billing cycle or more.
+// Deliberately NOT a true profit/loss check: there's no
+// base-subscription-fee tracking in this system yet (see
+// routes/admin.js's /billing comment), so this only ever compares AWS
+// cost against the metered transcription/AI-summary markup -- a
+// profitable subscriber can still trip this if their usage alone
+// outpaces that markup, which is exactly why the alert email says so
+// explicitly rather than calling it "unprofitable".
 // Re-sent at most once per cooldown per tenant while it stays
 // negative, same reasoning as src/alerting.js's ALERT_COOLDOWN_MS.
 const MARGIN_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -182,7 +186,7 @@ async function checkNegativeMargins() {
       await email.sendEmail({
         to: ALERT_TO,
         subject: `CallTrove: "${t.name}" is costing more in AWS than it's earning in usage fees`,
-        text: `"${t.name}" has cost $${totalCost.toFixed(2)} in AWS bills so far, but has only earned $${totalRevenue.toFixed(2)} from the per-use fees you charge them (transcription, AI summaries, extra storage) -- a $${Math.abs(margin).toFixed(2)} gap.\n\nThis does NOT mean the account is losing you money overall. It only looks at AWS costs vs. those per-use fees -- it doesn't include whatever they pay for their actual monthly plan, since this system doesn't track that yet. A normal paying customer can easily show up here and still be profitable once you count what they actually pay you each month.\n\nWhat this usually means: either this account is using way more than a typical client (storage, transcription, or AI summaries), or the per-use rate you charge them needs a second look.\n\nSee the breakdown: Operator > Accounts > "${t.name}".\n\nYou'll get this email at most once a day while the gap stays open.`,
+        text: `"${t.name}" has cost $${totalCost.toFixed(2)} in AWS bills for transcription and AI summaries, but has only earned $${totalRevenue.toFixed(2)} from the per-use fees you charge for those -- a $${Math.abs(margin).toFixed(2)} gap.\n\nThis does NOT mean the account is losing you money overall. It only looks at AWS costs vs. those two per-use fees -- it doesn't include whatever they pay for their actual monthly plan, since this system doesn't track that yet. A normal paying customer can easily show up here and still be profitable once you count what they actually pay you each month.\n\nWhat this usually means: either this account is transcribing or summarizing way more calls than a typical client, or the per-use rate you charge them needs a second look.\n\nSee the breakdown: Operator > Accounts > "${t.name}".\n\nYou'll get this email at most once a day while the gap stays open.`,
       });
       // Only start the cooldown once the send actually succeeded -- a
       // failed send (SES throttling, network blip) should retry next

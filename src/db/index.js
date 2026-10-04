@@ -1192,20 +1192,34 @@ async function listActiveTenants() {
   return rows;
 }
 
-// Cumulative margin (all-time, every category) per active tenant -- the
-// basis for src/storageCostJob.js's negative-margin alert. All-time, not
-// month-to-date: cost_ledger is a permanent ledger, and a tenant that's
-// been profitable for a year shouldn't suddenly look "negative" just
-// because this month alone had a cost spike -- the alert cares whether
-// the relationship with this client has gone upside-down overall, not
-// about one month in isolation.
+// Cumulative margin (all-time, transcription + ai_summary only) per
+// active tenant -- the basis for src/storageCostJob.js's usage-cost
+// alert. All-time, not month-to-date: cost_ledger is a permanent ledger,
+// and a tenant that's been profitable for a year shouldn't suddenly look
+// "negative" just because this month alone had a cost spike -- the alert
+// cares whether the relationship with this client has gone upside-down
+// overall, not about one month in isolation.
+//
+// Deliberately excludes the 'storage' category -- it isn't a true
+// per-unit margin line the way transcription/AI-summary are. Its AWS
+// cost is real for every byte stored, but its revenue is $0 by design
+// for any tenant within their free allowance (billingRates.js's
+// STORAGE_TIERS comment: "sized well above any realistic single-location
+// account's usage... not meant to charge normal accounts anything").
+// Including it here meant almost every normal, healthy tenant would show
+// a permanent "negative margin" from storage alone, regardless of real
+// profitability -- a structural false alarm, not an occasional one.
+// (Storage usage genuinely over the free allowance is itself billed at
+// roughly 3.5x AWS's own per-GB cost -- see that same comment -- so even
+// a real outlier doesn't actually erode margin the way under-allowance
+// storage made it falsely appear to here.)
 async function listTenantMargins() {
   const { rows } = await pool.query(`
     SELECT t.id, t.name,
            coalesce(sum(l.aws_cost), 0)::numeric AS "totalCost",
            coalesce(sum(l.client_revenue), 0)::numeric AS "totalRevenue"
     FROM tenants t
-    LEFT JOIN cost_ledger l ON l.tenant_id = t.id
+    LEFT JOIN cost_ledger l ON l.tenant_id = t.id AND l.category IN ('transcription', 'ai_summary')
     WHERE t.status != 'canceled'
     GROUP BY t.id, t.name
   `);
