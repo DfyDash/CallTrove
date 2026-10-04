@@ -460,7 +460,12 @@ router.get("/billing", async (req, res) => {
   }
   const pastMonths = [...byMonth.values()]
     .sort((a, b) => (a.month < b.month ? 1 : -1))
-    .map((m) => ({ ...m, total: m.transcriptionRevenue + m.aiSummaryRevenue + m.storageRevenue }));
+    .map((m) => ({ ...m, total: m.transcriptionRevenue + m.aiSummaryRevenue + m.storageRevenue }))
+    // A month that closed out at $0 everywhere (e.g. a storage entry
+    // exists only because storageCostJob.js runs for every tenant every
+    // month, but nothing was ever owed) has nothing worth showing --
+    // skip it rather than list a row of zeroes.
+    .filter((m) => m.total > 0);
 
   res.json({
     currentPeriod: {
