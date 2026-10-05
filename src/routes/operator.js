@@ -33,14 +33,18 @@ function num(v) {
 // estimatedTranscribeCost stays a live "transcribed minutes x today's
 // rate" figure (shared infra like EC2/RDS is deliberately excluded, same
 // as before) -- it's a quick sanity-check number, not what's shown as
-// the real cost. transcriptionAwsCost/aiSummaryAwsCost/storageAwsCost and
-// the three revenue fields are the real cost_ledger sums (see
-// listTenantsForOperator's own comment): permanent receipts at the rate
-// in effect when each one happened, never recalculated from today's
-// rates the way the estimate is. totalAwsCost/totalRevenue/margin are
-// computed here from those real sums -- storageRevenue is a safety-net
-// overage charge, $0 for a normal account (see billingRates.js's
-// STORAGE_TIERS comment), not a general storage rate.
+// the real cost. transcriptionAwsCost/aiSummaryAwsCost/storageAwsCost/
+// transcriptCleanupAwsCost and the four revenue fields are the real
+// cost_ledger sums (see listTenantsForOperator's own comment): permanent
+// receipts at the rate in effect when each one happened, never
+// recalculated from today's rates the way the estimate is.
+// totalAwsCost/totalRevenue/margin are computed here from those real
+// sums -- storageRevenue is a safety-net overage charge, $0 for a normal
+// account (see billingRates.js's STORAGE_TIERS comment), not a general
+// storage rate. transcriptCleanupRevenue is always exactly equal to
+// transcriptCleanupAwsCost (see transcriptCleanupPoller.js -- billed as
+// an exact cost pass-through, no markup), so it never moves margin on
+// its own, only the top-line totals.
 router.get("/tenants", async (req, res) => {
   const tenants = await db.listTenantsForOperator();
   res.json(
@@ -51,8 +55,10 @@ router.get("/tenants", async (req, res) => {
       const aiSummaryRevenue = num(t.aiSummaryRevenue);
       const storageAwsCost = num(t.storageAwsCost);
       const storageRevenue = num(t.storageRevenue);
-      const totalAwsCost = transcriptionAwsCost + aiSummaryAwsCost + storageAwsCost;
-      const totalRevenue = transcriptionRevenue + aiSummaryRevenue + storageRevenue;
+      const transcriptCleanupAwsCost = num(t.transcriptCleanupAwsCost);
+      const transcriptCleanupRevenue = num(t.transcriptCleanupRevenue);
+      const totalAwsCost = transcriptionAwsCost + aiSummaryAwsCost + storageAwsCost + transcriptCleanupAwsCost;
+      const totalRevenue = transcriptionRevenue + aiSummaryRevenue + storageRevenue + transcriptCleanupRevenue;
       return {
         ...t,
         transcribedMinutes: Math.round((t.transcribedSeconds / 60) * 10) / 10,
@@ -63,6 +69,8 @@ router.get("/tenants", async (req, res) => {
         aiSummaryRevenue,
         storageAwsCost,
         storageRevenue,
+        transcriptCleanupAwsCost,
+        transcriptCleanupRevenue,
         totalAwsCost,
         totalRevenue,
         margin: totalRevenue - totalAwsCost,

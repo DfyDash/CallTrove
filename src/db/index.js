@@ -1456,7 +1456,9 @@ async function listTenantsForOperator() {
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryAwsCost",
       (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryRevenue",
       (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageAwsCost",
-      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageRevenue"
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcript_cleanup') AS "transcriptCleanupAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcript_cleanup') AS "transcriptCleanupRevenue"
     FROM tenants t
     LEFT JOIN users u ON u.id = t.owner_user_id
     ORDER BY t.name

@@ -391,11 +391,17 @@ function renderCostAndRevenue() {
       aiSummaryRevenue: acc.aiSummaryRevenue + t.aiSummaryRevenue,
       storageAwsCost: acc.storageAwsCost + t.storageAwsCost,
       storageRevenue: acc.storageRevenue + t.storageRevenue,
+      transcriptCleanupAwsCost: acc.transcriptCleanupAwsCost + t.transcriptCleanupAwsCost,
+      transcriptCleanupRevenue: acc.transcriptCleanupRevenue + t.transcriptCleanupRevenue,
       totalAwsCost: acc.totalAwsCost + t.totalAwsCost,
       totalRevenue: acc.totalRevenue + t.totalRevenue,
       margin: acc.margin + t.margin,
     }),
-    { transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0, storageAwsCost: 0, storageRevenue: 0, totalAwsCost: 0, totalRevenue: 0, margin: 0 }
+    {
+      transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0,
+      storageAwsCost: 0, storageRevenue: 0, transcriptCleanupAwsCost: 0, transcriptCleanupRevenue: 0,
+      totalAwsCost: 0, totalRevenue: 0, margin: 0,
+    }
   );
 
   costSummary.innerHTML = `
@@ -593,6 +599,8 @@ function renderAccountDetail(t) {
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryRevenue)}</div><div class="stat-label">AI summary revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptCleanupAwsCost)}</div><div class="stat-label">Transcript cleanup cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptCleanupRevenue)}</div><div class="stat-label">Transcript cleanup revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalAwsCost)}</div><div class="stat-label">Total cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.margin)}</div><div class="stat-label">Margin</div></div>
