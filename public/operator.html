@@ -133,19 +133,36 @@
 
         <section id="tab-cost" class="settings-tab-panel viz-root" hidden>
           <h1>Cost &amp; revenue</h1>
-          <p class="settings-note">
-            Real recorded cost and revenue across every active account, combined -- not a
-            live estimate, each figure comes from a permanent ledger entry written at the
-            moment it happened, at whatever rate was actually in effect then (see the
-            Transcription billing rates in each account's own Settings). Changing a rate in
-            the future never rewrites what a past month actually earned. Storage overage
-            revenue is a safety net, not a general rate -- the first 100GB per account is
-            free (well above any normal account's real usage), so it's $0.00 for everyone
-            except a genuine high-volume outlier. For one account's own numbers, click into
-            it from the Accounts tab.
-          </p>
 
-          <div id="operator-cost-summary" class="stat-grid"></div>
+          <div class="settings-section">
+            <h2>Real AWS bill (every service)</h2>
+            <p class="settings-note">
+              The actual AWS invoice this calendar month to date, pulled live from Cost
+              Explorer -- every service, not just the metered ones below. Most of this
+              (EC2, the server; RDS, the database) is a fixed cost of running the platform
+              at all, the same whether one call or ten thousand happen this month -- there's
+              no honest way to split it across accounts, so it's shown here as the real
+              total, never folded into any one account's own numbers.
+            </p>
+            <div id="operator-aws-spend-summary"></div>
+          </div>
+
+          <div class="settings-section">
+            <h2>Metered usage (per account)</h2>
+            <p class="settings-note">
+              Real recorded cost and revenue across every active account, combined -- not a
+              live estimate, each figure comes from a permanent ledger entry written at the
+              moment it happened, at whatever rate was actually in effect then (see the
+              Transcription billing rates in each account's own Settings). Changing a rate in
+              the future never rewrites what a past month actually earned. Storage overage
+              revenue is a safety net, not a general rate -- the first 100GB per account is
+              free (well above any normal account's real usage), so it's $0.00 for everyone
+              except a genuine high-volume outlier. For one account's own numbers, click into
+              it from the Accounts tab.
+            </p>
+
+            <div id="operator-cost-summary" class="stat-grid"></div>
+          </div>
         </section>
 
         <section id="tab-activity" class="settings-tab-panel" hidden>

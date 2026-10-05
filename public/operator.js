@@ -30,6 +30,7 @@ let activityLoaded = false;
 
 const analyticsSummary = document.getElementById("operator-analytics-summary");
 const costSummary = document.getElementById("operator-cost-summary");
+const awsSpendSummary = document.getElementById("operator-aws-spend-summary");
 const accountSearchInput = document.getElementById("operator-account-search");
 const accountSearchResults = document.getElementById("operator-search-results");
 const accountSearchScope = document.getElementById("operator-search-scope");
@@ -225,6 +226,51 @@ async function loadSession() {
 
 function formatMoney(n) {
   return `$${Number(n).toFixed(2)}`;
+}
+
+// Plain formatMoney rounds a real sub-cent line item (Secrets Manager at
+// $0.00005, say) down to a misleading "$0.00" -- this is the one place
+// showing individual real AWS service costs, not rounded totals, so a
+// nonzero amount should never silently look like zero.
+function formatMoneyPrecise(n) {
+  const num = Number(n);
+  if (num !== 0 && Math.abs(num) < 0.01) return `$${num.toFixed(4)}`;
+  return formatMoney(num);
+}
+
+// The real, full AWS bill (src/awsCostExplorer.js) -- fetched once up
+// front alongside loadTenants, not re-fetched on every tenant-list
+// refresh the way cachedTenants is, since it's cached server-side for 6h
+// and costs AWS $0.01 per real fetch.
+async function loadAwsSpend() {
+  try {
+    const res = await fetch("/api/operator/aws-spend");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">${escapeHtml(data.error || "Could not load the real AWS bill.")}</p>`;
+      return;
+    }
+    renderAwsSpend(data);
+  } catch (err) {
+    awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load the real AWS bill.</p>`;
+  }
+}
+
+function renderAwsSpend(data) {
+  if (!data.services || data.services.length === 0) {
+    awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">No AWS spend recorded yet this month.</p>`;
+    return;
+  }
+  const rows = data.services
+    .map((s) => `<tr><td>${escapeHtml(s.name)}</td><td class="amount">${formatMoneyPrecise(s.cost)}</td></tr>`)
+    .join("");
+  awsSpendSummary.innerHTML = `
+    <table>
+      <thead><tr><th>Service</th><th class="amount">Cost (${escapeHtml(data.start)} to ${escapeHtml(data.end)})</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td><strong>Total</strong></td><td class="amount"><strong>${formatMoney(data.total)}</strong></td></tr></tfoot>
+    </table>
+  `;
 }
 
 // Disabled for a canceled tenant -- nothing left to provision storage
@@ -639,6 +685,7 @@ window.addEventListener("hashchange", () => routeToHash(location.hash.replace("#
   const isOperator = await loadSession();
   if (isOperator) {
     await loadTenants();
+    loadAwsSpend();
     routeToHash(location.hash.replace("#", ""));
   }
 })();

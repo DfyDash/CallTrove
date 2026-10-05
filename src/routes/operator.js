@@ -9,6 +9,7 @@ const db = require("../db");
 const tenantPurge = require("../tenantPurge");
 const billingRates = require("../billingRates");
 const storage = require("../storage");
+const awsCostExplorer = require("../awsCostExplorer");
 const { requireOperator, requireCsrf } = require("../auth");
 
 const router = express.Router();
@@ -80,6 +81,26 @@ router.get("/tenants", async (req, res) => {
       };
     })
   );
+});
+
+// The REAL full AWS bill this month, every service -- not the per-tenant
+// metered total above, which only ever covers specific usage events
+// (transcription, AI summary, storage, transcript cleanup) and
+// deliberately excludes EC2/RDS/etc (see src/awsCostExplorer.js's own
+// comment on why). Returns 503 with a clear message, not a raw AWS
+// exception, when the server's IAM role hasn't been granted
+// ce:GetCostAndUsage yet -- confirmed directly that it isn't by default.
+router.get("/aws-spend", async (req, res) => {
+  try {
+    const data = await awsCostExplorer.getMonthToDateSpend();
+    res.json(data);
+  } catch (err) {
+    if (err.name === "AccessDeniedException" || /AccessDenied/i.test(err.message || "")) {
+      return res.status(503).json({ error: "This server's IAM role doesn't have Cost Explorer access yet (ce:GetCostAndUsage)." });
+    }
+    console.error("[operator] failed to fetch AWS Cost Explorer spend:", err);
+    res.status(502).json({ error: "Could not reach AWS Cost Explorer." });
+  }
 });
 
 // Every operator action across every tenant (cancel/restore/purge, each
