@@ -7,7 +7,7 @@ const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
 const { sanitizeForFilename } = require("../filenames");
 const transcription = require("../transcription");
-const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds } = require("../auth");
+const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds, displayName } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
 const router = express.Router();
@@ -456,7 +456,7 @@ router.put("/calls/:id/transcript", requireCsrf, async (req, res) => {
     return res.status(400).json({ error: "transcript cannot be empty" });
   }
 
-  await db.updateCallTranscript(call.id, transcript, req.session.user.username);
+  await db.updateCallTranscript(call.id, transcript, displayName(req.session.user));
   await logAccess(req, { action: "transcript_edited", callId: call.id, success: true });
   res.json({ status: "updated" });
 });

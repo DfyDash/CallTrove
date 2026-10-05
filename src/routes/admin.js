@@ -9,7 +9,7 @@ const backfill = require("../backfill");
 const email = require("../email");
 const { getBuffer } = require("../storage");
 const { sanitizeForFilename } = require("../filenames");
-const { hashPassword, requireAdmin, requireAccount, requireCsrf } = require("../auth");
+const { hashPassword, requireAdmin, requireAccount, requireCsrf, displayName } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
 const billingRates = require("../billingRates");
 const { BAA_VERSION, buildBaaText } = require("../baaText");
@@ -357,12 +357,12 @@ router.post("/users/invite", requireCsrf, async (req, res) => {
   await log(req, "user_invited", `Invited "${inviteEmail}" (role: ${role}, linked to GHL user ${ghlUserId})`);
 
   const inviteUrl = `${req.protocol}://${req.get("host")}/set-password.html?token=${rawToken}`;
-  // Full name when the inviting admin has one on file (self-service
-  // signup collects first/last name, see public/signup.html) -- falls
-  // back to their username (an email address) for admins created another
-  // way, like an earlier invite or manual admin creation, that never had
-  // a name to collect.
-  const inviterName = [req.session.user.firstName, req.session.user.lastName].filter(Boolean).join(" ") || req.session.user.username;
+  // Full name when the inviting admin has one on file: self-service
+  // signup's own first/last name (see public/signup.html), or -- just as
+  // reliably -- the name GHL has on file for them (see createInvitedUser).
+  // Only falls back to their username (an email address) for an admin
+  // created some other way that never had either.
+  const inviterName = displayName(req.session.user);
   let emailSent = false;
   try {
     await email.sendEmail({
