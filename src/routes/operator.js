@@ -103,6 +103,26 @@ router.get("/aws-spend", async (req, res) => {
   }
 });
 
+// The same four headline figures AWS's own Billing console shows (month-
+// to-date, last month's same-period, forecasted total, last month's
+// total) -- see awsCostExplorer.getCostSummary. Unlike /aws-spend above,
+// this never 503s outright on the forecast specifically: forecastTotal
+// is just null with forecastError explaining why (a separate permission,
+// ce:GetCostForecast, not yet granted) when that one piece fails, so the
+// other three real figures still show.
+router.get("/aws-spend-summary", async (req, res) => {
+  try {
+    const data = await awsCostExplorer.getCostSummary();
+    res.json(data);
+  } catch (err) {
+    if (err.name === "AccessDeniedException" || /AccessDenied/i.test(err.message || "")) {
+      return res.status(503).json({ error: "This server's IAM role doesn't have Cost Explorer access yet (ce:GetCostAndUsage)." });
+    }
+    console.error("[operator] failed to fetch AWS Cost Explorer summary:", err);
+    res.status(502).json({ error: "Could not reach AWS Cost Explorer." });
+  }
+});
+
 // Every operator action across every tenant (cancel/restore/purge, each
 // logged above) -- distinct from any one tenant's own Activity log tab
 // (routes/admin.js's /audit-log), which never shows these since operator

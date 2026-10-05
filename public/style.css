@@ -1646,6 +1646,12 @@ tbody tr:last-child td {
   margin-top: 4px;
 }
 
+.stat-tile-note {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
 .stat-compare {
   font-size: 0.75rem;
   color: var(--muted);

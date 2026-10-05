@@ -31,6 +31,7 @@ let activityLoaded = false;
 const analyticsSummary = document.getElementById("operator-analytics-summary");
 const costSummary = document.getElementById("operator-cost-summary");
 const awsSpendSummary = document.getElementById("operator-aws-spend-summary");
+const awsCostSummary = document.getElementById("operator-aws-cost-summary");
 const accountSearchInput = document.getElementById("operator-account-search");
 const accountSearchResults = document.getElementById("operator-search-results");
 const accountSearchScope = document.getElementById("operator-search-scope");
@@ -270,6 +271,62 @@ function renderAwsSpend(data) {
       <tbody>${rows}</tbody>
       <tfoot><tr><td><strong>Total</strong></td><td class="amount"><strong>${formatMoney(data.total)}</strong></td></tr></tfoot>
     </table>
+  `;
+}
+
+// The four AWS-console-style headline figures (src/awsCostExplorer.js's
+// getCostSummary) -- same data source and cache as the per-service
+// breakdown above, just a different shape.
+async function loadAwsCostSummary() {
+  try {
+    const res = await fetch("/api/operator/aws-spend-summary");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      awsCostSummary.innerHTML = `<p class="empty-state empty-state-pad">${escapeHtml(data.error || "Could not load the AWS cost summary.")}</p>`;
+      return;
+    }
+    renderAwsCostSummary(data);
+  } catch (err) {
+    awsCostSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load the AWS cost summary.</p>`;
+  }
+}
+
+// null when there's nothing sensible to compare against (last month had
+// $0 in that same window -- division by zero, not a real percentage).
+function percentChangeNote(current, previous, suffix) {
+  if (!previous) return null;
+  const pct = ((current - previous) / previous) * 100;
+  const arrow = pct >= 0 ? "↑" : "↓";
+  return `${arrow} ${Math.abs(Math.round(pct))}% ${suffix}`;
+}
+
+function renderAwsCostSummary(data) {
+  const mtdNote = percentChangeNote(data.monthToDate, data.lastMonthSamePeriod, "compared to last month for same period");
+  const forecastNote =
+    data.forecastTotal !== null
+      ? percentChangeNote(data.forecastTotal, data.lastMonthTotal, "compared to last month's total costs")
+      : data.forecastError;
+
+  awsCostSummary.innerHTML = `
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.monthToDate)}</div>
+      <div class="stat-label">Month-to-date cost</div>
+      ${mtdNote ? `<div class="stat-tile-note">${escapeHtml(mtdNote)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.lastMonthSamePeriod)}</div>
+      <div class="stat-label">Last month's cost for same time period</div>
+      ${data.lastMonthSamePeriodLabel ? `<div class="stat-tile-note">${escapeHtml(data.lastMonthSamePeriodLabel)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${data.forecastTotal === null ? "—" : formatMoney(data.forecastTotal)}</div>
+      <div class="stat-label">Total forecasted cost for current month</div>
+      ${forecastNote ? `<div class="stat-tile-note">${escapeHtml(forecastNote)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.lastMonthTotal)}</div>
+      <div class="stat-label">Last month's total cost</div>
+    </div>
   `;
 }
 
@@ -686,6 +743,7 @@ window.addEventListener("hashchange", () => routeToHash(location.hash.replace("#
   if (isOperator) {
     await loadTenants();
     loadAwsSpend();
+    loadAwsCostSummary();
     routeToHash(location.hash.replace("#", ""));
   }
 })();
