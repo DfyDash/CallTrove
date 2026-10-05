@@ -45,6 +45,14 @@ const CLIENT_TRANSCRIPTION_PER_MINUTE = Number(process.env.CLIENT_TRANSCRIPTION_
 // ai_summary's quantity/client_revenue use different bases).
 const CLIENT_AI_SUMMARY_PER_CALL = Number(process.env.CLIENT_AI_SUMMARY_RATE_PER_CALL || 0.007);
 
+// Same flat-per-use convention as CLIENT_AI_SUMMARY_PER_CALL, for the same
+// reason: the real AWS cost here (src/transcriptCleanup.js's Bedrock call)
+// is small and consistent enough per call not to need token-metered
+// pricing. Only ever billed when src/transcriptCleanupPoller.js actually
+// called Bedrock -- never for a call where nothing was flagged to begin
+// with, which costs nothing and so charges nothing.
+const CLIENT_TRANSCRIPT_CLEANUP_PER_USE = Number(process.env.CLIENT_TRANSCRIPT_CLEANUP_RATE_PER_USE || 0.01);
+
 // Storage safety net against a disproportionately high-volume account
 // (a call-center-scale client would otherwise absorb the flat monthly
 // fee's entire margin in storage alone) -- NOT meant to charge normal
@@ -122,6 +130,7 @@ module.exports = {
   AWS_S3_STANDARD_PER_GB_MONTH,
   CLIENT_TRANSCRIPTION_PER_MINUTE,
   CLIENT_AI_SUMMARY_PER_CALL,
+  CLIENT_TRANSCRIPT_CLEANUP_PER_USE,
   STORAGE_TIERS,
   storageTier,
   requireTierBucket,

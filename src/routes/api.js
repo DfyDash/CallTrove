@@ -7,8 +7,6 @@ const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
 const { sanitizeForFilename } = require("../filenames");
 const transcription = require("../transcription");
-const transcriptCleanup = require("../transcriptCleanup");
-const billingRates = require("../billingRates");
 const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
@@ -17,10 +15,6 @@ const router = express.Router();
 // See the on-demand /calls/:id/transcribe route below -- each attempt is a
 // real, separately billed AWS Transcribe job whether or not it succeeds.
 const MAX_TRANSCRIPTION_ATTEMPTS = 3;
-
-// Same reasoning as MAX_TRANSCRIPTION_ATTEMPTS -- see the on-demand POST
-// /calls/:id/clean-transcript route below.
-const MAX_CLEANUP_ATTEMPTS = 3;
 
 // Regular users are always scoped to calls they handled -- this is the real
 // security boundary and never changes based on request input. Admins see
@@ -427,7 +421,6 @@ router.get("/calls/:id/transcript", async (req, res) => {
     words: call.transcriptWords,
     editedAt: call.transcriptEditedAt,
     editedBy: call.transcriptEditedBy,
-    cleanupEnabled: transcriptCleanup.isEnabled(),
     cleanupStatus: call.transcriptCleanupStatus,
     cleanupAttempts: call.transcriptCleanupAttempts,
     cleanedTranscript: call.transcriptCleaned,
@@ -512,93 +505,6 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   } catch (err) {
     console.error(`[api] failed to start transcription for call ${call.id}:`, err);
     res.status(500).json({ error: "failed to start transcription" });
-  }
-});
-
-// On-demand only, synchronous -- unlike transcription (a real, slow AWS
-// Transcribe job polled for later by transcriptionPoller.js), a Bedrock
-// call here lands well within a few seconds (same observation
-// callSummaryPoller.js makes about its own Bedrock calls), so this just
-// runs inline and returns the result directly rather than needing a
-// poller of its own. See src/transcriptCleanup.js for what it actually
-// does and why.
-router.post("/calls/:id/clean-transcript", requireCsrf, async (req, res) => {
-  if (!transcriptCleanup.isEnabled()) {
-    return res.status(400).json({ error: "transcript cleanup is not enabled" });
-  }
-
-  const call = await db.getCall(req.params.id);
-  if (!call) return res.status(404).json({ error: "call not found" });
-
-  if (!(await getAccessibleAccountIds(req.session.user)).includes(call.ghlAccountId)) {
-    await logAccess(req, { action: "transcript_cleanup_requested", callId: call.id, success: false, denialReason: "not_your_account" });
-    return res.status(403).json({ error: "not your account" });
-  }
-  if (req.session.user.role !== "admin" && call.handledById !== req.session.user.ghlUserId) {
-    await logAccess(req, { action: "transcript_cleanup_requested", callId: call.id, success: false, denialReason: "not_your_call" });
-    return res.status(403).json({ error: "not your call" });
-  }
-  if (call.transcriptionStatus !== "completed") {
-    return res.status(409).json({ error: "no transcript to clean up yet" });
-  }
-  if (!call.transcriptWords) {
-    return res.status(409).json({ error: "no confidence data available for this transcript -- it was either edited by hand or predates this feature" });
-  }
-  if (call.transcriptCleanupStatus === "completed") {
-    return res.status(409).json({ error: "already cleaned up" });
-  }
-  // Same reasoning as MAX_TRANSCRIPTION_ATTEMPTS above -- a real, billable
-  // Bedrock call whether or not it finds anything to fix.
-  if (call.transcriptCleanupAttempts >= MAX_CLEANUP_ATTEMPTS) {
-    return res.status(409).json({
-      error: `transcript cleanup failed ${call.transcriptCleanupAttempts} times for this call -- not retrying automatically.`,
-    });
-  }
-
-  try {
-    await db.incrementTranscriptCleanupAttempts(call.id);
-    const result = await transcriptCleanup.cleanTranscript(call.transcriptWords, { handledByName: call.handledByName });
-
-    if (result.bedrockCalled) {
-      // Keyed on bedrockCalled, NOT changed -- a real, billable Bedrock
-      // call happens whenever anything was flagged, whether or not it
-      // ultimately found something worth correcting. Keying this on
-      // "changed" instead would silently under-record real AWS cost
-      // every time Bedrock looked and found nothing wrong, which is an
-      // expected, common outcome, not a rare one. Permanent cost-ledger
-      // receipt, same as transcription/AI-summary (see schema.sql's
-      // cost_ledger comment). No client-facing price exists yet, so
-      // clientRevenue is deliberately null (see
-      // db.recordTranscriptCleanupCost's comment).
-      try {
-        const account = await db.getGhlAccountById(call.ghlAccountId);
-        const awsCost =
-          (result.inputTokens / 1_000_000) * billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS +
-          (result.outputTokens / 1_000_000) * billingRates.AWS_BEDROCK_HAIKU_OUTPUT_PER_MILLION_TOKENS;
-        await db.recordTranscriptCleanupCost({
-          tenantId: account ? account.tenantId : null,
-          ghlAccountId: call.ghlAccountId,
-          callId: call.id,
-          inputTokens: result.inputTokens,
-          outputTokens: result.outputTokens,
-          awsRate: billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS,
-          awsCost,
-          clientRate: null,
-          clientRevenue: null,
-          attempt: call.transcriptCleanupAttempts + 1,
-        });
-      } catch (ledgerErr) {
-        console.error(`[api] cleaned transcript for call ${call.id} but failed to record its cost-ledger entry:`, ledgerErr);
-      }
-    }
-
-    await db.markTranscriptCleanupComplete(call.id, result.changed ? result.correctedText : null, result.changes);
-    await logAccess(req, { action: "transcript_cleanup_requested", callId: call.id, success: true });
-    res.json({ status: "completed", changed: result.changed, cleanedTranscript: result.changed ? result.correctedText : null, changes: result.changes });
-  } catch (err) {
-    await db.markTranscriptCleanupFailed(call.id).catch(() => {});
-    console.error(`[api] failed to clean up transcript for call ${call.id}:`, err);
-    res.status(500).json({ error: "failed to clean up transcript" });
   }
 });
 

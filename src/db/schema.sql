@@ -805,12 +805,20 @@ ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleanup_changes JSONB;
 -- anything to fix.
 ALTER TABLE calls ADD COLUMN IF NOT EXISTS transcript_cleanup_attempts INTEGER NOT NULL DEFAULT 0;
 
+-- Per-account opt-in, same pattern and same reasoning as
+-- ghl_accounts.ai_summary_enabled: this is a billed, per-call feature, so
+-- it must default OFF and be turned on explicitly per account. Once on,
+-- src/transcriptCleanupPoller.js runs automatically on every completed
+-- transcription for that account (see markTranscriptionComplete's own
+-- CASE) -- there's no separate per-call trigger anymore.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS transcript_cleanup_enabled BOOLEAN NOT NULL DEFAULT false;
+
 -- New billable category alongside transcription/ai_summary/storage --
--- see src/transcriptCleanup.js and routes/api.js's POST
--- /calls/:id/clean-transcript. No client-facing price exists yet
--- (clientRevenue is written NULL, same "no policy yet" convention as
--- storage entries from before overage pricing existed), so this is cost
--- tracking only until a real rate is decided.
+-- see src/transcriptCleanup.js and src/transcriptCleanupPoller.js.
+-- clientRevenue is billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE whenever
+-- Bedrock was actually called (not when nothing was flagged -- that costs
+-- nothing and bills nothing), same "bill the real event, not the outcome"
+-- rule ai_summary already follows.
 ALTER TABLE cost_ledger DROP CONSTRAINT IF EXISTS cost_ledger_category_check;
 ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_category_check
   CHECK (category IN ('transcription', 'ai_summary', 'storage', 'transcript_cleanup'));

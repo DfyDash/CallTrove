@@ -1461,12 +1461,14 @@ function hideRepTrendTooltip() {
 
 const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
 const aiSummaryToggle = document.getElementById("ai-summary-toggle");
+const transcriptCleanupToggle = document.getElementById("transcript-cleanup-toggle");
 
 async function loadTranscriptionSettings() {
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
   const settings = await res.json();
   autoTranscribeToggle.checked = !!settings.autoTranscribeEnabled;
   aiSummaryToggle.checked = !!settings.aiSummaryEnabled;
+  transcriptCleanupToggle.checked = !!settings.transcriptCleanupEnabled;
 }
 
 autoTranscribeToggle.addEventListener("change", async () => {
@@ -1496,6 +1498,21 @@ aiSummaryToggle.addEventListener("change", async () => {
     aiSummaryToggle.checked = !aiSummaryToggle.checked;
   }
   aiSummaryToggle.disabled = false;
+  tabLoaded.activity = false;
+});
+
+transcriptCleanupToggle.addEventListener("change", async () => {
+  transcriptCleanupToggle.disabled = true;
+  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ transcriptCleanupEnabled: transcriptCleanupToggle.checked }),
+  });
+  if (!res.ok) {
+    alert("Could not update the setting");
+    transcriptCleanupToggle.checked = !transcriptCleanupToggle.checked;
+  }
+  transcriptCleanupToggle.disabled = false;
   tabLoaded.activity = false;
 });
 
@@ -1600,6 +1617,8 @@ async function loadBilling() {
   document.getElementById("billing-transcription-label").textContent = `Transcription (${cur.transcriptionMinutes.toFixed(0)} min)`;
   document.getElementById("billing-summary-amount").textContent = formatMoney(cur.aiSummaryRevenue);
   document.getElementById("billing-summary-label").textContent = `AI summaries (${cur.aiSummaryCalls} calls)`;
+  document.getElementById("billing-cleanup-amount").textContent = formatMoney(cur.transcriptCleanupRevenue);
+  document.getElementById("billing-cleanup-label").textContent = `Transcript cleanup (${cur.transcriptCleanupCalls} calls)`;
   document.getElementById("billing-total-amount").textContent = formatMoney(cur.total);
 
   const rowsEl = document.getElementById("billing-history-rows");
@@ -1615,6 +1634,7 @@ async function loadBilling() {
           <td>${escapeHtml(billingMonthLabel(m.month))}</td>
           <td>${formatMoney(m.transcriptionRevenue)}</td>
           <td>${formatMoney(m.aiSummaryRevenue)}</td>
+          <td>${formatMoney(m.transcriptCleanupRevenue)}</td>
           <td>${formatMoney(m.storageRevenue)}</td>
           <td class="amount">${formatMoney(m.total)}</td>
         </tr>`
@@ -1735,7 +1755,6 @@ const ACTION_LABELS = {
   transcript_viewed: "Viewed transcript",
   transcription_requested: "Requested transcription",
   transcript_edited: "Edited transcript",
-  transcript_cleanup_requested: "Requested transcript cleanup",
 };
 
 // "Name (phone)" -- but when the "name" on file is really just the phone

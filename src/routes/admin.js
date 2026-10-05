@@ -480,6 +480,7 @@ router.get("/settings", requireAccount, async (req, res) => {
   res.json({
     autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId),
     aiSummaryEnabled: await db.getAiSummaryEnabled(req.ghlAccountId),
+    transcriptCleanupEnabled: await db.getTranscriptCleanupEnabled(req.ghlAccountId),
     ...schedule,
   });
 });
@@ -495,7 +496,7 @@ router.get("/settings", requireAccount, async (req, res) => {
 // No base-subscription line here: there's no recurring base-fee billing
 // mechanism in this codebase yet (no Paddle integration, no 'base'
 // cost_ledger category) -- this shows only what's real today:
-// transcription, AI summaries, and storage.
+// transcription, AI summaries, transcript cleanup, and storage.
 router.get("/billing", async (req, res) => {
   const tenantId = req.session.user.tenantId;
   const tenant = await db.getTenantById(tenantId);
@@ -519,20 +520,21 @@ router.get("/billing", async (req, res) => {
   // the plain 'YYYY-MM-DD' string both queries already return.
   const byMonth = new Map();
   function monthEntry(month) {
-    if (!byMonth.has(month)) byMonth.set(month, { month, transcriptionRevenue: 0, aiSummaryRevenue: 0, storageRevenue: 0 });
+    if (!byMonth.has(month)) byMonth.set(month, { month, transcriptionRevenue: 0, aiSummaryRevenue: 0, transcriptCleanupRevenue: 0, storageRevenue: 0 });
     return byMonth.get(month);
   }
   for (const row of pastUsage) {
     const entry = monthEntry(row.month);
     if (row.category === "transcription") entry.transcriptionRevenue = Number(row.revenue);
     else if (row.category === "ai_summary") entry.aiSummaryRevenue = Number(row.revenue);
+    else if (row.category === "transcript_cleanup") entry.transcriptCleanupRevenue = Number(row.revenue);
   }
   for (const row of pastStorage) {
     monthEntry(row.month).storageRevenue = Number(row.revenue);
   }
   const pastMonths = [...byMonth.values()]
     .sort((a, b) => (a.month < b.month ? 1 : -1))
-    .map((m) => ({ ...m, total: m.transcriptionRevenue + m.aiSummaryRevenue + m.storageRevenue }))
+    .map((m) => ({ ...m, total: m.transcriptionRevenue + m.aiSummaryRevenue + m.transcriptCleanupRevenue + m.storageRevenue }))
     // A month that closed out at $0 everywhere (e.g. a storage entry
     // exists only because storageCostJob.js runs for every tenant every
     // month, but nothing was ever owed) has nothing worth showing --
@@ -545,7 +547,9 @@ router.get("/billing", async (req, res) => {
       transcriptionMinutes: current.transcriptionMinutes,
       aiSummaryRevenue: current.aiSummaryRevenue,
       aiSummaryCalls: current.aiSummaryCalls,
-      total: current.transcriptionRevenue + current.aiSummaryRevenue,
+      transcriptCleanupRevenue: current.transcriptCleanupRevenue,
+      transcriptCleanupCalls: current.transcriptCleanupCalls,
+      total: current.transcriptionRevenue + current.aiSummaryRevenue + current.transcriptCleanupRevenue,
     },
     storage: {
       usedGB,
@@ -587,6 +591,12 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
     await db.setAiSummaryEnabled(req.ghlAccountId, enabled);
     await log(req, "ai_summary_toggled", `Turned per-call AI summary ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
     result.aiSummaryEnabled = enabled;
+  }
+  if ("transcriptCleanupEnabled" in body) {
+    const enabled = Boolean(body.transcriptCleanupEnabled);
+    await db.setTranscriptCleanupEnabled(req.ghlAccountId, enabled);
+    await log(req, "transcript_cleanup_toggled", `Turned automatic transcript cleanup ${enabled ? "ON" : "OFF"} for account ${req.ghlAccountId}`);
+    result.transcriptCleanupEnabled = enabled;
   }
   if ("digestTime1" in body || "digestTime2" in body || "digestTimezone" in body) {
     const current = await db.getDigestSchedule(req.ghlAccountId);

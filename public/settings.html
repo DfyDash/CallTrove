@@ -445,6 +445,28 @@
               other connected GHL accounts keep their own setting unchanged.
             </p>
           </div>
+          <div class="settings-section">
+            <h2>Transcript cleanup</h2>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="transcript-cleanup-toggle" />
+                <span class="toggle-slider"></span>
+              </span>
+              Automatically double-check low-confidence words in each transcript
+            </label>
+            <p class="settings-rate">$0.01 per call, only when something was actually flagged to check</p>
+            <p class="settings-note">
+              Speech-to-text occasionally mishears a word -- a name is the
+              most common case. This re-checks only the specific words it
+              flagged as unsure, using the rest of the conversation for
+              context, and never touches anything it was already confident
+              about. A call with nothing flagged costs nothing.
+            </p>
+            <p class="settings-note">
+              This only applies to the account selected above (top left) --
+              other connected GHL accounts keep their own setting unchanged.
+            </p>
+          </div>
           <p class="settings-note">
             You're not being charged for this yet -- billing hasn't been turned on. These prices are what you'll pay once it is.
           </p>
@@ -482,6 +504,10 @@
                 <div id="billing-summary-label" class="stat-label">AI summaries</div>
               </div>
               <div class="stat-tile">
+                <div id="billing-cleanup-amount" class="stat-value">$0.00</div>
+                <div id="billing-cleanup-label" class="stat-label">Transcript cleanup</div>
+              </div>
+              <div class="stat-tile">
                 <div id="billing-total-amount" class="stat-value">$0.00</div>
                 <div class="stat-label">Total so far</div>
               </div>
@@ -492,7 +518,7 @@
             <h2>Past months</h2>
             <table>
               <thead>
-                <tr><th>Month</th><th>Transcription</th><th>AI summaries</th><th>Storage</th><th class="amount">Total</th></tr>
+                <tr><th>Month</th><th>Transcription</th><th>AI summaries</th><th>Cleanup</th><th>Storage</th><th class="amount">Total</th></tr>
               </thead>
               <tbody id="billing-history-rows"></tbody>
             </table>

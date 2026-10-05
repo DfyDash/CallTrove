@@ -12,6 +12,7 @@ const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
 const callSummaryPoller = require("./callSummaryPoller");
+const transcriptCleanupPoller = require("./transcriptCleanupPoller");
 const callDigestJob = require("./callDigestJob");
 const storageCostJob = require("./storageCostJob");
 const alerting = require("./alerting");
@@ -197,6 +198,7 @@ process.on("unhandledRejection", (reason) => {
 poller.start();
 transcriptionPoller.start();
 callSummaryPoller.start();
+transcriptCleanupPoller.start();
 callDigestJob.start();
 storageCostJob.start();
 // Account purge is deliberately NOT run automatically here -- see

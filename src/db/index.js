@@ -146,17 +146,22 @@ async function markTranscriptionPending(callId) {
   );
 }
 
-// ai_summary_status only moves to 'pending' when the call's own account has
-// explicitly opted into ai_summary_enabled -- this is a billed, per-call
-// feature (see schema.sql's comment on ai_summary_enabled), so it must
-// never run just because transcription itself is on for the account.
-// Checked with a subquery rather than a JOIN so this stays a single-call
-// UPDATE regardless of caller.
+// ai_summary_status/transcript_cleanup_status only move to 'pending' when
+// the call's own account has explicitly opted into the matching *_enabled
+// column -- both are billed, per-call features (see schema.sql's comments
+// on ai_summary_enabled/transcript_cleanup_enabled), so neither must ever
+// run just because transcription itself is on for the account. Checked
+// with subqueries rather than a JOIN so this stays a single-call UPDATE
+// regardless of caller.
 async function markTranscriptionComplete(callId, transcript, words) {
   await pool.query(
     `UPDATE calls SET transcription_status = 'completed', transcript = $2, transcript_words = $3,
        ai_summary_status = CASE
          WHEN (SELECT ai_summary_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
+         ELSE 'none'
+       END,
+       transcript_cleanup_status = CASE
+         WHEN (SELECT transcript_cleanup_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
          ELSE 'none'
        END
      WHERE id = $1`,
@@ -231,8 +236,24 @@ async function markSummaryFailed(callId) {
   await pool.query(`UPDATE calls SET ai_summary_status = 'failed' WHERE id = $1`, [callId]);
 }
 
-// --- transcript cleanup (src/transcriptCleanup.js, Bedrock, on-demand
-// only -- see routes/api.js's POST /calls/:id/clean-transcript) ---
+// --- transcript cleanup (src/transcriptCleanup.js, Bedrock, automatic --
+// see src/transcriptCleanupPoller.js) ---
+
+// tenantId is the cost-ledger basis, joined here the same way
+// listPendingCallSummaries above does -- handledByName comes along too
+// since src/transcriptCleanup.js uses it as narrowly-scoped known context
+// (see its own comment on why only this field, never an account/tenant
+// name, is trustworthy enough to hand to Bedrock).
+async function listPendingTranscriptCleanups() {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.transcript_words AS "transcriptWords", c.handled_by_name AS "handledByName",
+            c.ghl_account_id AS "ghlAccountId", c.transcript_cleanup_attempts AS "attempts", g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.transcript_cleanup_status = 'pending'`
+  );
+  return rows;
+}
 
 async function incrementTranscriptCleanupAttempts(callId) {
   await pool.query(`UPDATE calls SET transcript_cleanup_attempts = transcript_cleanup_attempts + 1 WHERE id = $1`, [callId]);
@@ -1703,6 +1724,18 @@ async function setAiSummaryEnabled(ghlAccountId, enabled) {
   await pool.query(`UPDATE ghl_accounts SET ai_summary_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
 }
 
+async function getTranscriptCleanupEnabled(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT transcript_cleanup_enabled AS "transcriptCleanupEnabled" FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] ? rows[0].transcriptCleanupEnabled : false;
+}
+
+async function setTranscriptCleanupEnabled(ghlAccountId, enabled) {
+  await pool.query(`UPDATE ghl_accounts SET transcript_cleanup_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
+}
+
 // --- cost_ledger (see schema.sql's comment on this table for why it's a
 // permanent receipt per billable event, not a live recalculated
 // estimate) ---
@@ -1739,11 +1772,11 @@ async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens
   );
 }
 
-// clientRate/clientRevenue are always null for now -- no client-facing
-// price has been set for this feature yet (see schema.sql's comment on
-// the 'transcript_cleanup' category). Only ever written when Bedrock was
-// actually called (routes/api.js skips this entirely when nothing was
-// flagged for cleanup, since that costs nothing).
+// clientRate/clientRevenue are billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE
+// (see schema.sql's comment on the 'transcript_cleanup' category). Only
+// ever written when Bedrock was actually called (src/transcriptCleanupPoller.js
+// skips this entirely when nothing was flagged for cleanup, since that
+// costs nothing and so bills nothing).
 async function recordTranscriptCleanupCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt }) {
   await pool.query(
     `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, attempt)
@@ -1776,13 +1809,17 @@ async function getTenantCurrentPeriodUsage(tenantId) {
             count(*)::int AS calls
      FROM cost_ledger
      WHERE tenant_id = $1
-       AND category IN ('transcription', 'ai_summary')
+       AND category IN ('transcription', 'ai_summary', 'transcript_cleanup')
        AND client_revenue IS NOT NULL
        AND created_at >= date_trunc('month', now())
      GROUP BY category`,
     [tenantId]
   );
-  const result = { transcriptionRevenue: 0, transcriptionMinutes: 0, aiSummaryRevenue: 0, aiSummaryCalls: 0 };
+  const result = {
+    transcriptionRevenue: 0, transcriptionMinutes: 0,
+    aiSummaryRevenue: 0, aiSummaryCalls: 0,
+    transcriptCleanupRevenue: 0, transcriptCleanupCalls: 0,
+  };
   for (const row of rows) {
     if (row.category === "transcription") {
       result.transcriptionRevenue = Number(row.revenue);
@@ -1790,6 +1827,9 @@ async function getTenantCurrentPeriodUsage(tenantId) {
     } else if (row.category === "ai_summary") {
       result.aiSummaryRevenue = Number(row.revenue);
       result.aiSummaryCalls = row.calls; // quantity is total tokens, not call count -- see cost_ledger's own comment
+    } else if (row.category === "transcript_cleanup") {
+      result.transcriptCleanupRevenue = Number(row.revenue);
+      result.transcriptCleanupCalls = row.calls; // same reasoning as ai_summary's own calls count above
     }
   }
   return result;
@@ -1815,7 +1855,7 @@ async function getTenantPastUsageByMonth(tenantId) {
             coalesce(sum(client_revenue), 0)::numeric AS revenue
      FROM cost_ledger
      WHERE tenant_id = $1
-       AND category IN ('transcription', 'ai_summary')
+       AND category IN ('transcription', 'ai_summary', 'transcript_cleanup')
        AND client_revenue IS NOT NULL
        AND created_at < date_trunc('month', now())
        AND created_at >= date_trunc('month', now()) - interval '12 months'
@@ -2089,6 +2129,7 @@ module.exports = {
   incrementSummaryAttempts,
   markSummaryComplete,
   markSummaryFailed,
+  listPendingTranscriptCleanups,
   incrementTranscriptCleanupAttempts,
   markTranscriptCleanupComplete,
   markTranscriptCleanupFailed,
@@ -2145,6 +2186,8 @@ module.exports = {
   setAutoTranscribeEnabled,
   getAiSummaryEnabled,
   setAiSummaryEnabled,
+  getTranscriptCleanupEnabled,
+  setTranscriptCleanupEnabled,
   recordTranscriptionCost,
   recordAiSummaryCost,
   recordTranscriptCleanupCost,

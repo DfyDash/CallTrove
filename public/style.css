@@ -956,8 +956,7 @@ tbody tr:last-child td {
 
 .transcript-edit-btn,
 .transcript-save-btn,
-.transcript-cancel-btn,
-.transcript-cleanup-btn {
+.transcript-cancel-btn {
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -965,10 +964,6 @@ tbody tr:last-child td {
   color: inherit;
   font-size: 0.78rem;
   cursor: pointer;
-  margin-top: 4px;
-}
-
-.transcript-cleanup-prompt {
   margin-top: 4px;
 }
 
