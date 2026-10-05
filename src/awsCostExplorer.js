@@ -142,12 +142,19 @@ async function getCostSummary() {
     lastMonthSamePeriodLabel = daysElapsedThisMonth === 1 ? `${label} 1` : `${label} 1 – ${daysElapsedThisMonth}`;
   }
 
-  // Forecast for the rest of this month (today onward) added to
-  // monthToDate (which excludes today, same boundary as above) gives
-  // "total forecasted cost for current month" -- the same framing AWS's
-  // own console uses. Needs ce:GetCostForecast specifically, which this
-  // server's role doesn't have as of this writing -- degrades to null
-  // with a clear reason rather than failing the other three real figures.
+  // GetCostForecast's own Total for [today, next month start) IS "total
+  // forecasted cost for current month" on its own -- confirmed directly
+  // against AWS's own console figure (both read $24.98 for the same real
+  // account at the same time). It is NOT just "the rest of the month,"
+  // despite the TimePeriod starting today: AWS's forecast model already
+  // factors this month's trend-to-date into that one number. An earlier
+  // version of this function added monthToDate on top, assuming the API
+  // returned a future-only remainder -- that silently double-counted
+  // this month's already-spent cost (produced $28.88 against AWS's own
+  // $24.98 for the identical period). Needs ce:GetCostForecast
+  // specifically, a separate permission from ce:GetCostAndUsage --
+  // degrades to null with a clear reason rather than failing the other
+  // three real figures when it isn't granted.
   let forecastTotal = null;
   let forecastError = null;
   try {
@@ -163,10 +170,10 @@ async function getCostSummary() {
           Granularity: "MONTHLY",
         })
       );
-      const restOfMonth = Number((res.Total && res.Total.Amount) || 0);
-      forecastTotal = monthToDate + restOfMonth;
+      forecastTotal = Number((res.Total && res.Total.Amount) || 0);
     } else {
-      // Last day of the month -- nothing left to forecast.
+      // Last day of the month -- nothing left to forecast; the month's
+      // real total is just what's already been spent.
       forecastTotal = monthToDate;
     }
   } catch (err) {
