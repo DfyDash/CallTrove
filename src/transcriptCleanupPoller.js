@@ -34,9 +34,12 @@ async function pollOnce() {
         // bedrockCalled, NOT changed -- a real, billable call happens
         // whenever anything was flagged, whether or not it ultimately
         // found something worth correcting (see src/transcriptCleanup.js's
-        // own comment on why). Billed the same flat per-use rate
-        // regardless of outcome, same as ai_summary billing every
-        // successfully summarized call regardless of its content.
+        // own comment on why). Billed as an exact cost pass-through, NOT
+        // a flat per-use rate like ai_summary's -- clientRevenue is
+        // literally awsCost, so the client is charged precisely what
+        // this call cost in Bedrock tokens, never more, never less. A
+        // call with one flagged word costs (and bills) less than one
+        // with ten; there's no markup built in anywhere here.
         try {
           const awsCost =
             (result.inputTokens / 1_000_000) * billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS +
@@ -49,8 +52,8 @@ async function pollOnce() {
             outputTokens: result.outputTokens,
             awsRate: billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS,
             awsCost,
-            clientRate: billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE,
-            clientRevenue: billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE,
+            clientRate: billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS,
+            clientRevenue: awsCost,
             // call.attempts is the count from before incrementTranscriptCleanupAttempts
             // ran above in this same cycle, so it's one behind the attempt
             // actually being billed here.

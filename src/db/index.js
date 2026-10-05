@@ -1772,9 +1772,10 @@ async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens
   );
 }
 
-// clientRate/clientRevenue are billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE
-// (see schema.sql's comment on the 'transcript_cleanup' category). Only
-// ever written when Bedrock was actually called (src/transcriptCleanupPoller.js
+// clientRate/clientRevenue are an exact cost pass-through, not a flat
+// rate (see schema.sql's comment on the 'transcript_cleanup' category):
+// clientRevenue is literally that call's own computed awsCost. Only ever
+// written when Bedrock was actually called (src/transcriptCleanupPoller.js
 // skips this entirely when nothing was flagged for cleanup, since that
 // costs nothing and so bills nothing).
 async function recordTranscriptCleanupCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt }) {

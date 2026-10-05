@@ -815,10 +815,11 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS transcript_cleanup_enabled BOO
 
 -- New billable category alongside transcription/ai_summary/storage --
 -- see src/transcriptCleanup.js and src/transcriptCleanupPoller.js.
--- clientRevenue is billingRates.CLIENT_TRANSCRIPT_CLEANUP_PER_USE whenever
--- Bedrock was actually called (not when nothing was flagged -- that costs
--- nothing and bills nothing), same "bill the real event, not the outcome"
--- rule ai_summary already follows.
+-- Unlike transcription/ai_summary (flat or metered rates with real
+-- margin), this one is billed as an exact cost pass-through: clientRevenue
+-- is literally that call's own computed awsCost, no markup. Only written
+-- whenever Bedrock was actually called (not when nothing was flagged --
+-- that costs nothing and bills nothing).
 ALTER TABLE cost_ledger DROP CONSTRAINT IF EXISTS cost_ledger_category_check;
 ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_category_check
   CHECK (category IN ('transcription', 'ai_summary', 'storage', 'transcript_cleanup'));
