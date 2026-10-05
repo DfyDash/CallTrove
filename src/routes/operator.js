@@ -45,6 +45,8 @@ function num(v) {
 // transcriptCleanupAwsCost (see transcriptCleanupPoller.js -- billed as
 // an exact cost pass-through, no markup), so it never moves margin on
 // its own, only the top-line totals.
+const BYTES_PER_GB = 1024 ** 3;
+
 router.get("/tenants", async (req, res) => {
   const tenants = await db.listTenantsForOperator();
   res.json(
@@ -63,6 +65,7 @@ router.get("/tenants", async (req, res) => {
         ...t,
         transcribedMinutes: Math.round((t.transcribedSeconds / 60) * 10) / 10,
         estimatedTranscribeCost: Math.round((t.transcribedSeconds / 60) * billingRates.AWS_TRANSCRIBE_PER_MINUTE * 100) / 100,
+        storedGB: Math.round((Number(t.storedBytes) / BYTES_PER_GB) * 100) / 100,
         transcriptionAwsCost,
         transcriptionRevenue,
         aiSummaryAwsCost,

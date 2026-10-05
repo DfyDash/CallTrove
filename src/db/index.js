@@ -1442,6 +1442,14 @@ async function listTenantsForOperator() {
          WHERE ga.tenant_id = t.id AND c.disposition = 'completed' AND c.storage_key IS NULL) AS "completedMissing",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id AND c.storage_key IS NOT NULL) AS "recordingsStored",
+      -- Real bytes currently in S3 for this tenant (same source
+      -- getTotalStoredBytesForTenant uses for the client-facing billing
+      -- page) -- recordingsStored above is a COUNT of recordings, not
+      -- their size, so storageAwsCost further down had no visible basis
+      -- until this: a dollar figure with nothing showing the GB it was
+      -- computed from.
+      (SELECT coalesce(sum(c.size_bytes), 0)::bigint FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id) AS "storedBytes",
       (SELECT coalesce(sum(c.duration_seconds), 0)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds",
       -- Real cost-ledger sums (schema.sql's cost_ledger comment) -- unlike

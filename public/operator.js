@@ -597,6 +597,7 @@ function renderAccountDetail(t) {
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionRevenue)}</div><div class="stat-label">Transcription revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryAwsCost)}</div><div class="stat-label">AI summary cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryRevenue)}</div><div class="stat-label">AI summary revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.storedGB} GB</div><div class="stat-label">Storage used</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptCleanupAwsCost)}</div><div class="stat-label">Transcript cleanup cost</div></div>
