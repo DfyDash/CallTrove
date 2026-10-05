@@ -516,11 +516,13 @@ function renderTranscriptView(body, callId, data) {
     ${transcriptEditedNoteHtml(data)}
     ${transcriptCleanupSectionHtml(data, flaggedCount)}
     <button type="button" class="transcript-edit-btn" data-call="${callId}">Edit</button>
-    <button type="button" class="transcript-collapse-btn">Collapse</button>
+    <button type="button" class="transcript-collapse-btn">&#9660; Close transcript</button>
   `;
   body.querySelector(".transcript-edit-btn").addEventListener("click", () => renderTranscriptEditor(body, callId, data));
-  // Long transcripts push this button well below the row's own "View
-  // transcript" toggle -- closing the <details> from here and scrolling
+  // Long transcripts push this well below the row's own "View transcript"
+  // toggle -- styled to match that same toggle (plain text, triangle
+  // marker, no button chrome) so it reads as the same control, just
+  // repeated at the bottom. Closing the <details> from here and scrolling
   // it back into view means never having to scroll all the way back up
   // just to collapse it.
   body.querySelector(".transcript-collapse-btn").addEventListener("click", () => {

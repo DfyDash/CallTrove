@@ -956,8 +956,7 @@ tbody tr:last-child td {
 
 .transcript-edit-btn,
 .transcript-save-btn,
-.transcript-cancel-btn,
-.transcript-collapse-btn {
+.transcript-cancel-btn {
   padding: 3px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -968,8 +967,18 @@ tbody tr:last-child td {
   margin-top: 4px;
 }
 
+/* Matches .transcript-details summary's look exactly (plain text, same
+   size, no button chrome) so it reads as the same disclosure control
+   repeated at the bottom, not a separate action. */
 .transcript-collapse-btn {
-  margin-left: 6px;
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  margin-top: 8px;
 }
 
 .transcript-cleanup-result {
