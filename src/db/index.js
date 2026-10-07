@@ -350,6 +350,106 @@ async function listAllContacts(ghlUserId, ghlAccountId) {
   return rows;
 }
 
+// Contacts in one GHL account that share a phone number, for the Contacts
+// page's "Possible duplicates" view. GHL itself is where duplicates get
+// merged (it has no merge API, only its own Manage Duplicates tool), so
+// this only finds and presents them. Phones are compared on their last 10
+// digits, ignoring punctuation and a leading country code, so "(555)
+// 123-4567" and "+1 555-123-4567" match; anything under 10 digits is
+// skipped -- a 7-digit local number would collide across unrelated people.
+// Name is deliberately not a match key: two different people named "John
+// Smith" are far more common than a duplicate with a typo'd phone.
+//
+// A group is hidden only once EVERY pair inside it has been dismissed (see
+// dismissDuplicateGroup), so a newly arrived third contact on the same
+// number brings the group back.
+async function listDuplicateContactGroups(ghlAccountId) {
+  const { rows } = await pool.query(
+    `WITH keyed AS (
+       SELECT c.ghl_contact_id AS id, c.name, c.phone,
+              RIGHT(REGEXP_REPLACE(c.phone, '\\D', '', 'g'), 10) AS phone_key
+       FROM contacts c
+       WHERE c.ghl_account_id = $1
+         AND LENGTH(REGEXP_REPLACE(COALESCE(c.phone, ''), '\\D', '', 'g')) >= 10
+     ), dupes AS (
+       SELECT phone_key FROM keyed GROUP BY phone_key HAVING COUNT(*) > 1
+     )
+     SELECT k.id, k.name, k.phone, k.phone_key AS "phoneKey",
+            (SELECT COUNT(*) FROM calls cl WHERE cl.ghl_contact_id = k.id)::int AS "callCount",
+            (SELECT MAX(occurred_at) FROM calls cl WHERE cl.ghl_contact_id = k.id) AS "lastCallAt"
+     FROM keyed k
+     JOIN dupes d ON d.phone_key = k.phone_key
+     ORDER BY k.phone_key, k.name NULLS LAST, k.id`,
+    [ghlAccountId]
+  );
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const { rows: dismissed } = await pool.query(
+    `SELECT contact_a AS a, contact_b AS b FROM dismissed_duplicate_pairs
+     WHERE contact_a = ANY($1) AND contact_b = ANY($1)`,
+    [ids]
+  );
+  const dismissedPairs = new Set(dismissed.map((d) => `${d.a}|${d.b}`));
+  const isDismissed = (x, y) => dismissedPairs.has(`${x}|${y}`) || dismissedPairs.has(`${y}|${x}`);
+
+  const byKey = new Map();
+  for (const r of rows) {
+    if (!byKey.has(r.phoneKey)) byKey.set(r.phoneKey, []);
+    byKey.get(r.phoneKey).push(r);
+  }
+
+  const groups = [];
+  for (const [phoneKey, members] of byKey) {
+    let hasLivePair = false;
+    for (let i = 0; i < members.length && !hasLivePair; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        if (!isDismissed(members[i].id, members[j].id)) {
+          hasLivePair = true;
+          break;
+        }
+      }
+    }
+    if (!hasLivePair) continue;
+    const lastCallAt = members.reduce((latest, m) => (m.lastCallAt && (!latest || m.lastCallAt > latest) ? m.lastCallAt : latest), null);
+    groups.push({
+      phoneKey,
+      lastCallAt,
+      contacts: members.map(({ phoneKey: _omit, ...m }) => m),
+    });
+  }
+  groups.sort((a, b) => (b.lastCallAt ? b.lastCallAt.getTime() : 0) - (a.lastCallAt ? a.lastCallAt.getTime() : 0));
+  return groups;
+}
+
+// "These aren't duplicates": records every pair among the given contacts
+// as dismissed. Every ID must belong to ghlAccountId -- the caller's
+// already-authorized account -- so one tenant can't write dismissals
+// against another's contacts. Returns false (writing nothing) if any ID
+// isn't in that account.
+async function dismissDuplicateGroup(contactIds, dismissedBy, ghlAccountId) {
+  const unique = [...new Set(contactIds)];
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id FROM contacts WHERE ghl_contact_id = ANY($1) AND ghl_account_id = $2`,
+    [unique, ghlAccountId]
+  );
+  if (rows.length !== unique.length) return false;
+  await pool.query(
+    `INSERT INTO dismissed_duplicate_pairs (contact_a, contact_b, dismissed_by)
+     SELECT a.id, b.id, $2
+     FROM UNNEST($1::text[]) AS a(id)
+     JOIN UNNEST($1::text[]) AS b(id) ON a.id < b.id
+     ON CONFLICT DO NOTHING`,
+    [unique, dismissedBy || null]
+  );
+  return true;
+}
+
+async function getGhlLocationIdForAccount(ghlAccountId) {
+  const { rows } = await pool.query(`SELECT ghl_location_id AS "ghlLocationId" FROM ghl_accounts WHERE id = $1`, [ghlAccountId]);
+  return rows[0] ? rows[0].ghlLocationId : null;
+}
+
 const PAGE_SIZES = [20, 50, 100];
 
 // The main call-search query: contactId is optional (omitted = all
@@ -2148,6 +2248,9 @@ module.exports = {
   getGhlAccountById,
   updateCallHandler,
   listContacts,
+  listDuplicateContactGroups,
+  dismissDuplicateGroup,
+  getGhlLocationIdForAccount,
   listAllContacts,
   listCalls,
   getCallStats,

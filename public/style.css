@@ -1951,6 +1951,130 @@ tbody tr:last-child td {
   cursor: default;
 }
 
+/* --- Contacts: possible duplicates (admins) --- */
+
+.duplicates-bar {
+  padding: 12px 0;
+}
+
+.duplicates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.duplicates-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.duplicates-panel {
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* display:flex above would otherwise beat the hidden attribute. */
+.duplicates-panel[hidden] {
+  display: none;
+}
+
+.duplicates-intro {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.duplicate-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.duplicate-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.duplicate-member-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.duplicate-member-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.duplicate-member-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.duplicate-member-actions {
+  display: flex;
+  gap: 14px;
+  font-size: 0.82rem;
+}
+
+.duplicate-link {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.duplicate-link:hover {
+  text-decoration: underline;
+}
+
+.duplicate-group-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 14px;
+}
+
+.duplicate-dismiss {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.duplicate-dismiss:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.duplicate-dismiss:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* --- Mobile (phone-width) layout ---
    Nothing below this point exists on desktop -- there was previously no
    responsive handling at all, so a phone (~390px CSS width) rendered the

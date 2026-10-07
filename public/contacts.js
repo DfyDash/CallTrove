@@ -13,6 +13,7 @@ const sidebarEl = document.querySelector(".sidebar");
 mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 
 let viewAs = "";
+let csrfToken = "";
 // See app.js for why this is a plain page-navigation, not a live re-fetch.
 let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
 
@@ -62,7 +63,7 @@ function initials(name) {
 async function loadSession() {
   const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
-  const csrfToken = me.csrfToken || "";
+  csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   renderCancellationBanner(me);
@@ -83,6 +84,7 @@ async function loadSession() {
   if (me.role === "admin") {
     adminNav.hidden = false;
     await loadViewAsOptions();
+    loadDuplicates();
   }
 }
 
@@ -196,6 +198,87 @@ async function loadContacts() {
       contactGroups.appendChild(row);
     }
   }
+}
+
+// --- Possible duplicates (admins only) ---
+// Contacts sharing a phone number. Merging is done in GHL itself (each
+// contact links straight to its GHL record) -- this view only finds them.
+
+const duplicatesBar = document.getElementById("duplicates-bar");
+const duplicatesToggle = document.getElementById("duplicates-toggle");
+const duplicatesCount = document.getElementById("duplicates-count");
+const duplicatesPanel = document.getElementById("duplicates-panel");
+
+duplicatesToggle.addEventListener("click", () => {
+  const open = duplicatesPanel.hidden;
+  duplicatesPanel.hidden = !open;
+  duplicatesToggle.setAttribute("aria-expanded", String(open));
+});
+
+function renderDuplicateGroups(groups) {
+  duplicatesCount.textContent = String(groups.length);
+  duplicatesBar.hidden = groups.length === 0;
+  if (groups.length === 0) {
+    duplicatesPanel.hidden = true;
+    duplicatesPanel.innerHTML = "";
+    return;
+  }
+
+  duplicatesPanel.innerHTML = `<p class="duplicates-intro">These contacts share a phone number. To merge them, open each one in GoHighLevel and use its merge tool.</p>`;
+  for (const group of groups) {
+    const card = document.createElement("div");
+    card.className = "duplicate-group";
+
+    const members = group.contacts
+      .map((c) => {
+        const name = isNameJustThePhone(c.name, c.phone) ? "(no name)" : c.name || "(no name)";
+        const calls = `${c.callCount} call${c.callCount === 1 ? "" : "s"}`;
+        const ghlLink = c.ghlUrl
+          ? `<a class="duplicate-link" href="${escapeHtml(c.ghlUrl)}" target="_blank" rel="noopener noreferrer">Open in GHL &#8599;</a>`
+          : "";
+        return `<div class="duplicate-member">
+          <div class="duplicate-member-main">
+            <span class="duplicate-member-name">${escapeHtml(name)}</span>
+            <span class="duplicate-member-meta">${escapeHtml(c.phone || "")} &middot; ${escapeHtml(calls)} &middot; ${escapeHtml(formatLastCall(c.lastCallAt))}</span>
+          </div>
+          <div class="duplicate-member-actions">
+            <a class="duplicate-link" href="/?contactId=${encodeURIComponent(c.id)}">View calls</a>
+            ${ghlLink}
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    card.innerHTML = `${members}
+      <div class="duplicate-group-footer">
+        <button type="button" class="duplicate-dismiss">Not duplicates</button>
+      </div>`;
+
+    const dismissBtn = card.querySelector(".duplicate-dismiss");
+    dismissBtn.addEventListener("click", async () => {
+      dismissBtn.disabled = true;
+      const res = await fetch(`/api/admin/duplicates/dismiss${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
+      });
+      if (!res.ok) {
+        dismissBtn.disabled = false;
+        dismissBtn.textContent = "Couldn't save — try again";
+        return;
+      }
+      loadDuplicates();
+    });
+
+    duplicatesPanel.appendChild(card);
+  }
+}
+
+async function loadDuplicates() {
+  const res = await fetch(`/api/admin/duplicates${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
+  if (!res.ok) return;
+  const { groups } = await res.json();
+  renderDuplicateGroups(groups);
 }
 
 let searchTimer;

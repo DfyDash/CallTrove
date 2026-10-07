@@ -823,3 +823,19 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS transcript_cleanup_enabled BOO
 ALTER TABLE cost_ledger DROP CONSTRAINT IF EXISTS cost_ledger_category_check;
 ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_category_check
   CHECK (category IN ('transcription', 'ai_summary', 'storage', 'transcript_cleanup'));
+
+-- "Not duplicates" answers from the Contacts page's Possible duplicates
+-- view (src/routes/admin.js, GET /duplicates). Recorded per pair, with
+-- contact_a always the lesser ID, so a group where an admin dismissed
+-- A+B still resurfaces if a third contact C later shows up on the same
+-- phone number: A+C and B+C are new, undismissed pairs. ON DELETE CASCADE
+-- so a contact that disappears (e.g. merged away in GHL) takes its
+-- dismissals with it instead of blocking the delete.
+CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
+  contact_a     TEXT NOT NULL REFERENCES contacts(ghl_contact_id) ON DELETE CASCADE,
+  contact_b     TEXT NOT NULL REFERENCES contacts(ghl_contact_id) ON DELETE CASCADE,
+  dismissed_by  TEXT,
+  dismissed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (contact_a, contact_b),
+  CHECK (contact_a < contact_b)
+);

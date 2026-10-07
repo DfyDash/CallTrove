@@ -618,6 +618,43 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
   res.json(result);
 });
 
+// --- Possible duplicate contacts ---
+// Read-only against GHL: this only surfaces contacts that share a phone
+// number. Merging happens in GHL itself (its public API has no merge call),
+// so each contact carries a direct link into its GHL record.
+
+const GHL_APP_URL = (process.env.GHL_APP_URL || "https://app.gohighlevel.com").replace(/\/+$/, "");
+
+router.get("/duplicates", requireAccount, async (req, res) => {
+  const [groups, storedLocationId] = await Promise.all([
+    db.listDuplicateContactGroups(req.ghlAccountId),
+    db.getGhlLocationIdForAccount(req.ghlAccountId),
+  ]);
+  // The legacy single-account deployment's row stores the placeholder
+  // "default" -- its real location is the GHL_LOCATION_ID env var (see
+  // src/ghlApi.js). No usable location means no link, not a broken one.
+  const locationId = storedLocationId === "default" ? process.env.GHL_LOCATION_ID || null : storedLocationId;
+  const ghlUrl = (contactId) =>
+    locationId ? `${GHL_APP_URL}/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(contactId)}` : null;
+  res.json({
+    groups: groups.map((g) => ({
+      ...g,
+      contacts: g.contacts.map((c) => ({ ...c, ghlUrl: ghlUrl(c.id) })),
+    })),
+  });
+});
+
+router.post("/duplicates/dismiss", requireAccount, requireCsrf, async (req, res) => {
+  const ids = (req.body || {}).contactIds;
+  if (!Array.isArray(ids) || ids.length < 2 || ids.length > 50 || !ids.every((id) => typeof id === "string" && id)) {
+    return res.status(400).json({ error: "contactIds must be a list of 2-50 contact IDs" });
+  }
+  const ok = await db.dismissDuplicateGroup(ids, req.session.user.username, req.ghlAccountId);
+  if (!ok) return res.status(404).json({ error: "one or more contacts not found in this account" });
+  await log(req, "duplicates_dismissed", `Marked ${new Set(ids).size} contacts sharing a phone number as not duplicates`);
+  res.json({ status: "dismissed" });
+});
+
 // --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---
 
 router.get("/ghl-accounts", async (req, res) => {
