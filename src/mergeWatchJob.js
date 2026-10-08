@@ -1,13 +1,18 @@
 // Notices contacts merged in GHL and files their calls under the surviving
 // contact -- no button press needed. GHL has no merge API or webhook, so
-// merging happens there and this just checks back on a timer.
+// merging happens there and this just checks back on a timer (every minute
+// by default, matching the live call poller).
+//
+// It's cheap enough to run that often because the first check is tiny: one
+// small GHL call per contact asking "does this contact still exist?". A
+// merge always removes one contact, so only a group with a missing member
+// gets the heavier catch-up (listing calls and re-filing them -- see
+// src/contactReconcile.js). A cycle with no merges costs one call per
+// watched contact and moves nothing.
 //
 // What it watches: contacts that share a phone number (the same groups as
 // the Possible duplicates view). Duplicates are what get merged, and the
-// surviving contact keeps that number, so a merged pair shows up as a
-// member GHL no longer has plus a survivor holding the extra calls. Each
-// cycle re-asks GHL about those contacts only (a few API calls per contact)
-// rather than sweeping every contact. A merge between contacts with
+// surviving contact keeps that number. A merge between contacts with
 // DIFFERENT phone numbers isn't in a group, so it's caught later instead:
 // the live poller and any "Import past calls" run re-file a call the moment
 // they see it under a new contact (see processCallMessage in
@@ -16,15 +21,21 @@
 // Groups an admin dismissed as "not duplicates" aren't checked. At most
 // MAX_GROUPS_PER_ACCOUNT groups are checked per cycle, rotating through the
 // rest on later cycles, so an account with hundreds of duplicate groups
-// can't flood GHL's API in one go.
+// can't flood GHL's API in one go. A group whose missing contact's calls
+// couldn't be located (its survivor is outside the group) is left alone for
+// a few hours rather than re-tried every minute; re-running "Import past
+// calls" re-files those.
 const db = require("./db");
 const accountCredentials = require("./accountCredentials");
 const alerting = require("./alerting");
 const { reconcileContacts, withAccountLock } = require("./contactReconcile");
 
-const CHECK_INTERVAL_MS = Math.max(1, Number(process.env.MERGE_WATCH_INTERVAL_MIN) || 15) * 60 * 1000;
-const FIRST_RUN_DELAY_MS = 2 * 60 * 1000; // let startup settle before the first GHL sweep
-const MAX_GROUPS_PER_ACCOUNT = 20;
+const CHECK_INTERVAL_MS = Math.max(1, Number(process.env.MERGE_WATCH_INTERVAL_MIN) || 1) * 60 * 1000;
+const FIRST_RUN_DELAY_MS = 30 * 1000; // let startup settle before the first GHL check
+const MAX_GROUPS_PER_ACCOUNT = 10;
+const UNRESOLVED_RETRY_MS = 6 * 60 * 60 * 1000;
+
+const unresolvedUntil = new Map(); // contactId -> when to try its group again
 
 const nextGroupIndex = new Map(); // accountId -> where the next cycle resumes
 
@@ -52,12 +63,31 @@ async function checkAccount(account, maxGroups) {
 
   const outcome = await withAccountLock(account.id, async () => {
     for (const group of pickGroups(account.id, groups, maxGroups)) {
-      const result = await reconcileContacts({ api, ghlAccountId: account.id, contactIds: group.contacts.map((c) => c.id) });
+      const contactIds = group.contacts.map((c) => c.id);
+      if (contactIds.some((id) => (unresolvedUntil.get(id) || 0) > Date.now())) continue;
       totals.groupsChecked++;
-      totals.contactsChecked += result.contactsChecked;
+
+      // The cheap check: has any member disappeared from GHL?
+      let anyGone = false;
+      for (const contactId of contactIds) {
+        totals.contactsChecked++;
+        try {
+          const { contactGone } = await api.searchConversationsForContact(contactId);
+          if (contactGone) anyGone = true;
+        } catch (err) {
+          console.warn(`[mergeWatch] could not check contact ${contactId}:`, err.message);
+          totals.errors++;
+        }
+      }
+      if (!anyGone) continue;
+
+      const result = await reconcileContacts({ api, ghlAccountId: account.id, contactIds });
       totals.callsMoved += result.callsMoved;
       totals.contactsRemoved += result.contactsRemoved;
       totals.errors += result.errors;
+      if (result.callsMoved === 0 && result.contactsGone > 0 && result.errors === 0) {
+        for (const id of contactIds) unresolvedUntil.set(id, Date.now() + UNRESOLVED_RETRY_MS);
+      }
     }
   });
   if (outcome.busy) return totals; // a manual check is already running; next cycle covers it
@@ -113,4 +143,4 @@ function start() {
   setTimeout(cycle, FIRST_RUN_DELAY_MS);
 }
 
-module.exports = { start, runOnce, pickGroups, isEnabled, MAX_GROUPS_PER_ACCOUNT };
+module.exports = { start, runOnce, pickGroups, isEnabled, MAX_GROUPS_PER_ACCOUNT, unresolvedUntil };
