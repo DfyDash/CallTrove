@@ -80,8 +80,15 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
   if (!inserted) {
     // Already processed -- but GHL may now report it under a different
     // contact (the two were merged in GHL), so follow it.
-    const movedFrom = await db.reassignCallToContact({ ghlCallId: message.id, contactId, ghlAccountId });
-    if (movedFrom) console.log(`[poller] call ${message.id} moved from contact ${movedFrom} to ${contactId} (merged in GHL)`);
+    // Best-effort only: a failure here must never stall ingestion (an error
+    // out of processCallMessage stops this account's cycle and holds its
+    // checkpoint), and a call that didn't move now is re-filed next time.
+    try {
+      const movedFrom = await db.reassignCallToContact({ ghlCallId: message.id, contactId, ghlAccountId });
+      if (movedFrom) console.log(`[poller] call ${message.id} moved from contact ${movedFrom} to ${contactId} (merged in GHL)`);
+    } catch (err) {
+      console.warn(`[poller] could not re-file call ${message.id} under contact ${contactId} (ingestion unaffected):`, err.message);
+    }
     return;
   }
 

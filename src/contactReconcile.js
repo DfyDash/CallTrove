@@ -15,8 +15,30 @@
 // are (the survivor may be outside the group); a backfill re-files them.
 const db = require("./db");
 
-async function reconcileContacts({ api, ghlAccountId, contactIds }) {
-  const result = { contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, contactsGone: 0, errors: 0 };
+const LIST_TIMEOUT_MS = 30 * 1000;
+
+// The HTTP status behind an error from the GHL client, if it has one.
+function statusOf(err) {
+  if (err && err.status) return err.status;
+  const m = /status (\d{3})/.exec((err && err.message) || "");
+  return m ? Number(m[1]) : null;
+}
+
+// Gives up waiting after ms. The underlying call can't be cancelled, so it's
+// left to finish on its own -- with its outcome swallowed, because an
+// abandoned promise that later rejects would otherwise surface as an
+// unhandled rejection.
+function withTimeout(promise, ms, what) {
+  promise.catch(() => {});
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs = LIST_TIMEOUT_MS }) {
+  const result = { contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, contactsGone: 0, errors: 0, rateLimited: false };
   for (const contactId of new Set(contactIds)) {
     result.contactsChecked++;
     let conversations;
@@ -27,6 +49,7 @@ async function reconcileContacts({ api, ghlAccountId, contactIds }) {
     } catch (err) {
       console.warn(`[reconcile] could not list conversations for contact ${contactId}:`, err.message);
       result.errors++;
+      if (statusOf(err) === 429) { result.rateLimited = true; return result; } // GHL says slow down -- stop, don't keep asking
       continue;
     }
     for (const conversation of conversations) {
@@ -35,10 +58,11 @@ async function reconcileContacts({ api, ghlAccountId, contactIds }) {
       const ownerId = conversation.contactId || contactId;
       let messages;
       try {
-        messages = await api.listCallMessages(conversation.id);
+        messages = await withTimeout(api.listCallMessages(conversation.id), listTimeoutMs, "listing a conversation's calls");
       } catch (err) {
         console.warn(`[reconcile] could not read conversation ${conversation.id}:`, err.message);
         result.errors++;
+        if (statusOf(err) === 429) { result.rateLimited = true; return result; }
         continue;
       }
       if (messages.length === 0) continue;
@@ -76,4 +100,4 @@ async function withAccountLock(accountId, fn) {
   }
 }
 
-module.exports = { reconcileContacts, withAccountLock };
+module.exports = { reconcileContacts, withAccountLock, statusOf, withTimeout };

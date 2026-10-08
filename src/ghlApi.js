@@ -83,13 +83,17 @@ function forAccount({ apiToken, locationId } = {}) {
     url.searchParams.set("locationId", location);
     url.searchParams.set("contactId", contactId);
     url.searchParams.set("limit", "100");
-    const res = await fetch(url, { headers: headers() });
+    // Bounded: only the merge catch-up calls this, and a request that never
+    // answers must not freeze it (or hold its per-account lock) forever.
+    const res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(15000) });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       if (res.status === 400 && (body.canonicalCode === "CONVERSATIONS_CONTACT_NOT_FOUND" || /contact not found/i.test(body.message || ""))) {
         return { conversations: [], contactGone: true };
       }
-      throw new Error(`conversations/search (by contact) failed with status ${res.status}`);
+      const err = new Error(`conversations/search (by contact) failed with status ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
     const data = await res.json();
     return { conversations: data.conversations || [], contactGone: false };

@@ -1,7 +1,9 @@
 // Notices contacts merged in GHL and files their calls under the surviving
 // contact -- no button press needed. GHL has no merge API or webhook, so
-// merging happens there and this just checks back on a timer (every minute
-// by default, matching the live call poller).
+// merging happens there and this just checks back on a timer: every 90
+// seconds by default, deliberately NOT the live call poller's 60 -- the two
+// timers then drift apart instead of firing together every cycle, so they
+// rarely compete for GHL's API allowance or the database at the same moment.
 //
 // It's cheap enough to run that often because the first check is tiny: one
 // small GHL call per contact asking "does this contact still exist?". A
@@ -28,14 +30,25 @@
 const db = require("./db");
 const accountCredentials = require("./accountCredentials");
 const alerting = require("./alerting");
-const { reconcileContacts, withAccountLock } = require("./contactReconcile");
+const { reconcileContacts, withAccountLock, statusOf } = require("./contactReconcile");
 
-const CHECK_INTERVAL_MS = Math.max(1, Number(process.env.MERGE_WATCH_INTERVAL_MIN) || 1) * 60 * 1000;
-const FIRST_RUN_DELAY_MS = 30 * 1000; // let startup settle before the first GHL check
+const CHECK_INTERVAL_MS = Math.max(30, Number(process.env.MERGE_WATCH_INTERVAL_SEC) || 90) * 1000;
+// Let startup settle, and start offset from the poller's ticks (which begin
+// at boot and repeat every 60s) rather than on top of one.
+const FIRST_RUN_DELAY_MS = 45 * 1000;
 const MAX_GROUPS_PER_ACCOUNT = 10;
 const UNRESOLVED_RETRY_MS = 6 * 60 * 60 * 1000;
 
+// Good-neighbour limits: the live poller shares GHL's API allowance with
+// this job, and ingesting calls always comes first.
+const CALL_SPACING_MS = 150; // pause between GHL calls, so no bursts
+const ACCOUNT_TIME_BUDGET_MS = 30 * 1000; // stop starting new groups past this; rotation resumes next cycle
+const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000; // after a 429, leave that account alone this long
+
 const unresolvedUntil = new Map(); // contactId -> when to try its group again
+const backoffUntil = new Map(); // accountId -> when to resume after GHL pushed back
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const nextGroupIndex = new Map(); // accountId -> where the next cycle resumes
 
@@ -54,15 +67,23 @@ function pickGroups(accountId, groups, max) {
   return picked;
 }
 
+function rateLimited(account) {
+  backoffUntil.set(account.id, Date.now() + RATE_LIMIT_BACKOFF_MS);
+  console.warn(`[mergeWatch] GHL rate-limited account ${account.id}; pausing its merge checks for ${RATE_LIMIT_BACKOFF_MS / 60000}min so call ingestion keeps the allowance`);
+}
+
 async function checkAccount(account, maxGroups) {
   const totals = { groupsChecked: 0, contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, errors: 0 };
+  if ((backoffUntil.get(account.id) || 0) > Date.now()) return totals;
   const groups = await db.listDuplicateContactGroups(account.id);
   if (groups.length === 0) return totals;
   const api = await accountCredentials.clientForAccount(account);
   if (!api.isConfigured()) return totals;
 
   const outcome = await withAccountLock(account.id, async () => {
+    const deadline = Date.now() + ACCOUNT_TIME_BUDGET_MS;
     for (const group of pickGroups(account.id, groups, maxGroups)) {
+      if (Date.now() > deadline) break;
       const contactIds = group.contacts.map((c) => c.id);
       if (contactIds.some((id) => (unresolvedUntil.get(id) || 0) > Date.now())) continue;
       totals.groupsChecked++;
@@ -77,7 +98,9 @@ async function checkAccount(account, maxGroups) {
         } catch (err) {
           console.warn(`[mergeWatch] could not check contact ${contactId}:`, err.message);
           totals.errors++;
+          if (statusOf(err) === 429) return rateLimited(account);
         }
+        await sleep(CALL_SPACING_MS);
       }
       if (!anyGone) continue;
 
@@ -85,6 +108,7 @@ async function checkAccount(account, maxGroups) {
       totals.callsMoved += result.callsMoved;
       totals.contactsRemoved += result.contactsRemoved;
       totals.errors += result.errors;
+      if (result.rateLimited) return rateLimited(account);
       if (result.callsMoved === 0 && result.contactsGone > 0 && result.errors === 0) {
         for (const id of contactIds) unresolvedUntil.set(id, Date.now() + UNRESOLVED_RETRY_MS);
       }
@@ -129,7 +153,7 @@ function start() {
     console.log("[mergeWatch] disabled (MERGE_WATCH_ENABLED=false)");
     return;
   }
-  console.log(`[mergeWatch] starting, checking duplicate contacts for GHL merges every ${CHECK_INTERVAL_MS / 60000}min`);
+  console.log(`[mergeWatch] starting, checking duplicate contacts for GHL merges every ${CHECK_INTERVAL_MS / 1000}s`);
   async function cycle() {
     try {
       await runOnce();
@@ -143,4 +167,4 @@ function start() {
   setTimeout(cycle, FIRST_RUN_DELAY_MS);
 }
 
-module.exports = { start, runOnce, pickGroups, isEnabled, MAX_GROUPS_PER_ACCOUNT, unresolvedUntil };
+module.exports = { start, runOnce, pickGroups, isEnabled, MAX_GROUPS_PER_ACCOUNT, unresolvedUntil, backoffUntil };
