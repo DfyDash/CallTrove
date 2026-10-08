@@ -6,6 +6,7 @@ const ghlApi = require("../ghlApi");
 const ghlOAuth = require("../ghlOAuth");
 const accountCredentials = require("../accountCredentials");
 const ghlAppUrl = require("../ghlAppUrl");
+const { reconcileContacts } = require("../contactReconcile");
 const backfill = require("../backfill");
 const email = require("../email");
 const { getBuffer } = require("../storage");
@@ -657,6 +658,38 @@ router.post("/duplicates/dismiss", requireAccount, requireCsrf, async (req, res)
   if (!ok) return res.status(404).json({ error: "one or more contacts not found in this account" });
   await log(req, "duplicates_dismissed", `Marked ${new Set(ids).size} contacts sharing a phone number as not duplicates`);
   res.json({ status: "dismissed" });
+});
+
+// After merging duplicates in GHL, catch CallTrove up: re-file each contact's
+// calls to whatever contact GHL now holds them under (see
+// src/contactReconcile.js). One at a time per account -- it makes several
+// GHL API calls per contact, and a double-click shouldn't double them.
+const reconcilesRunning = new Set();
+
+router.post("/duplicates/reconcile", requireAccount, requireCsrf, async (req, res) => {
+  const ids = (req.body || {}).contactIds;
+  if (!Array.isArray(ids) || ids.length < 2 || ids.length > 50 || !ids.every((id) => typeof id === "string" && id)) {
+    return res.status(400).json({ error: "contactIds must be a list of 2-50 contact IDs" });
+  }
+  if (!(await db.contactsBelongToAccount(ids, req.ghlAccountId))) {
+    return res.status(404).json({ error: "one or more contacts not found in this account" });
+  }
+  if (reconcilesRunning.has(req.ghlAccountId)) {
+    return res.status(409).json({ error: "already checking this account -- give it a moment" });
+  }
+  reconcilesRunning.add(req.ghlAccountId);
+  try {
+    const account = await db.getGhlAccountById(req.ghlAccountId);
+    const api = await accountCredentials.clientForAccount(account);
+    if (!api.isConfigured()) return res.status(409).json({ error: "this account isn't connected to GHL" });
+    const result = await reconcileContacts({ api, ghlAccountId: req.ghlAccountId, contactIds: ids });
+    if (result.callsMoved > 0) {
+      await log(req, "contacts_reconciled", `Followed a GHL merge: moved ${result.callsMoved} call${result.callsMoved === 1 ? "" : "s"} and removed ${result.contactsRemoved} leftover contact${result.contactsRemoved === 1 ? "" : "s"} for account ${req.ghlAccountId}`);
+    }
+    res.json(result);
+  } finally {
+    reconcilesRunning.delete(req.ghlAccountId);
+  }
 });
 
 // --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---

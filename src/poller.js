@@ -77,7 +77,13 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     ghlAccountId,
   });
 
-  if (!inserted) return; // already processed this call
+  if (!inserted) {
+    // Already processed -- but GHL may now report it under a different
+    // contact (the two were merged in GHL), so follow it.
+    const movedFrom = await db.reassignCallToContact({ ghlCallId: message.id, contactId, ghlAccountId });
+    if (movedFrom) console.log(`[poller] call ${message.id} moved from contact ${movedFrom} to ${contactId} (merged in GHL)`);
+    return;
+  }
 
   try {
     const recording = await api.downloadRecording(message.id);

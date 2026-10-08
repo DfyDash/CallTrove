@@ -2102,7 +2102,43 @@ tbody tr:last-child td {
 .duplicate-group-footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
   padding: 8px 14px;
+}
+
+.duplicate-merged {
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.duplicate-merged:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.duplicates-notice {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.duplicates-notice[hidden] {
+  display: none;
+}
+
+.duplicates-notice-error {
+  color: var(--critical);
+  border-color: var(--critical);
 }
 
 .duplicate-dismiss {

@@ -71,6 +71,30 @@ function forAccount({ apiToken, locationId } = {}) {
     return data.conversations || [];
   }
 
+  // Every conversation GHL currently has under one contact. After two
+  // contacts are merged in GHL, the merged-away contact's ID no longer
+  // exists -- GHL answers that with a 400 "Contact not found"
+  // (CONVERSATIONS_CONTACT_NOT_FOUND), reported here as contactGone rather
+  // than an error -- and the surviving contact's conversations hold
+  // everything. That's how src/contactReconcile.js tells where a call
+  // really lives now. Any other failure still throws.
+  async function searchConversationsForContact(contactId) {
+    const url = new URL(`${GHL_API_BASE}/conversations/search`);
+    url.searchParams.set("locationId", location);
+    url.searchParams.set("contactId", contactId);
+    url.searchParams.set("limit", "100");
+    const res = await fetch(url, { headers: headers() });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 400 && (body.canonicalCode === "CONVERSATIONS_CONTACT_NOT_FOUND" || /contact not found/i.test(body.message || ""))) {
+        return { conversations: [], contactGone: true };
+      }
+      throw new Error(`conversations/search (by contact) failed with status ${res.status}`);
+    }
+    const data = await res.json();
+    return { conversations: data.conversations || [], contactGone: false };
+  }
+
   // Every call-type message in a conversation (GHL mixes calls, SMS, emails,
   // etc. into the same message list). Paginates back through the whole
   // conversation via lastMessageId -- GHL only returns the most recent ~20
@@ -255,6 +279,7 @@ function forAccount({ apiToken, locationId } = {}) {
     isConfigured,
     searchConversations,
     searchConversationsPage,
+    searchConversationsForContact,
     listCallMessages,
     wasContactedSince,
     downloadRecording,
