@@ -60,4 +60,20 @@ async function reconcileContacts({ api, ghlAccountId, contactIds }) {
   return result;
 }
 
-module.exports = { reconcileContacts };
+// One catch-up per account at a time, shared by the button and the
+// background watcher (src/mergeWatchJob.js): each makes several GHL API
+// calls per contact, and two at once would only double that. Returns
+// { busy: true } without running fn if one is already going.
+const running = new Set();
+
+async function withAccountLock(accountId, fn) {
+  if (running.has(accountId)) return { busy: true };
+  running.add(accountId);
+  try {
+    return { busy: false, value: await fn() };
+  } finally {
+    running.delete(accountId);
+  }
+}
+
+module.exports = { reconcileContacts, withAccountLock };

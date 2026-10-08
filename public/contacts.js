@@ -237,7 +237,7 @@ function renderDuplicateGroups(groups, suggestSettingAddress) {
     return;
   }
 
-  duplicatesPanel.innerHTML = `<p class="duplicates-intro">These contacts share a phone number. To merge them, open each one in GoHighLevel and use its merge tool, then come back and click <strong>I merged these</strong> so CallTrove moves the calls over.</p>`;
+  duplicatesPanel.innerHTML = `<p class="duplicates-intro">These contacts share a phone number. To merge them, open each one in GoHighLevel and use its merge tool, CallTrove notices the merge on its own within about 15 minutes and moves the calls over. To update right away, click <strong>I merged these</strong>.</p>`;
   if (suggestSettingAddress) {
     duplicatesPanel.innerHTML += `<p class="duplicates-intro duplicates-hint">These links open the standard GHL site. Your account looks white-labeled, so set your GHL web address in <a href="/settings.html#accounts">Settings &rarr; GHL accounts</a> to open your own branded site instead.</p>`;
   }
