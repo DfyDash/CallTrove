@@ -198,6 +198,21 @@ function forAccount({ apiToken, locationId } = {}) {
     return (data.location && data.location.name) || data.name || null;
   }
 
+  // The brand ID GHL attaches to a location that sits under a white-label
+  // agency (absent/empty for standard GHL). Used only as a hint that the
+  // admin should set their branded GHL web address in Settings -- the API
+  // never says what that address is (see src/ghlAppUrl.js).
+  async function getLocationBrandId() {
+    const url = `${GHL_API_BASE}/locations/${location}`;
+    const res = await fetch(url, { headers: headers() });
+    if (!res.ok) {
+      console.warn(`[ghlApi] could not fetch location brand, status ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    return (data.location && data.location.brandId) || data.brandId || null;
+  }
+
   // Fetches the sub-account's GHL user list, trimmed to just what the admin
   // UI needs to map a login account to the identity that appears on their
   // calls -- not the full response, which includes each user's entire GHL
@@ -246,6 +261,7 @@ function forAccount({ apiToken, locationId } = {}) {
     getUserName,
     getAccountTimezone,
     getLocationName,
+    getLocationBrandId,
     listUsers,
     addContactNote,
   };

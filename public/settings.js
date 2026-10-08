@@ -550,6 +550,8 @@ async function loadTeam() {
 // --- GHL accounts (multi-tenant: connected locations) ---
 
 const ghlAccountRows = document.getElementById("ghl-account-rows");
+const ghlAppUrlSection = document.getElementById("ghl-app-url-section");
+const ghlAppUrlList = document.getElementById("ghl-app-url-list");
 const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
 const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
 
@@ -588,6 +590,30 @@ async function disconnectGhlAccount(id, name, btn) {
   alert(body.error || "Could not disconnect this account.");
 }
 
+async function saveGhlAppUrl(id, btn) {
+  const input = ghlAppUrlList.querySelector(`[data-app-url-input="${CSS.escape(id)}"]`);
+  const status = ghlAppUrlList.querySelector(`[data-app-url-status="${CSS.escape(id)}"]`);
+  btn.disabled = true;
+  status.textContent = "Saving...";
+  status.classList.remove("ghl-url-error");
+  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/app-url`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ appUrl: input.value }),
+  });
+  btn.disabled = false;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    status.textContent = body.error || "Could not save.";
+    status.classList.add("ghl-url-error");
+    return;
+  }
+  input.value = body.appUrl || "";
+  status.textContent = body.appUrl ? "Saved." : "Cleared -- links use standard GHL.";
+  const hint = ghlAppUrlList.querySelector(`[data-app-url-hint="${CSS.escape(id)}"]`);
+  if (hint && body.appUrl) hint.remove();
+}
+
 async function loadGhlAccountsTab() {
   tabLoaded.accounts = true;
   const res = await fetch("/api/admin/ghl-accounts/status");
@@ -618,6 +644,30 @@ async function loadGhlAccountsTab() {
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
 
+  const activeAccounts = accounts.filter((a) => !a.uninstalledAt);
+  ghlAppUrlSection.hidden = activeAccounts.length === 0;
+  ghlAppUrlList.innerHTML = activeAccounts
+    .map((a) => {
+      const label = a.name || a.ghlLocationId;
+      return `<div class="ghl-url-item">
+        <label class="ghl-url-label" for="app-url-${escapeHtml(a.id)}">${escapeHtml(label)}</label>
+        <div class="ghl-url-cell">
+          <input type="text" id="app-url-${escapeHtml(a.id)}" class="ghl-url-input" data-app-url-input="${escapeHtml(a.id)}" value="${escapeHtml(a.ghlAppUrl || "")}" placeholder="app.gohighlevel.com" autocomplete="off" spellcheck="false" />
+          <button type="button" class="ghl-reconnect-btn" data-app-url-save="${escapeHtml(a.id)}">Save</button>
+        </div>
+        <span class="settings-note ghl-url-status" data-app-url-status="${escapeHtml(a.id)}" role="status"></span>
+        ${a.suggestSettingAddress ? `<span class="settings-note ghl-url-hint" data-app-url-hint="${escapeHtml(a.id)}">This account looks white-labeled. Enter the address you log into GHL at so the links open the right site.</span>` : ""}
+      </div>`;
+    })
+    .join("");
+  ghlAppUrlList.querySelectorAll("[data-app-url-save]").forEach((btn) => {
+    btn.addEventListener("click", () => saveGhlAppUrl(btn.dataset.appUrlSave, btn));
+  });
+  ghlAppUrlList.querySelectorAll("[data-app-url-input]").forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveGhlAppUrl(input.dataset.appUrlInput, ghlAppUrlList.querySelector(`[data-app-url-save="${CSS.escape(input.dataset.appUrlInput)}"]`));
+    });
+  });
   ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
   ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
     btn.addEventListener("click", () => disconnectGhlAccount(btn.dataset.disconnect, btn.dataset.name, btn));

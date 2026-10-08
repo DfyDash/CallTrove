@@ -5,6 +5,7 @@ const db = require("../db");
 const ghlApi = require("../ghlApi");
 const ghlOAuth = require("../ghlOAuth");
 const accountCredentials = require("../accountCredentials");
+const ghlAppUrl = require("../ghlAppUrl");
 const backfill = require("../backfill");
 const email = require("../email");
 const { getBuffer } = require("../storage");
@@ -623,20 +624,23 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
 // number. Merging happens in GHL itself (its public API has no merge call),
 // so each contact carries a direct link into its GHL record.
 
-const GHL_APP_URL = (process.env.GHL_APP_URL || "https://app.gohighlevel.com").replace(/\/+$/, "");
-
 router.get("/duplicates", requireAccount, async (req, res) => {
-  const [groups, storedLocationId] = await Promise.all([
+  const [groups, account] = await Promise.all([
     db.listDuplicateContactGroups(req.ghlAccountId),
-    db.getGhlLocationIdForAccount(req.ghlAccountId),
+    db.getGhlAccountById(req.ghlAccountId),
   ]);
   // The legacy single-account deployment's row stores the placeholder
   // "default" -- its real location is the GHL_LOCATION_ID env var (see
   // src/ghlApi.js). No usable location means no link, not a broken one.
-  const locationId = storedLocationId === "default" ? process.env.GHL_LOCATION_ID || null : storedLocationId;
+  const locationId = account.ghlLocationId === "default" ? process.env.GHL_LOCATION_ID || null : account.ghlLocationId;
+  const base = ghlAppUrl.resolveAppBase(account);
   const ghlUrl = (contactId) =>
-    locationId ? `${GHL_APP_URL}/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(contactId)}` : null;
+    locationId ? `${base}/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(contactId)}` : null;
+  // Only worth a GHL API call when links would otherwise go to standard GHL
+  // and there's something to flag; the answer is cached (see ghlAppUrl.js).
+  const suggestSettingAddress = groups.length > 0 && !account.ghlAppUrl && (await ghlAppUrl.looksWhiteLabeled(account));
   res.json({
+    suggestSettingAddress,
     groups: groups.map((g) => ({
       ...g,
       contacts: g.contacts.map((c) => ({ ...c, ghlUrl: ghlUrl(c.id) })),
@@ -672,7 +676,35 @@ router.get("/ghl-accounts", async (req, res) => {
 // spotting a stuck/stale connection.
 router.get("/ghl-accounts/status", async (req, res) => {
   const accounts = await db.listGhlAccountsWithStatusForTenant(req.session.user.tenantId);
-  res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
+  // Flags active accounts that GHL says are white-labeled but that have no
+  // GHL web address saved yet, so Settings can prompt for it.
+  const withHint = await Promise.all(
+    accounts.map(async (a) => {
+      if (a.uninstalledAt || a.ghlAppUrl) return { ...a, suggestSettingAddress: false };
+      const full = await db.getGhlAccountById(a.id);
+      return { ...a, suggestSettingAddress: await ghlAppUrl.looksWhiteLabeled(full) };
+    })
+  );
+  res.json({ accounts: withHint, oauthConfigured: ghlOAuth.isConfigured() });
+});
+
+// Saves (or clears, with an empty value) the web address this account's
+// admins log into GHL at -- what the "Open in GHL" links point to. See
+// src/ghlAppUrl.js for why it's entered rather than detected.
+router.put("/ghl-accounts/:id/app-url", requireCsrf, async (req, res) => {
+  const account = await db.getGhlAccountById(req.params.id);
+  if (!account || account.tenantId !== req.session.user.tenantId) {
+    return res.status(404).json({ error: "account not found" });
+  }
+  const result = ghlAppUrl.normalizeAppUrl((req.body || {}).appUrl);
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  await db.setGhlAppUrl(account.id, result.url);
+  await log(
+    req,
+    "ghl_app_url_updated",
+    result.url ? `Set the GHL web address for location "${account.ghlLocationId}" to ${result.url}` : `Cleared the GHL web address for location "${account.ghlLocationId}" (back to standard GHL)`
+  );
+  res.json({ appUrl: result.url });
 });
 
 // Stops syncing this location -- the poller only ever loops active

@@ -918,6 +918,56 @@ tbody tr:last-child td {
    a label+value pair, so it never gets a data-label either (same as any
    other action-only cell on the site). Unmedia-queried since it reads
    fine as a plain flex row on desktop too. */
+.ghl-app-url-section {
+  margin-top: 24px;
+}
+
+.ghl-app-url-heading {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.ghl-url-item {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.ghl-url-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ghl-url-cell {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ghl-url-input {
+  flex: 1 1 220px;
+  max-width: 360px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.ghl-url-status,
+.ghl-url-hint {
+  display: block;
+  margin-top: 6px;
+}
+
+.ghl-url-error {
+  color: var(--critical);
+}
+
 .ghl-account-actions {
   display: flex;
   flex-direction: row;

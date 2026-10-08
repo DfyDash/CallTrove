@@ -215,7 +215,7 @@ duplicatesToggle.addEventListener("click", () => {
   duplicatesToggle.setAttribute("aria-expanded", String(open));
 });
 
-function renderDuplicateGroups(groups) {
+function renderDuplicateGroups(groups, suggestSettingAddress) {
   duplicatesCount.textContent = String(groups.length);
   duplicatesBar.hidden = groups.length === 0;
   if (groups.length === 0) {
@@ -225,6 +225,9 @@ function renderDuplicateGroups(groups) {
   }
 
   duplicatesPanel.innerHTML = `<p class="duplicates-intro">These contacts share a phone number. To merge them, open each one in GoHighLevel and use its merge tool.</p>`;
+  if (suggestSettingAddress) {
+    duplicatesPanel.innerHTML += `<p class="duplicates-intro duplicates-hint">These links open the standard GHL site. Your account looks white-labeled, so set your GHL web address in <a href="/settings.html#accounts">Settings &rarr; GHL accounts</a> to open your own branded site instead.</p>`;
+  }
   for (const group of groups) {
     const card = document.createElement("div");
     card.className = "duplicate-group";
@@ -277,8 +280,8 @@ function renderDuplicateGroups(groups) {
 async function loadDuplicates() {
   const res = await fetch(`/api/admin/duplicates${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   if (!res.ok) return;
-  const { groups } = await res.json();
-  renderDuplicateGroups(groups);
+  const { groups, suggestSettingAddress } = await res.json();
+  renderDuplicateGroups(groups, suggestSettingAddress);
 }
 
 let searchTimer;

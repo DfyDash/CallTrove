@@ -445,9 +445,8 @@ async function dismissDuplicateGroup(contactIds, dismissedBy, ghlAccountId) {
   return true;
 }
 
-async function getGhlLocationIdForAccount(ghlAccountId) {
-  const { rows } = await pool.query(`SELECT ghl_location_id AS "ghlLocationId" FROM ghl_accounts WHERE id = $1`, [ghlAccountId]);
-  return rows[0] ? rows[0].ghlLocationId : null;
+async function setGhlAppUrl(ghlAccountId, appUrl) {
+  await pool.query(`UPDATE ghl_accounts SET ghl_app_url = $2 WHERE id = $1`, [ghlAccountId, appUrl || null]);
 }
 
 const PAGE_SIZES = [20, 50, 100];
@@ -1646,7 +1645,7 @@ async function listGhlAccountsWithStatusForTenant(tenantId) {
   const { rows } = await pool.query(
     `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name,
             g.installed_at AS "installedAt", g.uninstalled_at AS "uninstalledAt",
-            s.last_synced_at AS "lastSyncedAt"
+            s.last_synced_at AS "lastSyncedAt", g.ghl_app_url AS "ghlAppUrl"
      FROM ghl_accounts g
      LEFT JOIN account_sync_state s ON s.ghl_account_id = g.id
      WHERE g.tenant_id = $1
@@ -1759,7 +1758,8 @@ async function listActiveGhlAccountsForTenant(tenantId) {
 async function getGhlAccountById(id) {
   const { rows } = await pool.query(
     `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt",
+            ghl_app_url AS "ghlAppUrl"
      FROM ghl_accounts WHERE id = $1`,
     [id]
   );
@@ -2250,7 +2250,7 @@ module.exports = {
   listContacts,
   listDuplicateContactGroups,
   dismissDuplicateGroup,
-  getGhlLocationIdForAccount,
+  setGhlAppUrl,
   listAllContacts,
   listCalls,
   getCallStats,

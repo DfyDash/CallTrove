@@ -839,3 +839,11 @@ CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
   PRIMARY KEY (contact_a, contact_b),
   CHECK (contact_a < contact_b)
 );
+
+-- The web address this account's admins log into GHL at, for the "Open in
+-- GHL" links (Contacts page's Possible duplicates view). NULL means the
+-- standard app.gohighlevel.com; a white-labeled agency sets its own branded
+-- domain here from Settings > GHL accounts. GHL's API exposes a brand ID
+-- for white-labeled locations but not the brand's web address, so this has
+-- to be entered once rather than detected.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
