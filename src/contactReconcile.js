@@ -16,6 +16,9 @@
 const db = require("./db");
 
 const LIST_TIMEOUT_MS = 30 * 1000;
+const MAX_PAGES_PER_CONVERSATION = 200; // ~4000 messages; beyond that calls are left where they are
+const CALL_SPACING_MS = 150; // pause between GHL calls so a catch-up never bursts against the live poller
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // The HTTP status behind an error from the GHL client, if it has one.
 function statusOf(err) {
@@ -37,7 +40,7 @@ function withTimeout(promise, ms, what) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs = LIST_TIMEOUT_MS }) {
+async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs = LIST_TIMEOUT_MS, spacingMs = CALL_SPACING_MS }) {
   const result = { contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, contactsGone: 0, errors: 0, rateLimited: false };
   for (const contactId of new Set(contactIds)) {
     result.contactsChecked++;
@@ -58,21 +61,35 @@ async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs 
       const ownerId = conversation.contactId || contactId;
       let messages;
       try {
-        messages = await withTimeout(api.listCallMessages(conversation.id), listTimeoutMs, "listing a conversation's calls");
+        // Aborting the signal stops the paging itself, not just the waiting.
+        messages = await withTimeout(
+          api.listCallMessages(conversation.id, { signal: AbortSignal.timeout(listTimeoutMs), maxPages: MAX_PAGES_PER_CONVERSATION }),
+          listTimeoutMs,
+          "listing a conversation's calls"
+        );
       } catch (err) {
         console.warn(`[reconcile] could not read conversation ${conversation.id}:`, err.message);
         result.errors++;
         if (statusOf(err) === 429) { result.rateLimited = true; return result; }
         continue;
       }
+      await sleep(spacingMs);
       if (messages.length === 0) continue;
+
+      // Work out what actually needs moving BEFORE creating or touching any
+      // contact: a contact row is only ever created because a call is about
+      // to be filed under it, never as a side effect of looking.
+      const local = await db.getCallContactIds(messages.map((m) => m.id), ghlAccountId);
+      const toMove = messages.filter((m) => local.has(m.id) && local.get(m.id) !== ownerId);
+      if (toMove.length === 0) continue;
+
       await db.upsertContact({
         contactId: ownerId,
         name: conversation.fullName || conversation.contactName || null,
         phone: conversation.phone || null,
         ghlAccountId,
       });
-      for (const message of messages) {
+      for (const message of toMove) {
         const fromContactId = await db.reassignCallToContact({ ghlCallId: message.id, contactId: ownerId, ghlAccountId });
         if (fromContactId) {
           result.callsMoved++;
@@ -80,6 +97,7 @@ async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs 
         }
       }
     }
+    await sleep(spacingMs);
   }
   return result;
 }

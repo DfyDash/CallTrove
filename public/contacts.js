@@ -275,15 +275,20 @@ function renderDuplicateGroups(groups, suggestSettingAddress) {
     mergedBtn.addEventListener("click", async () => {
       mergedBtn.disabled = true;
       mergedBtn.textContent = "Checking GHL...";
-      const res = await fetch(`/api/admin/duplicates/reconcile${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
-      });
-      const body = await res.json().catch(() => ({}));
+      let res;
+      try {
+        res = await fetch(`/api/admin/duplicates/reconcile${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
+        });
+      } catch {
+        res = null; // network error: fall through to the same "couldn't check" message
+      }
+      const body = res ? await res.json().catch(() => ({})) : {};
       mergedBtn.disabled = false;
       mergedBtn.textContent = "I merged these";
-      if (!res.ok) {
+      if (!res || !res.ok) {
         showDuplicatesNotice(body.error || "Couldn't check GHL -- try again.", true);
         return;
       }
@@ -305,12 +310,17 @@ function renderDuplicateGroups(groups, suggestSettingAddress) {
     const dismissBtn = card.querySelector(".duplicate-dismiss");
     dismissBtn.addEventListener("click", async () => {
       dismissBtn.disabled = true;
-      const res = await fetch(`/api/admin/duplicates/dismiss${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-        body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
-      });
-      if (!res.ok) {
+      let res;
+      try {
+        res = await fetch(`/api/admin/duplicates/dismiss${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
+        });
+      } catch {
+        res = null;
+      }
+      if (!res || !res.ok) {
         dismissBtn.disabled = false;
         dismissBtn.textContent = "Couldn't save — try again";
         return;
