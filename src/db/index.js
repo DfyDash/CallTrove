@@ -422,11 +422,6 @@ async function listDuplicateContactGroups(ghlAccountId) {
   return groups;
 }
 
-// "These aren't duplicates": records every pair among the given contacts
-// as dismissed. Every ID must belong to ghlAccountId -- the caller's
-// already-authorized account -- so one tenant can't write dismissals
-// against another's contacts. Returns false (writing nothing) if any ID
-// isn't in that account.
 // GHL is the source of truth for which contact a call belongs to, and it
 // changes when two contacts are merged there (the merged-away contact is
 // deleted and its conversations move to the survivor). When a call we
@@ -434,18 +429,28 @@ async function listDuplicateContactGroups(ghlAccountId) {
 // contact it came from, or null if nothing moved. If that leaves the old
 // contact with no calls, it's removed too: contact rows are only ever
 // created alongside a call, so an emptied one is the leftover of a merge,
-// and keeping it would show a ghost contact with "No calls yet".
+// and keeping it would show a ghost contact with "No calls yet". Nothing
+// here ever deletes a contact because GHL no longer has it -- only after a
+// call was positively re-filed under a different contact.
+//
+// No row lock is taken: the common case (call already under the right
+// contact) is one indexed SELECT that matches nothing, and the UPDATE
+// re-checks the old contact so a concurrent change can't be overwritten.
 async function reassignCallToContact({ ghlCallId, contactId, ghlAccountId }) {
   const params = [ghlCallId, contactId];
   let accountCondition = "";
   if (ghlAccountId) {
     params.push(ghlAccountId);
-    accountCondition = `AND c.ghl_account_id = $3`;
+    accountCondition = `AND ghl_account_id = $3`;
   }
   const { rows } = await pool.query(
-    `UPDATE calls c SET ghl_contact_id = $2
-     FROM (SELECT id, ghl_contact_id FROM calls WHERE ghl_call_id = $1 FOR UPDATE) old
-     WHERE c.id = old.id AND old.ghl_contact_id <> $2 ${accountCondition}
+    `WITH old AS (
+       SELECT id, ghl_contact_id FROM calls
+       WHERE ghl_call_id = $1 AND ghl_contact_id <> $2 ${accountCondition}
+     )
+     UPDATE calls c SET ghl_contact_id = $2
+     FROM old
+     WHERE c.id = old.id AND c.ghl_contact_id = old.ghl_contact_id
      RETURNING old.ghl_contact_id AS "fromContactId"`,
     params
   );
@@ -458,13 +463,31 @@ async function reassignCallToContact({ ghlCallId, contactId, ghlAccountId }) {
   return fromContactId;
 }
 
-// True only if every ID is a contact in this account -- the check that
-// keeps one tenant from acting on another's contacts.
+// Which contact each of these calls is filed under here (ghl_call_id ->
+// contact id; calls we don't have are absent). Lets the merge catch-up
+// decide what actually needs moving before it creates or touches anything.
+async function getCallContactIds(ghlCallIds, ghlAccountId) {
+  if (ghlCallIds.length === 0) return new Map();
+  const params = [ghlCallIds];
+  let accountCondition = "";
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    accountCondition = `AND ghl_account_id = $2`;
+  }
+  const { rows } = await pool.query(
+    `SELECT ghl_call_id AS "ghlCallId", ghl_contact_id AS "contactId" FROM calls WHERE ghl_call_id = ANY($1) ${accountCondition}`,
+    params
+  );
+  return new Map(rows.map((r) => [r.ghlCallId, r.contactId]));
+}
+
 async function contactExists(contactId) {
   const { rows } = await pool.query(`SELECT 1 FROM contacts WHERE ghl_contact_id = $1`, [contactId]);
   return rows.length > 0;
 }
 
+// True only if every ID is a contact in this account -- the check that
+// keeps one tenant from acting on another's contacts.
 async function contactsBelongToAccount(contactIds, ghlAccountId) {
   const unique = [...new Set(contactIds)];
   const { rows } = await pool.query(
@@ -474,6 +497,11 @@ async function contactsBelongToAccount(contactIds, ghlAccountId) {
   return rows.length === unique.length;
 }
 
+// "These aren't duplicates": records every pair among the given contacts
+// as dismissed. Every ID must belong to ghlAccountId -- the caller's
+// already-authorized account -- so one tenant can't write dismissals
+// against another's contacts. Returns false (writing nothing) if any ID
+// isn't in that account.
 async function dismissDuplicateGroup(contactIds, dismissedBy, ghlAccountId) {
   const unique = [...new Set(contactIds)];
   const { rows } = await pool.query(
@@ -2298,6 +2326,7 @@ module.exports = {
   listDuplicateContactGroups,
   dismissDuplicateGroup,
   reassignCallToContact,
+  getCallContactIds,
   contactsBelongToAccount,
   contactExists,
   setGhlAppUrl,

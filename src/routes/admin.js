@@ -620,12 +620,23 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
   res.json(result);
 });
 
+// Express 4 doesn't catch a rejected async handler: the request would just
+// hang and the error surface as an unhandled rejection. The routes below make
+// GHL and database calls that can fail, so they answer with a clean 500.
+function safe(handler) {
+  return (req, res, next) =>
+    Promise.resolve(handler(req, res, next)).catch((err) => {
+      console.error(`[admin] ${req.method} ${req.originalUrl} failed:`, err);
+      if (!res.headersSent) res.status(500).json({ error: "something went wrong -- please try again" });
+    });
+}
+
 // --- Possible duplicate contacts ---
 // Read-only against GHL: this only surfaces contacts that share a phone
 // number. Merging happens in GHL itself (its public API has no merge call),
 // so each contact carries a direct link into its GHL record.
 
-router.get("/duplicates", requireAccount, async (req, res) => {
+router.get("/duplicates", requireAccount, safe(async (req, res) => {
   const [groups, account] = await Promise.all([
     db.listDuplicateContactGroups(req.ghlAccountId),
     db.getGhlAccountById(req.ghlAccountId),
@@ -647,9 +658,9 @@ router.get("/duplicates", requireAccount, async (req, res) => {
       contacts: g.contacts.map((c) => ({ ...c, ghlUrl: ghlUrl(c.id) })),
     })),
   });
-});
+}));
 
-router.post("/duplicates/dismiss", requireAccount, requireCsrf, async (req, res) => {
+router.post("/duplicates/dismiss", requireAccount, requireCsrf, safe(async (req, res) => {
   const ids = (req.body || {}).contactIds;
   if (!Array.isArray(ids) || ids.length < 2 || ids.length > 50 || !ids.every((id) => typeof id === "string" && id)) {
     return res.status(400).json({ error: "contactIds must be a list of 2-50 contact IDs" });
@@ -658,13 +669,13 @@ router.post("/duplicates/dismiss", requireAccount, requireCsrf, async (req, res)
   if (!ok) return res.status(404).json({ error: "one or more contacts not found in this account" });
   await log(req, "duplicates_dismissed", `Marked ${new Set(ids).size} contacts sharing a phone number as not duplicates`);
   res.json({ status: "dismissed" });
-});
+}));
 
 // After merging duplicates in GHL, catch CallTrove up right now (the
 // background watcher, src/mergeWatchJob.js, does the same on a timer; this
 // is the "check now" button). Re-files each contact's calls to whatever
 // contact GHL now holds them under -- see src/contactReconcile.js.
-router.post("/duplicates/reconcile", requireAccount, requireCsrf, async (req, res) => {
+router.post("/duplicates/reconcile", requireAccount, requireCsrf, safe(async (req, res) => {
   const ids = (req.body || {}).contactIds;
   if (!Array.isArray(ids) || ids.length < 2 || ids.length > 50 || !ids.every((id) => typeof id === "string" && id)) {
     return res.status(400).json({ error: "contactIds must be a list of 2-50 contact IDs" });
@@ -682,7 +693,7 @@ router.post("/duplicates/reconcile", requireAccount, requireCsrf, async (req, re
     await log(req, "contacts_reconciled", `Followed a GHL merge: moved ${result.callsMoved} call${result.callsMoved === 1 ? "" : "s"} and removed ${result.contactsRemoved} leftover contact${result.contactsRemoved === 1 ? "" : "s"} for account ${req.ghlAccountId}`);
   }
   res.json(result);
-});
+}));
 
 // --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---
 
@@ -699,7 +710,7 @@ router.get("/ghl-accounts", async (req, res) => {
 // to. This one includes disconnected accounts too, so there's somewhere
 // to see one and reconnect it, plus each account's last sync time for
 // spotting a stuck/stale connection.
-router.get("/ghl-accounts/status", async (req, res) => {
+router.get("/ghl-accounts/status", safe(async (req, res) => {
   const accounts = await db.listGhlAccountsWithStatusForTenant(req.session.user.tenantId);
   // Flags active accounts that GHL says are white-labeled but that have no
   // GHL web address saved yet, so Settings can prompt for it.
@@ -711,12 +722,12 @@ router.get("/ghl-accounts/status", async (req, res) => {
     })
   );
   res.json({ accounts: withHint, oauthConfigured: ghlOAuth.isConfigured() });
-});
+}));
 
 // Saves (or clears, with an empty value) the web address this account's
 // admins log into GHL at -- what the "Open in GHL" links point to. See
 // src/ghlAppUrl.js for why it's entered rather than detected.
-router.put("/ghl-accounts/:id/app-url", requireCsrf, async (req, res) => {
+router.put("/ghl-accounts/:id/app-url", requireCsrf, safe(async (req, res) => {
   const account = await db.getGhlAccountById(req.params.id);
   if (!account || account.tenantId !== req.session.user.tenantId) {
     return res.status(404).json({ error: "account not found" });
@@ -730,7 +741,7 @@ router.put("/ghl-accounts/:id/app-url", requireCsrf, async (req, res) => {
     result.url ? `Set the GHL web address for location "${account.ghlLocationId}" to ${result.url}` : `Cleared the GHL web address for location "${account.ghlLocationId}" (back to standard GHL)`
   );
   res.json({ appUrl: result.url });
-});
+}));
 
 // Stops syncing this location -- the poller only ever loops active
 // accounts (see listAllActiveGhlAccounts) -- without deleting anything

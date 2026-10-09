@@ -41,28 +41,47 @@ function resolveAppBase(account) {
 
 // Does GHL say this location sits under a white-label brand? Cached per
 // account for an hour so Settings/Contacts loads don't each cost a GHL API
-// call, and bounded to a few seconds so a slow GHL never stalls the page.
-// null (can't tell) is treated the same as "no".
+// call, and bounded to a few seconds -- including resolving the account's
+// credentials, which can refresh an OAuth token -- so a slow GHL never
+// stalls the page. Only a real answer is cached: a failed lookup (429, 5xx,
+// timeout) is retried after a short pause instead of being remembered as
+// "not white-labeled", which would hide the prompt for an hour.
 const HINT_TTL_MS = 60 * 60 * 1000;
+const HINT_ERROR_RETRY_MS = 5 * 60 * 1000;
 const HINT_TIMEOUT_MS = 3000;
 const hintCache = new Map();
+const hintErrorUntil = new Map();
 
 async function looksWhiteLabeled(account) {
   const cached = hintCache.get(account.id);
   if (cached && cached.expires > Date.now()) return cached.value;
-  let value = null;
-  try {
+  if ((hintErrorUntil.get(account.id) || 0) > Date.now()) return false;
+
+  const lookup = (async () => {
     const client = await accountCredentials.clientForAccount(account);
-    const brandId = await Promise.race([
-      client.getLocationBrandId(),
-      new Promise((resolve) => setTimeout(() => resolve(undefined), HINT_TIMEOUT_MS)),
-    ]);
-    if (brandId !== undefined) value = Boolean(brandId);
+    return client.getLocationBrandId();
+  })();
+  lookup.catch(() => {}); // if we stop waiting, a late failure must not become an unhandled rejection
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(undefined), HINT_TIMEOUT_MS);
+  });
+  try {
+    const brandId = await Promise.race([lookup, timeout]);
+    if (brandId === undefined) {
+      hintErrorUntil.set(account.id, Date.now() + HINT_ERROR_RETRY_MS);
+      return false;
+    }
+    const value = Boolean(brandId);
+    hintCache.set(account.id, { value, expires: Date.now() + HINT_TTL_MS });
+    return value;
   } catch (err) {
     console.warn("[ghlAppUrl] could not check white-label status:", err.message);
+    hintErrorUntil.set(account.id, Date.now() + HINT_ERROR_RETRY_MS);
+    return false;
+  } finally {
+    clearTimeout(timer);
   }
-  if (value !== null) hintCache.set(account.id, { value, expires: Date.now() + HINT_TTL_MS });
-  return value === true;
 }
 
-module.exports = { DEFAULT_APP_URL, normalizeAppUrl, resolveAppBase, looksWhiteLabeled };
+module.exports = { DEFAULT_APP_URL, normalizeAppUrl, resolveAppBase, looksWhiteLabeled, hintCache, hintErrorUntil };

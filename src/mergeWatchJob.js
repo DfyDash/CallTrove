@@ -77,6 +77,10 @@ async function checkAccount(account, maxGroups) {
   if ((backoffUntil.get(account.id) || 0) > Date.now()) return totals;
   const groups = await db.listDuplicateContactGroups(account.id);
   if (groups.length === 0) return totals;
+  // The view orders groups by most recent call, which shifts as calls arrive.
+  // Rotation walks the list by position, so it needs an order that holds
+  // still between cycles or some groups get skipped while others repeat.
+  groups.sort((a, b) => (a.phoneKey < b.phoneKey ? -1 : a.phoneKey > b.phoneKey ? 1 : 0));
   const api = await accountCredentials.clientForAccount(account);
   if (!api.isConfigured()) return totals;
 

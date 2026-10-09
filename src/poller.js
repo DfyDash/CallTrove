@@ -62,7 +62,7 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
   await db.upsertContact({ contactId, name, phone, ghlAccountId });
 
   const callRowId = randomUUID();
-  const inserted = await db.insertCall({
+  const callRow = {
     id: callRowId,
     ghlCallId: message.id,
     contactId,
@@ -75,7 +75,23 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
     handledByName: await api.getUserName(message.userId).catch(() => null),
     disposition: getDisposition(message),
     ghlAccountId,
-  });
+  };
+  let inserted;
+  try {
+    inserted = await db.insertCall(callRow);
+  } catch (err) {
+    // 23503 = foreign key violation: the contact row was removed between the
+    // upsert above and this insert (the merge catch-up dropped a merge
+    // leftover at that exact moment). Put the contact back and retry once
+    // rather than failing the call -- a failure here would stop this
+    // account's whole cycle.
+    if (err && err.code === "23503") {
+      await db.upsertContact({ contactId, name, phone, ghlAccountId });
+      inserted = await db.insertCall(callRow);
+    } else {
+      throw err;
+    }
+  }
 
   if (!inserted) {
     // Already processed -- but GHL may now report it under a different

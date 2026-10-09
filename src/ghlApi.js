@@ -109,13 +109,18 @@ function forAccount({ apiToken, locationId } = {}) {
   // poller, which only needs messages newer than its checkpoint and would
   // otherwise re-walk a contact's entire history every cycle; backfill.js
   // omits it because it wants the full history regardless.
-  async function listCallMessages(conversationId, { since } = {}) {
+  async function listCallMessages(conversationId, { since, signal, maxPages } = {}) {
     const results = [];
     let lastMessageId;
+    let pages = 0;
     for (;;) {
+      // signal/maxPages are only passed by the merge catch-up, so a listing it
+      // gives up on actually stops instead of paging on in the background.
+      if (signal) signal.throwIfAborted();
+      if (maxPages && pages++ >= maxPages) break;
       const url = new URL(`${GHL_API_BASE}/conversations/${conversationId}/messages`);
       if (lastMessageId) url.searchParams.set("lastMessageId", lastMessageId);
-      const res = await fetch(url, { headers: headers() });
+      const res = await fetch(url, signal ? { headers: headers(), signal } : { headers: headers() });
       if (!res.ok) throw new Error(`conversations/messages failed with status ${res.status}`);
       const data = await res.json();
       const page = (data.messages && data.messages.messages) || [];
@@ -234,8 +239,11 @@ function forAccount({ apiToken, locationId } = {}) {
     const url = `${GHL_API_BASE}/locations/${location}`;
     const res = await fetch(url, { headers: headers() });
     if (!res.ok) {
-      console.warn(`[ghlApi] could not fetch location brand, status ${res.status}`);
-      return null;
+      // Throws rather than returning null: null means "not white-labeled",
+      // and a 429 or 5xx must never be mistaken for that answer.
+      const err = new Error(`could not fetch location brand, status ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
     const data = await res.json();
     return (data.location && data.location.brandId) || data.brandId || null;
