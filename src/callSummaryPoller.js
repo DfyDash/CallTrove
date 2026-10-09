@@ -1,6 +1,8 @@
 const db = require("./db");
 const callSummary = require("./callSummary");
 const accountCredentials = require("./accountCredentials");
+const alerting = require("./alerting");
+const billingRates = require("./billingRates");
 
 // Bedrock responses land well within a few seconds, but this still polls
 // rather than calling inline from transcriptionPoller.js -- keeps a
@@ -27,9 +29,37 @@ async function pollOnce() {
     }
     try {
       await db.incrementSummaryAttempts(call.id);
-      const { summary, analysis } = await callSummary.summarizeTranscript(call.transcript);
+      const { summary, analysis, inputTokens, outputTokens } = await callSummary.summarizeTranscript(call.transcript);
       await db.markSummaryComplete(call.id, summary, analysis);
       console.log(`[callSummary] summarized call ${call.id}`);
+
+      // Cost-ledger entry -- a permanent receipt at today's rates (see
+      // schema.sql's cost_ledger comment), computed from the real token
+      // counts Bedrock actually billed for this call. Best effort, same
+      // reasoning as the GHL-note-post failure below not undoing a
+      // completed summary.
+      try {
+        const awsCost =
+          (inputTokens / 1_000_000) * billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS +
+          (outputTokens / 1_000_000) * billingRates.AWS_BEDROCK_HAIKU_OUTPUT_PER_MILLION_TOKENS;
+        await db.recordAiSummaryCost({
+          tenantId: call.tenantId,
+          ghlAccountId: call.ghlAccountId,
+          callId: call.id,
+          inputTokens,
+          outputTokens,
+          awsRate: billingRates.AWS_BEDROCK_HAIKU_INPUT_PER_MILLION_TOKENS,
+          awsCost,
+          clientRate: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
+          clientRevenue: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
+          // call.attempts is the count from before incrementSummaryAttempts
+          // ran above in this same cycle, so it's one behind the attempt
+          // actually being billed here.
+          attempt: call.attempts + 1,
+        });
+      } catch (ledgerErr) {
+        console.error(`[callSummary] summarized call ${call.id} but failed to record its cost-ledger entry:`, ledgerErr);
+      }
 
       try {
         const account = await db.getGhlAccountById(call.ghlAccountId);
@@ -59,8 +89,10 @@ function start() {
   async function cycle() {
     try {
       await pollOnce();
+      alerting.recordSuccess("call summary (AI)");
     } catch (err) {
       console.error("[callSummary] poll cycle failed:", err);
+      await alerting.recordFailure("call summary (AI)", err).catch(() => {});
     }
     setTimeout(cycle, POLL_INTERVAL_MS);
   }

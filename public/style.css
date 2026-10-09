@@ -213,6 +213,56 @@ a:hover {
   gap: 12px;
 }
 
+.content-header-left {
+  flex: 1;
+  min-width: 160px;
+  max-width: 480px;
+}
+
+.search-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.search-filter-row .search-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.operator-search-input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.operator-search-scope {
+  flex-shrink: 0;
+  padding: 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: var(--surface);
+}
+
+.account-detail-back {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent-text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.account-detail-back:hover {
+  text-decoration: underline;
+}
+
 .content-header .session-bar {
   margin-bottom: 0;
 }
@@ -332,6 +382,19 @@ a:hover {
   font-size: 0.9rem;
   font-weight: 600;
   background: var(--surface);
+}
+
+/* The Settings sub-nav (public/settings.html's #settings-tabs) has almost
+   twice as many links as the main sidebar and no icons to break them up
+   visually, so the same 2px gap/8px padding that reads fine for the main
+   nav (Dashboard/Contacts/Settings) makes this one look like a single
+   run-together block. Scoped to #settings-tabs specifically rather than
+   changing .sidebar-nav itself, so the main sidebar is untouched. */
+#settings-tabs {
+  gap: 6px;
+}
+#settings-tabs .nav-link {
+  padding: 10px 12px;
 }
 
 .sidebar-nav {
@@ -460,6 +523,7 @@ a:hover {
    being crammed into the filter bar next to unrelated controls. */
 .contact-context {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
@@ -486,6 +550,20 @@ a:hover {
 .contact-context-name {
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.contact-export-link {
+  margin-left: auto;
+  font-size: 0.82rem;
+  padding: 6px 12px;
+}
+/* Same gotcha as .nav-link[hidden] above: .button-link's own display:
+   inline-block would otherwise beat the [hidden] attribute's UA-stylesheet
+   display:none, leaving this admin-only export button visibly rendered
+   (and clickable, just 403'd server-side) for a non-admin viewing a
+   contact. */
+.contact-export-link[hidden] {
+  display: none;
 }
 
 .filter-dates {
@@ -791,6 +869,113 @@ tbody tr:last-child td {
   background: rgba(208, 59, 59, 0.12);
 }
 
+.cancel-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(208, 59, 59, 0.3);
+  border-radius: 6px;
+  background: rgba(208, 59, 59, 0.06);
+  color: #a52e2e;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.cancel-warning-box input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.ghl-status-active {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.ghl-status-disconnected {
+  color: var(--muted);
+}
+
+.ghl-reconnect-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.ghl-reconnect-btn:hover {
+  opacity: 0.85;
+}
+
+/* Overrides the generic table td's flex-direction:column (mobile's
+   stacked-card layout, see the "Every table on the site" comment below)
+   so Disconnect/Reconnect sit side by side as a little button row instead
+   of each taking its own full-width line -- this cell holds actions, not
+   a label+value pair, so it never gets a data-label either (same as any
+   other action-only cell on the site). Unmedia-queried since it reads
+   fine as a plain flex row on desktop too. */
+.ghl-app-url-section {
+  margin-top: 24px;
+}
+
+.ghl-app-url-heading {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.ghl-url-item {
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.ghl-url-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ghl-url-cell {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ghl-url-input {
+  flex: 1 1 220px;
+  max-width: 360px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.ghl-url-status,
+.ghl-url-hint {
+  display: block;
+  margin-top: 6px;
+}
+
+.ghl-url-error {
+  color: var(--critical);
+}
+
+.ghl-account-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
 .transcript-text {
   margin: 6px 0 0;
   font-size: 0.85rem;
@@ -830,6 +1015,42 @@ tbody tr:last-child td {
   font-size: 0.78rem;
   cursor: pointer;
   margin-top: 4px;
+}
+
+/* Matches .transcript-details summary's look exactly (plain text, same
+   size, no button chrome) so it reads as the same disclosure control
+   repeated at the bottom, not a separate action. */
+.transcript-collapse-btn {
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  margin-top: 8px;
+}
+
+.transcript-cleanup-result {
+  margin: 6px 0;
+  padding: 8px 10px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.transcript-cleanup-changes {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+}
+
+.transcript-cleanup-changes li {
+  margin: 2px 0;
+}
+
+.transcript-cleanup-changes s {
+  color: var(--muted);
 }
 
 .transcript-edit-actions {
@@ -1184,6 +1405,29 @@ tbody tr:last-child td {
   border-radius: 8px;
 }
 
+.baa-text-box {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: var(--page-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.baa-accepted-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--good);
+  border-radius: 8px;
+  background: var(--good-soft);
+  color: var(--good);
+  font-size: 0.85rem;
+}
+
 /* --- Contacts (A-Z) page --- */
 
 .contacts-page {
@@ -1452,10 +1696,156 @@ tbody tr:last-child td {
   margin-top: 4px;
 }
 
+.stat-tile-note {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
 .stat-compare {
   font-size: 0.75rem;
   color: var(--muted);
   margin-top: 6px;
+}
+
+.stat-compare-good { color: var(--good); }
+.stat-compare-bad { color: var(--critical); }
+
+/* --- Analytics digest (Call report tab, no-transcription accounts) --- */
+
+.digest-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+.digest-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.digest-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.digest-timestamp {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-left: 10px;
+}
+
+.digest-narrative {
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.rep-bar-row-static {
+  cursor: default;
+}
+.rep-bar-row-static:hover {
+  background: none;
+}
+
+.unreturned-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.unreturned-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.unreturned-row:last-child {
+  border-bottom: none;
+}
+
+.unreturned-row:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.unreturned-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.unreturned-meta {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+.unreturned-oldest-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+/* [hidden] already handles the not-shown state (display: none, from the
+   UA stylesheet) -- this only needs to set how it looks once that
+   attribute is removed, never force a display value that would fight it. */
+.purge-overdue-banner {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 8px;
+}
+
+.purge-overdue-row-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--critical);
+  background: var(--critical-soft);
+  border-radius: 999px;
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
+.digest-upsell {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.digest-empty {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.digest-two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 14px;
+}
+
+@media (max-width: 720px) {
+  .digest-two-col { grid-template-columns: 1fr; }
 }
 
 .settings-section h2 {
@@ -1523,6 +1913,17 @@ tbody tr:last-child td {
   margin: 8px 0 0;
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.settings-rate {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: inline-block;
 }
 
 .account-access-details summary {
@@ -1600,6 +2001,166 @@ tbody tr:last-child td {
   cursor: default;
 }
 
+/* --- Contacts: possible duplicates (admins) --- */
+
+.duplicates-bar {
+  padding: 12px 0;
+}
+
+.duplicates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.duplicates-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.duplicates-panel {
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* display:flex above would otherwise beat the hidden attribute. */
+.duplicates-panel[hidden] {
+  display: none;
+}
+
+.duplicates-intro {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.duplicate-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.duplicate-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.duplicate-member-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.duplicate-member-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.duplicate-member-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.duplicate-member-actions {
+  display: flex;
+  gap: 14px;
+  font-size: 0.82rem;
+}
+
+.duplicate-link {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.duplicate-link:hover {
+  text-decoration: underline;
+}
+
+.duplicate-group-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+}
+
+.duplicate-merged {
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.duplicate-merged:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.duplicates-notice {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.duplicates-notice[hidden] {
+  display: none;
+}
+
+.duplicates-notice-error {
+  color: var(--critical);
+  border-color: var(--critical);
+}
+
+.duplicate-dismiss {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.duplicate-dismiss:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.duplicate-dismiss:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* --- Mobile (phone-width) layout ---
    Nothing below this point exists on desktop -- there was previously no
    responsive handling at all, so a phone (~390px CSS width) rendered the
@@ -1613,6 +2174,40 @@ tbody tr:last-child td {
    that from happening again even if some future addition doesn't fit. */
 body {
   overflow-x: hidden;
+}
+
+/* Billing tab (client-facing usage + storage meter) */
+.storage-meter {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.storage-meter-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.storage-meter-track {
+  height: 8px;
+  background: var(--head-bg);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.storage-meter-fill {
+  height: 100%;
+  background: var(--good);
+  border-radius: 4px;
+}
+
+td.amount, th.amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 860px) {

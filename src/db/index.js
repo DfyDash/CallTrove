@@ -67,16 +67,25 @@ async function insertCall({
   return result.rows[0] || null;
 }
 
-async function markCallStored(callId, storageKey, durationSeconds) {
+// sizeBytes is the already-in-memory recording buffer's own length (see
+// src/poller.js's call sites) -- cheap to capture here since nothing has
+// to re-fetch or HEAD the object afterward, unlike the one-time S3
+// HeadObject backfill existing recordings needed (src/scripts/
+// backfillCostLedger.js) because this didn't exist before. Basis for
+// storage cost (src/storageCostJob.js, schema.sql's cost_ledger comment).
+// storageTier records which tier's bucket this recording actually landed
+// in (see schema.sql's comment on calls.storage_tier) -- defaults to
+// 'standard' so every pre-tiering caller keeps working unchanged.
+async function markCallStored(callId, storageKey, durationSeconds, sizeBytes, storageTier = "standard") {
   if (durationSeconds !== undefined && durationSeconds !== null) {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3 WHERE id = $1`,
-      [callId, storageKey, durationSeconds]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', duration_seconds = $3, size_bytes = $4, storage_tier = $5 WHERE id = $1`,
+      [callId, storageKey, durationSeconds, sizeBytes || null, storageTier]
     );
   } else {
     await pool.query(
-      `UPDATE calls SET storage_key = $2, recording_status = 'stored' WHERE id = $1`,
-      [callId, storageKey]
+      `UPDATE calls SET storage_key = $2, recording_status = 'stored', size_bytes = $3, storage_tier = $4 WHERE id = $1`,
+      [callId, storageKey, sizeBytes || null, storageTier]
     );
   }
 }
@@ -137,17 +146,22 @@ async function markTranscriptionPending(callId) {
   );
 }
 
-// ai_summary_status only moves to 'pending' when the call's own account has
-// explicitly opted into ai_summary_enabled -- this is a billed, per-call
-// feature (see schema.sql's comment on ai_summary_enabled), so it must
-// never run just because transcription itself is on for the account.
-// Checked with a subquery rather than a JOIN so this stays a single-call
-// UPDATE regardless of caller.
+// ai_summary_status/transcript_cleanup_status only move to 'pending' when
+// the call's own account has explicitly opted into the matching *_enabled
+// column -- both are billed, per-call features (see schema.sql's comments
+// on ai_summary_enabled/transcript_cleanup_enabled), so neither must ever
+// run just because transcription itself is on for the account. Checked
+// with subqueries rather than a JOIN so this stays a single-call UPDATE
+// regardless of caller.
 async function markTranscriptionComplete(callId, transcript, words) {
   await pool.query(
     `UPDATE calls SET transcription_status = 'completed', transcript = $2, transcript_words = $3,
        ai_summary_status = CASE
          WHEN (SELECT ai_summary_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
+         ELSE 'none'
+       END,
+       transcript_cleanup_status = CASE
+         WHEN (SELECT transcript_cleanup_enabled FROM ghl_accounts WHERE id = calls.ghl_account_id) THEN 'pending'
          ELSE 'none'
        END
      WHERE id = $1`,
@@ -173,18 +187,33 @@ async function markTranscriptionFailed(callId) {
   await pool.query(`UPDATE calls SET transcription_status = 'failed' WHERE id = $1`, [callId]);
 }
 
+// duration_seconds/ghl_account_id/tenant_id are the cost-ledger basis
+// (src/transcriptionPoller.js writes a 'transcription' row once a job
+// completes -- see schema.sql's cost_ledger comment) -- joined here
+// rather than looked up separately per call once it completes.
 async function listPendingTranscriptions() {
-  const { rows } = await pool.query(`SELECT id FROM calls WHERE transcription_status = 'pending'`);
+  const { rows } = await pool.query(
+    `SELECT c.id, c.duration_seconds AS "durationSeconds", c.ghl_account_id AS "ghlAccountId",
+            c.transcription_attempts AS "transcriptionAttempts", g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.transcription_status = 'pending'`
+  );
   return rows;
 }
 
 // --- AI call summary (Bedrock/Claude) ---
 
+// tenantId is the cost-ledger basis (src/callSummaryPoller.js writes an
+// 'ai_summary' row once a summary completes), joined here the same way
+// listPendingTranscriptions above does.
 async function listPendingCallSummaries() {
   const { rows } = await pool.query(
-    `SELECT id, transcript, ghl_contact_id AS "contactId", ghl_account_id AS "ghlAccountId",
-            ai_summary_attempts AS "attempts"
-     FROM calls WHERE ai_summary_status = 'pending'`
+    `SELECT c.id, c.transcript, c.ghl_contact_id AS "contactId", c.ghl_account_id AS "ghlAccountId",
+            c.ai_summary_attempts AS "attempts", g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.ai_summary_status = 'pending'`
   );
   return rows;
 }
@@ -205,6 +234,43 @@ async function markSummaryComplete(callId, summary, analysis) {
 
 async function markSummaryFailed(callId) {
   await pool.query(`UPDATE calls SET ai_summary_status = 'failed' WHERE id = $1`, [callId]);
+}
+
+// --- transcript cleanup (src/transcriptCleanup.js, Bedrock, automatic --
+// see src/transcriptCleanupPoller.js) ---
+
+// tenantId is the cost-ledger basis, joined here the same way
+// listPendingCallSummaries above does -- handledByName comes along too
+// since src/transcriptCleanup.js uses it as narrowly-scoped known context
+// (see its own comment on why only this field, never an account/tenant
+// name, is trustworthy enough to hand to Bedrock).
+async function listPendingTranscriptCleanups() {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.transcript_words AS "transcriptWords", c.handled_by_name AS "handledByName",
+            c.ghl_account_id AS "ghlAccountId", c.transcript_cleanup_attempts AS "attempts", g.tenant_id AS "tenantId"
+     FROM calls c
+     LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE c.transcript_cleanup_status = 'pending'`
+  );
+  return rows;
+}
+
+async function incrementTranscriptCleanupAttempts(callId) {
+  await pool.query(`UPDATE calls SET transcript_cleanup_attempts = transcript_cleanup_attempts + 1 WHERE id = $1`, [callId]);
+}
+
+// cleanedText/changes are both null/empty when Bedrock found nothing to
+// correct -- a real, meaningful result (see schema.sql's comment on
+// transcript_cleaned), not an error.
+async function markTranscriptCleanupComplete(callId, cleanedText, changes) {
+  await pool.query(
+    `UPDATE calls SET transcript_cleanup_status = 'completed', transcript_cleaned = $2, transcript_cleanup_changes = $3 WHERE id = $1`,
+    [callId, cleanedText, changes ? JSON.stringify(changes) : null]
+  );
+}
+
+async function markTranscriptCleanupFailed(callId) {
+  await pool.query(`UPDATE calls SET transcript_cleanup_status = 'failed' WHERE id = $1`, [callId]);
 }
 
 async function markGhlNoteWritten(callId) {
@@ -282,6 +348,152 @@ async function listAllContacts(ghlUserId, ghlAccountId) {
     params
   );
   return rows;
+}
+
+// Contacts in one GHL account that share a phone number, for the Contacts
+// page's "Possible duplicates" view. GHL itself is where duplicates get
+// merged (it has no merge API, only its own Manage Duplicates tool), so
+// this only finds and presents them. Phones are compared on their last 10
+// digits, ignoring punctuation and a leading country code, so "(555)
+// 123-4567" and "+1 555-123-4567" match; anything under 10 digits is
+// skipped -- a 7-digit local number would collide across unrelated people.
+// Name is deliberately not a match key: two different people named "John
+// Smith" are far more common than a duplicate with a typo'd phone.
+//
+// A group is hidden only once EVERY pair inside it has been dismissed (see
+// dismissDuplicateGroup), so a newly arrived third contact on the same
+// number brings the group back.
+async function listDuplicateContactGroups(ghlAccountId) {
+  const { rows } = await pool.query(
+    `WITH keyed AS (
+       SELECT c.ghl_contact_id AS id, c.name, c.phone,
+              RIGHT(REGEXP_REPLACE(c.phone, '\\D', '', 'g'), 10) AS phone_key
+       FROM contacts c
+       WHERE c.ghl_account_id = $1
+         AND LENGTH(REGEXP_REPLACE(COALESCE(c.phone, ''), '\\D', '', 'g')) >= 10
+     ), dupes AS (
+       SELECT phone_key FROM keyed GROUP BY phone_key HAVING COUNT(*) > 1
+     )
+     SELECT k.id, k.name, k.phone, k.phone_key AS "phoneKey",
+            (SELECT COUNT(*) FROM calls cl WHERE cl.ghl_contact_id = k.id)::int AS "callCount",
+            (SELECT MAX(occurred_at) FROM calls cl WHERE cl.ghl_contact_id = k.id) AS "lastCallAt"
+     FROM keyed k
+     JOIN dupes d ON d.phone_key = k.phone_key
+     ORDER BY k.phone_key, k.name NULLS LAST, k.id`,
+    [ghlAccountId]
+  );
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const { rows: dismissed } = await pool.query(
+    `SELECT contact_a AS a, contact_b AS b FROM dismissed_duplicate_pairs
+     WHERE contact_a = ANY($1) AND contact_b = ANY($1)`,
+    [ids]
+  );
+  const dismissedPairs = new Set(dismissed.map((d) => `${d.a}|${d.b}`));
+  const isDismissed = (x, y) => dismissedPairs.has(`${x}|${y}`) || dismissedPairs.has(`${y}|${x}`);
+
+  const byKey = new Map();
+  for (const r of rows) {
+    if (!byKey.has(r.phoneKey)) byKey.set(r.phoneKey, []);
+    byKey.get(r.phoneKey).push(r);
+  }
+
+  const groups = [];
+  for (const [phoneKey, members] of byKey) {
+    let hasLivePair = false;
+    for (let i = 0; i < members.length && !hasLivePair; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        if (!isDismissed(members[i].id, members[j].id)) {
+          hasLivePair = true;
+          break;
+        }
+      }
+    }
+    if (!hasLivePair) continue;
+    const lastCallAt = members.reduce((latest, m) => (m.lastCallAt && (!latest || m.lastCallAt > latest) ? m.lastCallAt : latest), null);
+    groups.push({
+      phoneKey,
+      lastCallAt,
+      contacts: members.map(({ phoneKey: _omit, ...m }) => m),
+    });
+  }
+  groups.sort((a, b) => (b.lastCallAt ? b.lastCallAt.getTime() : 0) - (a.lastCallAt ? a.lastCallAt.getTime() : 0));
+  return groups;
+}
+
+// "These aren't duplicates": records every pair among the given contacts
+// as dismissed. Every ID must belong to ghlAccountId -- the caller's
+// already-authorized account -- so one tenant can't write dismissals
+// against another's contacts. Returns false (writing nothing) if any ID
+// isn't in that account.
+// GHL is the source of truth for which contact a call belongs to, and it
+// changes when two contacts are merged there (the merged-away contact is
+// deleted and its conversations move to the survivor). When a call we
+// already have is reported under a different contact, move it. Returns the
+// contact it came from, or null if nothing moved. If that leaves the old
+// contact with no calls, it's removed too: contact rows are only ever
+// created alongside a call, so an emptied one is the leftover of a merge,
+// and keeping it would show a ghost contact with "No calls yet".
+async function reassignCallToContact({ ghlCallId, contactId, ghlAccountId }) {
+  const params = [ghlCallId, contactId];
+  let accountCondition = "";
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    accountCondition = `AND c.ghl_account_id = $3`;
+  }
+  const { rows } = await pool.query(
+    `UPDATE calls c SET ghl_contact_id = $2
+     FROM (SELECT id, ghl_contact_id FROM calls WHERE ghl_call_id = $1 FOR UPDATE) old
+     WHERE c.id = old.id AND old.ghl_contact_id <> $2 ${accountCondition}
+     RETURNING old.ghl_contact_id AS "fromContactId"`,
+    params
+  );
+  if (rows.length === 0) return null;
+  const fromContactId = rows[0].fromContactId;
+  await pool.query(
+    `DELETE FROM contacts WHERE ghl_contact_id = $1 AND NOT EXISTS (SELECT 1 FROM calls WHERE ghl_contact_id = $1)`,
+    [fromContactId]
+  );
+  return fromContactId;
+}
+
+// True only if every ID is a contact in this account -- the check that
+// keeps one tenant from acting on another's contacts.
+async function contactExists(contactId) {
+  const { rows } = await pool.query(`SELECT 1 FROM contacts WHERE ghl_contact_id = $1`, [contactId]);
+  return rows.length > 0;
+}
+
+async function contactsBelongToAccount(contactIds, ghlAccountId) {
+  const unique = [...new Set(contactIds)];
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id FROM contacts WHERE ghl_contact_id = ANY($1) AND ghl_account_id = $2`,
+    [unique, ghlAccountId]
+  );
+  return rows.length === unique.length;
+}
+
+async function dismissDuplicateGroup(contactIds, dismissedBy, ghlAccountId) {
+  const unique = [...new Set(contactIds)];
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id FROM contacts WHERE ghl_contact_id = ANY($1) AND ghl_account_id = $2`,
+    [unique, ghlAccountId]
+  );
+  if (rows.length !== unique.length) return false;
+  await pool.query(
+    `INSERT INTO dismissed_duplicate_pairs (contact_a, contact_b, dismissed_by)
+     SELECT a.id, b.id, $2
+     FROM UNNEST($1::text[]) AS a(id)
+     JOIN UNNEST($1::text[]) AS b(id) ON a.id < b.id
+     ON CONFLICT DO NOTHING`,
+    [unique, dismissedBy || null]
+  );
+  return true;
+}
+
+async function setGhlAppUrl(ghlAccountId, appUrl) {
+  await pool.query(`UPDATE ghl_accounts SET ghl_app_url = $2 WHERE id = $1`, [ghlAccountId, appUrl || null]);
 }
 
 const PAGE_SIZES = [20, 50, 100];
@@ -502,10 +714,279 @@ async function getCallReportTrend(tenantId, { dateFrom, dateTo, granularity = "d
   return rows;
 }
 
+// --- Call digest (src/callDigestJob.js): metadata-only twice-daily report
+// for accounts without transcription on. Every query below is scoped to
+// one ghl_account_id and an explicit [start, end) window, computed twice
+// per account per day rather than live per page view -- see schema.sql's
+// comment on call_digests for why. "Rolling 24h ending at computed_at"
+// rather than calendar-day: the job can run at any time of day, and a
+// calendar-day window would make an 8am run's "today" almost empty.
+
+async function callDigestWindowTotals(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE c.disposition IS DISTINCT FROM 'completed')::int AS missed,
+            COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            COALESCE(max(c.duration_seconds), 0)::int AS "longestDurationSeconds"
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3`,
+    [ghlAccountId, start, end]
+  );
+  return rows[0];
+}
+
+async function callDigestBusiestHour(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT extract(hour FROM c.occurred_at)::int AS hour, count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1 ORDER BY count DESC LIMIT 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows[0] || null;
+}
+
+// completed/no-answer/voicemail are their own bucket (each was a
+// meaningfully-sized slice in real data -- see the disposition audit this
+// was designed from); busy/canceled/failed/ringing/null are rare enough
+// to lump into "other" rather than clutter the breakdown with slivers.
+async function callDigestDispositionBreakdown(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT CASE
+              WHEN c.disposition = 'completed' THEN 'completed'
+              WHEN c.disposition = 'no-answer' THEN 'no-answer'
+              WHEN c.disposition = 'voicemail' THEN 'voicemail'
+              ELSE 'other'
+            END AS bucket,
+            count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows;
+}
+
+// "Unreturned" = a missed inbound call (no-answer/voicemail) where nobody
+// has called that contact back since, in either direction -- the same
+// "based on outcome and callback history, not what was said" framing the
+// approved mockup uses, since there's no transcript to know intent from.
+// The NOT EXISTS is evaluated at query time (now), not just against the
+// window -- a call from three days ago that's still nobody's most recent
+// contact with that person is still genuinely unreturned today.
+// conversationId comes along so src/callDigestJob.js can do a second,
+// live check against GHL itself (has this contact been texted/emailed/
+// noted since, not just re-called?) -- see its own comment for why that
+// can't happen here: it needs a live GHL API call per candidate, which
+// has no business in a pure SQL query function. limit is generous (not
+// the ~5 the UI actually shows) because the job needs every real
+// candidate to filter before it knows how many survive, not just enough
+// to display.
+async function callDigestUnreturnedCalls(ghlAccountId, start, end, limit = 50) {
+  const { rows } = await pool.query(
+    `SELECT c.id, c.ghl_contact_id AS "contactId", ct.name AS "contactName",
+            c.disposition, c.occurred_at AS "occurredAt",
+            c.raw_payload->>'conversationId' AS "conversationId"
+     FROM calls c
+     LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
+     WHERE c.ghl_account_id = $1
+       AND c.direction = 'inbound'
+       AND c.disposition IN ('no-answer', 'voicemail')
+       AND c.occurred_at >= $2 AND c.occurred_at < $3
+       AND NOT EXISTS (
+         SELECT 1 FROM calls c2
+         WHERE c2.ghl_account_id = $1 AND c2.ghl_contact_id = c.ghl_contact_id
+           AND c2.occurred_at > c.occurred_at
+       )
+     ORDER BY c.occurred_at ASC
+     LIMIT $4`,
+    [ghlAccountId, start, end, limit]
+  );
+  return rows;
+}
+
+async function callDigestDailyVolume(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day, count(*)::int AS count
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1 ORDER BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows;
+}
+
+// Per-day missed-call rate for the trailing week, used only to decide
+// whether the current window's rate is this week's best -- not rendered
+// directly, so no zero-filling: a day with no calls at all just isn't a
+// candidate for "best day".
+async function callDigestDailyMissedRates(ghlAccountId, start, end) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('day', c.occurred_at), 'YYYY-MM-DD') AS day,
+            count(*)::int AS total,
+            count(*) FILTER (WHERE c.disposition IS DISTINCT FROM 'completed')::int AS missed
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY 1`,
+    [ghlAccountId, start, end]
+  );
+  return rows
+    .filter((r) => r.total > 0)
+    .map((r) => ({ day: r.day, missedRatePct: Math.round((100 * r.missed) / r.total) }));
+}
+
+async function callDigestTopReps(ghlAccountId, start, end, limit = 5) {
+  const { rows } = await pool.query(
+    `SELECT c.handled_by_id AS id, c.handled_by_name AS name,
+            count(*)::int AS total,
+            COALESCE(round(avg(c.duration_seconds) FILTER (WHERE c.duration_seconds IS NOT NULL)), 0)::int AS "avgDurationSeconds",
+            count(DISTINCT c.ghl_contact_id)::int AS "uniqueContacts"
+     FROM calls c
+     WHERE c.ghl_account_id = $1 AND c.handled_by_id IS NOT NULL
+       AND c.occurred_at >= $2 AND c.occurred_at < $3
+     GROUP BY c.handled_by_id, c.handled_by_name
+     ORDER BY total DESC
+     LIMIT $4`,
+    [ghlAccountId, start, end, limit]
+  );
+  return rows;
+}
+
+// Orchestrates every query above into the one JSON blob call_digests.stats
+// holds. now defaults to the real clock but is injectable for testing.
+async function computeCallDigestStats(ghlAccountId, { now = new Date() } = {}) {
+  const periodEnd = now;
+  const periodStart = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const prevStart = new Date(periodStart.getTime() - 24 * 60 * 60 * 1000);
+  const weekStart = new Date(periodEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [current, previous, busiest, dispositionBreakdown, unreturnedCandidates, unreturnedCandidatesPrev, trend, dailyMissedRates, topReps] =
+    await Promise.all([
+      callDigestWindowTotals(ghlAccountId, periodStart, periodEnd),
+      callDigestWindowTotals(ghlAccountId, prevStart, periodStart),
+      callDigestBusiestHour(ghlAccountId, periodStart, periodEnd),
+      callDigestDispositionBreakdown(ghlAccountId, periodStart, periodEnd),
+      callDigestUnreturnedCalls(ghlAccountId, periodStart, periodEnd),
+      callDigestUnreturnedCalls(ghlAccountId, prevStart, periodStart),
+      callDigestDailyVolume(ghlAccountId, weekStart, periodEnd),
+      callDigestDailyMissedRates(ghlAccountId, weekStart, periodEnd),
+      callDigestTopReps(ghlAccountId, periodStart, periodEnd),
+    ]);
+
+  const missedRatePct = current.total > 0 ? Math.round((100 * current.missed) / current.total) : 0;
+  const missedRatePctPrev = previous.total > 0 ? Math.round((100 * previous.missed) / previous.total) : 0;
+  const isBestDayThisWeek = dailyMissedRates.length > 0 && missedRatePct <= Math.min(...dailyMissedRates.map((r) => r.missedRatePct));
+
+  return {
+    periodStart: periodStart.toISOString(),
+    periodEnd: periodEnd.toISOString(),
+    totalCalls: current.total,
+    totalCallsPrev: previous.total,
+    avgDurationSeconds: current.avgDurationSeconds,
+    avgDurationSecondsPrev: previous.avgDurationSeconds,
+    longestDurationSeconds: current.longestDurationSeconds,
+    missedRatePct,
+    missedRatePctPrev,
+    isBestDayThisWeek,
+    busiestHour: busiest ? busiest.hour : null,
+    // Not yet a final count/list -- src/callDigestJob.js still has to
+    // check each candidate against GHL for a since-contacted signal
+    // (text, email, note) before deciding which ones are genuinely still
+    // unreturned. See its own comment for why that can't happen here.
+    unreturnedCandidates: unreturnedCandidates.map((c) => ({
+      contactId: c.contactId,
+      contactName: c.contactName,
+      disposition: c.disposition,
+      occurredAt: c.occurredAt,
+      conversationId: c.conversationId,
+      waitMinutes: Math.round((periodEnd.getTime() - new Date(c.occurredAt).getTime()) / 60000),
+    })),
+    unreturnedCandidatesPrev: unreturnedCandidatesPrev.map((c) => ({
+      contactId: c.contactId,
+      occurredAt: c.occurredAt,
+      conversationId: c.conversationId,
+    })),
+    dispositionBreakdown,
+    trend,
+    topReps,
+  };
+}
+
+// One row per account per job run -- see schema.sql's comment on
+// call_digests for why this is stored rather than computed live.
+async function saveCallDigest({ ghlAccountId, stats, narrative }) {
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO call_digests (id, ghl_account_id, stats, narrative) VALUES ($1, $2, $3, $4)`,
+    [id, ghlAccountId, JSON.stringify(stats), narrative || null]
+  );
+  return id;
+}
+
+async function getLatestCallDigest(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT id, computed_at AS "computedAt", stats, narrative
+     FROM call_digests
+     WHERE ghl_account_id = $1
+     ORDER BY computed_at DESC
+     LIMIT 1`,
+    [ghlAccountId]
+  );
+  return rows[0] || null;
+}
+
+// Only accounts that actually need the metadata-only digest -- one with
+// transcription on gets the (not yet built) richer, transcript-based
+// version instead, so there's no reason to spend a Bedrock call narrating
+// this one for it.
+// Includes the OAuth credential columns (same shape as
+// listAllActiveGhlAccounts) -- src/callDigestJob.js needs a real,
+// per-account accountCredentials.clientForAccount() to check GHL for a
+// since-contacted signal on each unreturned-call candidate, not just the
+// account id.
+async function listGhlAccountsNeedingDigest() {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", name, ghl_location_id AS "ghlLocationId",
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt",
+            digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone"
+     FROM ghl_accounts
+     WHERE uninstalled_at IS NULL AND auto_transcribe_enabled = false`
+  );
+  return rows;
+}
+
+async function getDigestSchedule(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT digest_time_1 AS "digestTime1", digest_time_2 AS "digestTime2", digest_timezone AS "digestTimezone",
+            digest_schedule_customized AS "digestScheduleCustomized"
+     FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] || null;
+}
+
+// Marks the schedule customized on every call, whether it's an explicit
+// save from the settings form or the one-time silent save that follows
+// auto-detecting a timezone from an admin's browser (see
+// public/settings.js) -- either way, the UTC bootstrap default shouldn't
+// be auto-overwritten again after this.
+async function setDigestSchedule(ghlAccountId, { digestTime1, digestTime2, digestTimezone }) {
+  await pool.query(
+    `UPDATE ghl_accounts SET digest_time_1 = $2, digest_time_2 = $3, digest_timezone = $4, digest_schedule_customized = true WHERE id = $1`,
+    [ghlAccountId, digestTime1, digestTime2, digestTimezone]
+  );
+}
+
 // Unpaginated, unlike listCalls() -- for the bulk ZIP export
 // (routes/admin.js), which needs every matching row to stream, not one
 // page. dateFrom/dateTo are optional, same semantics as listCalls().
-async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
+// contactId scopes to one contact's calls only -- used both for the
+// plain "export everything" case (no contactId) and for the client-facing
+// "export everything for this contact" button (routes/admin.js), which
+// exists specifically to answer an individual's HIPAA rights request
+// (access/amendment/accounting of disclosures) within the BAA's 10
+// business day window without a manual per-call scramble.
+async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo, contactId } = {}) {
   const conditions = ["c.storage_key IS NOT NULL", "g.tenant_id = $1"];
   const params = [tenantId];
   if (dateFrom) {
@@ -516,9 +997,21 @@ async function listAllCallsWithRecordings(tenantId, { dateFrom, dateTo } = {}) {
     params.push(dateTo);
     conditions.push(`c.occurred_at < ($${params.length}::date + interval '1 day')`);
   }
+  if (contactId) {
+    params.push(contactId);
+    conditions.push(`c.ghl_contact_id = $${params.length}`);
+  }
+  // transcript text is only pulled for a contact-scoped export (the
+  // individual-rights use case actually needs it bundled in) -- the
+  // plain tenant-wide pre-cancellation backup doesn't, and this route's
+  // whole point is streaming one recording buffer at a time rather than
+  // holding everything in memory at once; loading every call's full
+  // transcript text up front for a large, unfiltered tenant would work
+  // against that.
+  const transcriptColumn = contactId ? "c.transcript," : "";
   const { rows } = await pool.query(
-    `SELECT c.id, c.storage_key AS "storageKey", c.occurred_at AS "occurredAt",
-            c.direction, ct.name AS "contactName", ct.phone AS "contactPhone"
+    `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.occurred_at AS "occurredAt",
+            c.direction, ${transcriptColumn} ct.name AS "contactName", ct.phone AS "contactPhone"
      FROM calls c
      JOIN ghl_accounts g ON g.id = c.ghl_account_id
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
@@ -614,12 +1107,15 @@ async function listCoverageGaps(tenantId, { page = 1, pageSize = 20 } = {}) {
 
 async function getCall(callId) {
   const { rows } = await pool.query(
-    `SELECT c.id, c.storage_key AS "storageKey", c.recording_status AS "recordingStatus",
+    `SELECT c.id, c.storage_key AS "storageKey", c.storage_tier AS "storageTier", c.recording_status AS "recordingStatus",
             c.occurred_at AS "occurredAt", c.direction, c.ghl_contact_id AS "contactId",
-            c.handled_by_id AS "handledById", c.transcription_status AS "transcriptionStatus",
+            c.handled_by_id AS "handledById", c.handled_by_name AS "handledByName", c.transcription_status AS "transcriptionStatus",
             c.transcription_attempts AS "transcriptionAttempts",
             c.transcript, c.transcript_words AS "transcriptWords",
             c.transcript_edited_at AS "transcriptEditedAt", c.transcript_edited_by AS "transcriptEditedBy",
+            c.transcript_cleanup_status AS "transcriptCleanupStatus",
+            c.transcript_cleanup_attempts AS "transcriptCleanupAttempts",
+            c.transcript_cleaned AS "transcriptCleaned", c.transcript_cleanup_changes AS "transcriptCleanupChanges",
             c.ghl_account_id AS "ghlAccountId", ct.name, ct.phone
      FROM calls c
      LEFT JOIN contacts ct ON ct.ghl_contact_id = c.ghl_contact_id
@@ -631,11 +1127,11 @@ async function getCall(callId) {
 
 // --- users (dashboard login accounts) ---
 
-async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName, tenantId }) {
+async function createUser({ id, username, passwordHash, passwordSalt, role, ghlUserId, ghlUserName, tenantId, firstName, lastName }) {
   await pool.query(
-    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID]
+    `INSERT INTO users (id, username, password_hash, password_salt, role, ghl_user_id, ghl_user_name, tenant_id, first_name, last_name)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [id, username, passwordHash, passwordSalt, role, ghlUserId || null, ghlUserName || null, tenantId || DEFAULT_TENANT_ID, firstName || null, lastName || null]
   );
 }
 
@@ -682,7 +1178,8 @@ async function getUserByUsername(username) {
     `SELECT id, username, password_hash AS "passwordHash", password_salt AS "passwordSalt",
             role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
             is_operator AS "isOperator", totp_enabled AS "totpEnabled",
-            email_otp_enabled AS "emailOtpEnabled"
+            email_otp_enabled AS "emailOtpEnabled", email, email_verified_at AS "emailVerifiedAt",
+            first_name AS "firstName", last_name AS "lastName"
      FROM users WHERE username = $1`,
     [username]
   );
@@ -693,7 +1190,8 @@ async function getUserById(id) {
   const { rows } = await pool.query(
     `SELECT id, username, role, ghl_user_id AS "ghlUserId", ghl_user_name AS "ghlUserName", tenant_id AS "tenantId",
             is_operator AS "isOperator", totp_secret AS "totpSecret", totp_enabled AS "totpEnabled",
-            email, email_verified_at AS "emailVerifiedAt", email_otp_enabled AS "emailOtpEnabled"
+            email, email_verified_at AS "emailVerifiedAt", email_otp_enabled AS "emailOtpEnabled",
+            first_name AS "firstName", last_name AS "lastName"
      FROM users WHERE id = $1`,
     [id]
   );
@@ -872,13 +1370,119 @@ async function updateTenantOwner(tenantId, ownerUserId) {
   await pool.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [ownerUserId, tenantId]);
 }
 
+// For src/storageCostJob.js's monthly sweep -- every tenant whose data
+// still exists to be charged storage for. A fully 'canceled' tenant has
+// already been purged (src/tenantPurge.js deletes its recordings), so
+// there's nothing left to bill; 'cancellation_pending' still has its data
+// for the whole grace period and keeps being billed normally until then.
+// id + storageTier per active (non-canceled) tenant -- storageCostJob.js
+// needs the tier to look up that tenant's own free-GB/overage-rate from
+// billingRates.js's STORAGE_TIERS, not a flat rate shared by everyone.
+async function listActiveTenants() {
+  const { rows } = await pool.query(`SELECT id, storage_tier AS "storageTier" FROM tenants WHERE status != 'canceled'`);
+  return rows;
+}
+
+// Cumulative margin (all-time, transcription + ai_summary only) per
+// active tenant -- the basis for src/storageCostJob.js's usage-cost
+// alert. All-time, not month-to-date: cost_ledger is a permanent ledger,
+// and a tenant that's been profitable for a year shouldn't suddenly look
+// "negative" just because this month alone had a cost spike -- the alert
+// cares whether the relationship with this client has gone upside-down
+// overall, not about one month in isolation.
+//
+// Deliberately excludes the 'storage' category -- it isn't a true
+// per-unit margin line the way transcription/AI-summary are. Its AWS
+// cost is real for every byte stored, but its revenue is $0 by design
+// for any tenant within their free allowance (billingRates.js's
+// STORAGE_TIERS comment: "sized well above any realistic single-location
+// account's usage... not meant to charge normal accounts anything").
+// Including it here meant almost every normal, healthy tenant would show
+// a permanent "negative margin" from storage alone, regardless of real
+// profitability -- a structural false alarm, not an occasional one.
+// (Storage usage genuinely over the free allowance is itself billed at
+// roughly 3.5x AWS's own per-GB cost -- see that same comment -- so even
+// a real outlier doesn't actually erode margin the way under-allowance
+// storage made it falsely appear to here.)
+async function listTenantMargins() {
+  const { rows } = await pool.query(`
+    SELECT t.id, t.name,
+           coalesce(sum(l.aws_cost), 0)::numeric AS "totalCost",
+           coalesce(sum(l.client_revenue), 0)::numeric AS "totalRevenue"
+    FROM tenants t
+    LEFT JOIN cost_ledger l ON l.tenant_id = t.id AND l.category IN ('transcription', 'ai_summary')
+    WHERE t.status != 'canceled'
+    GROUP BY t.id, t.name
+  `);
+  return rows;
+}
+
+// Total bytes currently stored across every call this tenant owns
+// (across all its GHL accounts, active or disconnected -- disconnecting
+// an account stops new syncing, not what's already stored, see routes/
+// admin.js's disconnect route). The storage-cost job's basis (src/
+// storageCostJob.js) -- a snapshot, not a true daily average, since
+// nothing records byte-count history over time; see that job's own
+// comment for why this is still a reasonable approximation here.
+async function getTotalStoredBytesForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(sum(c.size_bytes), 0)::bigint AS "totalBytes"
+     FROM calls c JOIN ghl_accounts g ON g.id = c.ghl_account_id
+     WHERE g.tenant_id = $1`,
+    [tenantId]
+  );
+  return Number(rows[0].totalBytes);
+}
+
 async function getTenantById(id) {
   const { rows } = await pool.query(
-    `SELECT id, name, owner_user_id AS "ownerUserId", status,
+    `SELECT id, name, owner_user_id AS "ownerUserId", status, storage_tier AS "storageTier",
             cancellation_requested_at AS "cancellationRequestedAt",
             purge_at AS "purgeAt", canceled_at AS "canceledAt"
      FROM tenants WHERE id = $1`,
     [id]
+  );
+  return rows[0] || null;
+}
+
+// Operator-only (see routes/operator.js's own tier route) -- which bucket
+// pool a tenant is billed/stored against going forward. Never touches
+// calls already saved under the old tier; see schema.sql's comment on
+// calls.storage_tier for why that's stamped per-recording instead of
+// derived from this live value.
+async function setTenantStorageTier(tenantId, tier) {
+  const { rows } = await pool.query(`UPDATE tenants SET storage_tier = $2 WHERE id = $1 RETURNING id, name, storage_tier AS "storageTier"`, [
+    tenantId,
+    tier,
+  ]);
+  return rows[0] || null;
+}
+
+// See schema.sql's comment on baa_acceptances for why this is the real
+// electronic-signature record (typed name/title, not just a checkbox) and
+// why it's only ever written by the tenant's own owner accepting for
+// themselves -- routes/admin.js's POST /baa/accept is the only caller.
+async function recordBaaAcceptance({ tenantId, userId, fullName, title, baaVersion, baaTextHash, ipAddress, userAgent }) {
+  const { rows } = await pool.query(
+    `INSERT INTO baa_acceptances (id, tenant_id, user_id, full_name, title, baa_version, baa_text_hash, ip_address, user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, tenant_id AS "tenantId", user_id AS "userId", full_name AS "fullName", title,
+               baa_version AS "baaVersion", baa_text_hash AS "baaTextHash", accepted_at AS "acceptedAt"`,
+    [randomUUID(), tenantId, userId, fullName, title, baaVersion, baaTextHash, ipAddress || null, userAgent || null]
+  );
+  return rows[0];
+}
+
+// The one acceptance that counts for "has this tenant accepted the BAA" --
+// most recent row, if any. A tenant could in principle have more than one
+// (re-accepting after a text version bump), so this is always "latest",
+// never "any".
+async function getLatestBaaAcceptance(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT id, tenant_id AS "tenantId", user_id AS "userId", full_name AS "fullName", title,
+            baa_version AS "baaVersion", baa_text_hash AS "baaTextHash", accepted_at AS "acceptedAt"
+     FROM baa_acceptances WHERE tenant_id = $1 ORDER BY accepted_at DESC LIMIT 1`,
+    [tenantId]
   );
   return rows[0] || null;
 }
@@ -942,11 +1546,11 @@ async function purgeTenantData(tenantId) {
 // before the DB rows referencing them are gone.
 async function listStorageKeysForTenant(tenantId) {
   const { rows } = await pool.query(
-    `SELECT storage_key AS "storageKey" FROM calls
+    `SELECT storage_key AS "storageKey", storage_tier AS "storageTier" FROM calls
      WHERE ghl_account_id IN (SELECT id FROM ghl_accounts WHERE tenant_id = $1) AND storage_key IS NOT NULL`,
     [tenantId]
   );
-  return rows.map((r) => r.storageKey);
+  return rows;
 }
 
 // Cross-tenant, for src/routes/operator.js only (see requireOperator) --
@@ -962,7 +1566,7 @@ async function listStorageKeysForTenant(tenantId) {
 async function listTenantsForOperator() {
   const { rows } = await pool.query(`
     SELECT
-      t.id, t.name, t.status, t.created_at AS "createdAt", t.purge_at AS "purgeAt",
+      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
       u.username AS "ownerUsername",
       (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
@@ -984,8 +1588,31 @@ async function listTenantsForOperator() {
          WHERE ga.tenant_id = t.id AND c.disposition = 'completed' AND c.storage_key IS NULL) AS "completedMissing",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
          WHERE ga.tenant_id = t.id AND c.storage_key IS NOT NULL) AS "recordingsStored",
+      -- Real bytes currently in S3 for this tenant (same source
+      -- getTotalStoredBytesForTenant uses for the client-facing billing
+      -- page) -- recordingsStored above is a COUNT of recordings, not
+      -- their size, so storageAwsCost further down had no visible basis
+      -- until this: a dollar figure with nothing showing the GB it was
+      -- computed from.
+      (SELECT coalesce(sum(c.size_bytes), 0)::bigint FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+         WHERE ga.tenant_id = t.id) AS "storedBytes",
       (SELECT coalesce(sum(c.duration_seconds), 0)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
-         WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds"
+         WHERE ga.tenant_id = t.id AND c.transcription_status = 'completed') AS "transcribedSeconds",
+      -- Real cost-ledger sums (schema.sql's cost_ledger comment) -- unlike
+      -- transcribedSeconds/estimatedTranscribeCost above (a live estimate
+      -- the route computes from today's rate), these are the actual
+      -- recorded receipts, each at the rate that was in effect when it
+      -- happened. storageRevenue is the safety-net overage charge only
+      -- (billingRates.js's STORAGE_TIERS comment) -- $0 for a normal
+      -- account, never a general storage rate.
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcription') AS "transcriptionRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'ai_summary') AS "aiSummaryRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'storage') AS "storageRevenue",
+      (SELECT coalesce(sum(l.aws_cost), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcript_cleanup') AS "transcriptCleanupAwsCost",
+      (SELECT coalesce(sum(l.client_revenue), 0)::numeric FROM cost_ledger l WHERE l.tenant_id = t.id AND l.category = 'transcript_cleanup') AS "transcriptCleanupRevenue"
     FROM tenants t
     LEFT JOIN users u ON u.id = t.owner_user_id
     ORDER BY t.name
@@ -1026,6 +1653,53 @@ async function updateGhlAccountTokens(id, { accessToken, refreshToken, tokenExpi
 // GHL lookup.
 async function updateGhlAccountName(id, name) {
   await pool.query(`UPDATE ghl_accounts SET name = $2 WHERE id = $1`, [id, name]);
+}
+
+// Self-service disconnect (src/routes/admin.js's POST /ghl-accounts/:id/
+// disconnect) -- stops the ingestion poller from touching this account
+// (it only ever loops listAllActiveGhlAccounts, which filters exactly
+// this column) without deleting anything it already brought in:
+// recordings, contacts, and calls all keep their ghl_account_id exactly
+// as they are. Tokens are cleared too -- no reason to keep live GHL
+// credentials around for a connection the admin just chose to end;
+// reconnecting (same location) gets fresh ones anyway and is recognized
+// as the same account by the OAuth callback (matched on GHL's own
+// location ID, not this row's id -- see getGhlAccountByLocationId above).
+// Guarded by uninstalled_at IS NULL so calling this twice is a no-op the
+// caller can detect via the returned row count, not a silent re-stamp of
+// the disconnect time.
+async function disconnectGhlAccount(id) {
+  const { rowCount } = await pool.query(
+    `UPDATE ghl_accounts SET uninstalled_at = now(), access_token = NULL, refresh_token = NULL, token_expires_at = NULL
+     WHERE id = $1 AND uninstalled_at IS NULL`,
+    [id]
+  );
+  return rowCount > 0;
+}
+
+// Every account this tenant has ever connected, active or not, with
+// enough status to manage the connection from Settings -- unlike
+// listGhlAccountsForTenant below (active only, since that's also what
+// powers the Team tab's per-user account-access checklist, where
+// offering access to a disconnected account makes no sense). Without
+// this, disconnecting an account would make it vanish from the UI
+// entirely with no way back except OAuth-connecting blind and hoping
+// GHL's own location picker is unambiguous. lastSyncedAt is the
+// ingestion poller's own checkpoint (see account_sync_state below) --
+// surfaced here so a stuck/stale sync is visible without having to ask
+// someone to check the database.
+async function listGhlAccountsWithStatusForTenant(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name,
+            g.installed_at AS "installedAt", g.uninstalled_at AS "uninstalledAt",
+            s.last_synced_at AS "lastSyncedAt", g.ghl_app_url AS "ghlAppUrl"
+     FROM ghl_accounts g
+     LEFT JOIN account_sync_state s ON s.ghl_account_id = g.id
+     WHERE g.tenant_id = $1
+     ORDER BY (g.uninstalled_at IS NOT NULL), g.installed_at ASC`,
+    [tenantId]
+  );
+  return rows;
 }
 
 async function listGhlAccountsForTenant(tenantId) {
@@ -1090,11 +1764,17 @@ async function listUserAccountAccessForTenant(tenantId) {
 // permission-checking layer, always scoped to one tenant since they
 // answer "what can this logged-in user see"), the poller isn't handling
 // a request for any one tenant, so it needs everything at once.
+// storageTier here is the *tenant's* current storage tier -- joined in so
+// src/poller.js can stamp every newly-saved recording with the right
+// bucket without a separate per-account lookup each cycle.
 async function listAllActiveGhlAccounts() {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
-     FROM ghl_accounts WHERE uninstalled_at IS NULL`
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.uninstalled_at IS NULL`
   );
   return rows;
 }
@@ -1107,9 +1787,12 @@ async function listAllActiveGhlAccounts() {
 // need every account regardless of tenant.
 async function listActiveGhlAccountsForTenant(tenantId) {
   const { rows } = await pool.query(
-    `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
-     FROM ghl_accounts WHERE uninstalled_at IS NULL AND tenant_id = $1`,
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.uninstalled_at IS NULL AND ga.tenant_id = $1`,
     [tenantId]
   );
   return rows;
@@ -1122,7 +1805,8 @@ async function listActiveGhlAccountsForTenant(tenantId) {
 async function getGhlAccountById(id) {
   const { rows } = await pool.query(
     `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt",
+            ghl_app_url AS "ghlAppUrl"
      FROM ghl_accounts WHERE id = $1`,
     [id]
   );
@@ -1195,6 +1879,253 @@ async function getAiSummaryEnabled(ghlAccountId) {
 
 async function setAiSummaryEnabled(ghlAccountId, enabled) {
   await pool.query(`UPDATE ghl_accounts SET ai_summary_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
+}
+
+async function getTranscriptCleanupEnabled(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT transcript_cleanup_enabled AS "transcriptCleanupEnabled" FROM ghl_accounts WHERE id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] ? rows[0].transcriptCleanupEnabled : false;
+}
+
+async function setTranscriptCleanupEnabled(ghlAccountId, enabled) {
+  await pool.query(`UPDATE ghl_accounts SET transcript_cleanup_enabled = $2 WHERE id = $1`, [ghlAccountId, enabled]);
+}
+
+// --- cost_ledger (see schema.sql's comment on this table for why it's a
+// permanent receipt per billable event, not a live recalculated
+// estimate) ---
+
+// ON CONFLICT (call_id, category, attempt) matches
+// cost_ledger_call_category_attempt_idx -- a second write for the same
+// call+category+attempt (a retried poller cycle checking the same job
+// twice) is a silent no-op, not a double-billed row; a *different*
+// attempt on the same call+category is a real new row, not a conflict.
+// Every rate/cost argument is passed in already computed by the caller
+// (src/transcriptionPoller.js, src/callSummaryPoller.js), which reads
+// them from src/billingRates.js at write time -- this function just
+// persists them, it doesn't decide what the rates are.
+// attempt identifies which transcription try (calls.transcription_attempts
+// at write time) this row is for -- see schema.sql's comment on the
+// attempt column. A failed attempt calls this too (clientRate/clientRevenue
+// null -- never bill for a job that produced nothing usable), so a call
+// retried 3 times before succeeding has 3 real rows, not 1.
+async function recordTranscriptionCost({ tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, attempt, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, attempt, backfilled)
+     VALUES ($1, $2, $3, 'transcription', $4, $5, 'minutes', $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, minutes, awsRate, awsCost, clientRate, clientRevenue, attempt, Boolean(backfilled)]
+  );
+}
+
+async function recordAiSummaryCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, attempt, backfilled)
+     VALUES ($1, $2, $3, 'ai_summary', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12, $13)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate, clientRevenue, inputTokens, outputTokens, attempt, Boolean(backfilled)]
+  );
+}
+
+// clientRate/clientRevenue are an exact cost pass-through, not a flat
+// rate (see schema.sql's comment on the 'transcript_cleanup' category):
+// clientRevenue is literally that call's own computed awsCost. Only ever
+// written when Bedrock was actually called (src/transcriptCleanupPoller.js
+// skips this entirely when nothing was flagged for cleanup, since that
+// costs nothing and so bills nothing).
+async function recordTranscriptCleanupCost({ tenantId, ghlAccountId, callId, inputTokens, outputTokens, awsRate, awsCost, clientRate, clientRevenue, attempt }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, ghl_account_id, category, call_id, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, input_tokens, output_tokens, attempt)
+     VALUES ($1, $2, $3, 'transcript_cleanup', $4, $5, 'tokens', $6, $7, $8, $9, $10, $11, $12)
+     ON CONFLICT (call_id, category, attempt) WHERE call_id IS NOT NULL DO NOTHING`,
+    [randomUUID(), tenantId, ghlAccountId, callId, (inputTokens || 0) + (outputTokens || 0), awsRate, awsCost, clientRate ?? null, clientRevenue ?? null, inputTokens, outputTokens, attempt]
+  );
+}
+
+// --- client-facing billing (routes/admin.js's GET /billing) ---
+//
+// client_revenue IS NOT NULL on every query below, deliberately: a failed
+// transcription/summary attempt writes a cost-only ledger row (see
+// transcriptionPoller.js's comment on why) with client_revenue null --
+// real AWS cost CallTrove absorbs, never billed to the client. Without
+// this filter, a retried call's minutes/calls would be double-counted
+// here even though only the successful attempt was ever charged for,
+// showing the client a usage figure that doesn't match their own total.
+
+// This calendar month's billed transcription/AI-summary usage so far --
+// storage isn't included here since its cost_ledger entry for the
+// CURRENT (still open) month doesn't exist yet (storageCostJob.js only
+// writes one once the month closes); see getTotalStoredBytesForTenant
+// for the live, real-time storage figure shown instead.
+async function getTenantCurrentPeriodUsage(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT category,
+            coalesce(sum(client_revenue), 0)::numeric AS revenue,
+            coalesce(sum(quantity), 0)::numeric AS quantity,
+            count(*)::int AS calls
+     FROM cost_ledger
+     WHERE tenant_id = $1
+       AND category IN ('transcription', 'ai_summary', 'transcript_cleanup')
+       AND client_revenue IS NOT NULL
+       AND created_at >= date_trunc('month', now())
+     GROUP BY category`,
+    [tenantId]
+  );
+  const result = {
+    transcriptionRevenue: 0, transcriptionMinutes: 0,
+    aiSummaryRevenue: 0, aiSummaryCalls: 0,
+    transcriptCleanupRevenue: 0, transcriptCleanupCalls: 0,
+  };
+  for (const row of rows) {
+    if (row.category === "transcription") {
+      result.transcriptionRevenue = Number(row.revenue);
+      result.transcriptionMinutes = Number(row.quantity);
+    } else if (row.category === "ai_summary") {
+      result.aiSummaryRevenue = Number(row.revenue);
+      result.aiSummaryCalls = row.calls; // quantity is total tokens, not call count -- see cost_ledger's own comment
+    } else if (row.category === "transcript_cleanup") {
+      result.transcriptCleanupRevenue = Number(row.revenue);
+      result.transcriptCleanupCalls = row.calls; // same reasoning as ai_summary's own calls count above
+    }
+  }
+  return result;
+}
+
+// Prior calendar months' billed transcription/AI-summary usage, one row
+// per month per category -- combined with past storage entries (already
+// one row per month via period_start) by routes/admin.js into a single
+// per-month history. Capped to a year back; this is a client-facing
+// summary, not an export.
+//
+// month is returned as a plain 'YYYY-MM-DD' string (to_char, not a raw
+// date_trunc timestamptz) specifically so it can be string-matched
+// against getTenantPastStorageByMonth's period_start below without
+// relying on how node-postgres happens to parse a timestamptz vs. a
+// plain DATE column back into a JS Date -- that's two different column
+// types reaching JS through two different parsers, and a timezone-offset
+// mismatch between them would silently bucket storage into the wrong
+// month.
+async function getTenantPastUsageByMonth(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT to_char(date_trunc('month', created_at), 'YYYY-MM-DD') AS month, category,
+            coalesce(sum(client_revenue), 0)::numeric AS revenue
+     FROM cost_ledger
+     WHERE tenant_id = $1
+       AND category IN ('transcription', 'ai_summary', 'transcript_cleanup')
+       AND client_revenue IS NOT NULL
+       AND created_at < date_trunc('month', now())
+       AND created_at >= date_trunc('month', now()) - interval '12 months'
+     GROUP BY date_trunc('month', created_at), category
+     ORDER BY month DESC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+// Past months' storage charges -- already one row per month (period_start
+// is the month's first day, see storageCostJob.js), unlike transcription/
+// ai_summary above which are per-call receipts bucketed by month here.
+async function getTenantPastStorageByMonth(tenantId) {
+  const { rows } = await pool.query(
+    `SELECT to_char(period_start, 'YYYY-MM-DD') AS month, coalesce(client_revenue, 0)::numeric AS revenue
+     FROM cost_ledger
+     WHERE tenant_id = $1 AND category = 'storage'
+       AND period_start >= date_trunc('month', now()) - interval '12 months'
+     ORDER BY period_start DESC`,
+    [tenantId]
+  );
+  return rows;
+}
+
+// One row per tenant per period (src/storageCostJob.js) -- ghl_account_id
+// is left NULL, since this sums bytes across every account the tenant
+// owns, not any one of them (see schema.sql's cost_ledger comment).
+// ON CONFLICT (tenant_id, period_start) matches
+// cost_ledger_storage_period_idx -- re-running the job for a period
+// that's already been billed is a no-op.
+// clientRate/clientRevenue are nullable -- a storage entry recorded
+// before the free-tier/overage policy existed (see billingRates.js's
+// STORAGE_TIERS comment) has none, and stays that way: this is a
+// receipt, so a policy that didn't exist yet when the entry was written
+// is never applied to it retroactively.
+async function recordStorageCost({ tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, clientRate, clientRevenue, backfilled }) {
+  await pool.query(
+    `INSERT INTO cost_ledger (id, tenant_id, category, period_start, period_end, quantity, quantity_unit, aws_rate, aws_cost, client_rate, client_revenue, backfilled)
+     VALUES ($1, $2, 'storage', $3, $4, $5, 'gb_months', $6, $7, $8, $9, $10)
+     ON CONFLICT (tenant_id, period_start) WHERE category = 'storage' DO NOTHING`,
+    [randomUUID(), tenantId, periodStart, periodEnd, gbMonths, awsRate, awsCost, clientRate ?? null, clientRevenue ?? null, Boolean(backfilled)]
+  );
+}
+
+// --- daily_storage_snapshots (real day-by-day history, see schema.sql's
+// comment on that table for why this replaces a single end-of-month
+// snapshot once enough days have accumulated) ---
+
+// Upsert, not insert-once: src/storageCostJob.js calls this every cycle
+// for "today", so the latest reading during the day keeps overwriting
+// today's row -- once the day turns over, this tenant+date is never
+// touched again (a later cycle is always writing a *new* day's row by
+// then), which is what makes a past day's figure permanent.
+//
+// storageTier is stamped from the tenant's tier AT THE MOMENT this
+// snapshot is taken, same as calls.storage_tier -- see schema.sql's
+// comment on this column for why that matters (a mid-month tier switch
+// must not let the eventual monthly charge apply the wrong tier's
+// free-GB allowance to days spent on the other one).
+async function upsertDailyStorageSnapshot(tenantId, snapshotDate, totalBytes, storageTier) {
+  await pool.query(
+    `INSERT INTO daily_storage_snapshots (id, tenant_id, snapshot_date, total_bytes, storage_tier, updated_at)
+     VALUES ($1, $2, $3, $4, $5, now())
+     ON CONFLICT (tenant_id, snapshot_date) DO UPDATE SET total_bytes = $4, storage_tier = $5, updated_at = now()`,
+    [randomUUID(), tenantId, snapshotDate, totalBytes, storageTier]
+  );
+}
+
+// Average bytes stored across whatever daily snapshots actually exist in
+// [periodStart, periodEnd) -- dayCount tells the caller how many days
+// that average is based on, so src/storageCostJob.js can tell "a real
+// daily average across the month" apart from "no daily history exists
+// for this period at all" (an older month, or the transition month this
+// feature was deployed mid-way through) and fall back accordingly. This
+// is deliberately tier-agnostic (the true overall average, regardless of
+// which tier applied on which day) -- it's the basis for the real AWS
+// cost, which doesn't depend on which tier a client is billed under; see
+// getStorageStatsByTierForTenantPeriod for the per-tier breakdown used to
+// prorate the client-facing free-GB allowance and rate across each tier's
+// own days.
+async function getAverageStoredBytesForTenantPeriod(tenantId, periodStart, periodEnd) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(avg(total_bytes), 0)::numeric AS "avgBytes", count(*)::int AS "dayCount"
+     FROM daily_storage_snapshots
+     WHERE tenant_id = $1 AND snapshot_date >= $2 AND snapshot_date < $3`,
+    [tenantId, periodStart, periodEnd]
+  );
+  return rows[0];
+}
+
+// Per tier, how many of this period's snapshot days fell under it and
+// what the average bytes stored were ON JUST THOSE DAYS -- the basis for
+// src/storageCostJob.js's sub-period billing: a tenant who switched tiers
+// mid-period is judged "X days averaging this much, under the old tier's
+// free allowance and rate; Y days averaging that much, under the new
+// one's", each independently and each prorated to its own share of the
+// period, rather than one blended allowance applied to the whole
+// period's overall average. coalesce to 'standard' covers snapshot rows
+// written before the storage_tier column existed and never backfilled
+// (shouldn't happen after schema.sql's migration, but a missing tier here
+// should never crash billing -- 'standard' is the conservative default,
+// same fallback billingRates.storageTier() itself uses for an unknown tier).
+async function getStorageStatsByTierForTenantPeriod(tenantId, periodStart, periodEnd) {
+  const { rows } = await pool.query(
+    `SELECT coalesce(storage_tier, 'standard') AS tier, count(*)::int AS days, avg(total_bytes)::numeric AS "avgBytes"
+     FROM daily_storage_snapshots
+     WHERE tenant_id = $1 AND snapshot_date >= $2 AND snapshot_date < $3
+     GROUP BY tier`,
+    [tenantId, periodStart, periodEnd]
+  );
+  return rows;
 }
 
 // --- audit_log (who changed what admin setting/account, and when) ---
@@ -1315,6 +2246,12 @@ module.exports = {
   createTenant,
   updateTenantOwner,
   getTenantById,
+  setTenantStorageTier,
+  recordBaaAcceptance,
+  getLatestBaaAcceptance,
+  listActiveTenants,
+  listTenantMargins,
+  getTotalStoredBytesForTenant,
   requestTenantCancellation,
   restoreTenant,
   listTenantsReadyForPurge,
@@ -1325,7 +2262,9 @@ module.exports = {
   getGhlAccountByLocationId,
   updateGhlAccountTokens,
   updateGhlAccountName,
+  disconnectGhlAccount,
   listGhlAccountsForTenant,
+  listGhlAccountsWithStatusForTenant,
   listAccessibleAccounts,
   listAllActiveGhlAccounts,
   listActiveGhlAccountsForTenant,
@@ -1348,10 +2287,20 @@ module.exports = {
   incrementSummaryAttempts,
   markSummaryComplete,
   markSummaryFailed,
+  listPendingTranscriptCleanups,
+  incrementTranscriptCleanupAttempts,
+  markTranscriptCleanupComplete,
+  markTranscriptCleanupFailed,
   markGhlNoteWritten,
   getGhlAccountById,
   updateCallHandler,
   listContacts,
+  listDuplicateContactGroups,
+  dismissDuplicateGroup,
+  reassignCallToContact,
+  contactsBelongToAccount,
+  contactExists,
+  setGhlAppUrl,
   listAllContacts,
   listCalls,
   getCallStats,
@@ -1359,6 +2308,12 @@ module.exports = {
   getCallReportByRep,
   getCallReportDispositionsByRep,
   getCallReportTrend,
+  computeCallDigestStats,
+  saveCallDigest,
+  getLatestCallDigest,
+  listGhlAccountsNeedingDigest,
+  getDigestSchedule,
+  setDigestSchedule,
   listAllCallsWithRecordings,
   getCoverageSummary,
   getCoverageByDisposition,
@@ -1395,6 +2350,18 @@ module.exports = {
   setAutoTranscribeEnabled,
   getAiSummaryEnabled,
   setAiSummaryEnabled,
+  getTranscriptCleanupEnabled,
+  setTranscriptCleanupEnabled,
+  recordTranscriptionCost,
+  recordAiSummaryCost,
+  recordTranscriptCleanupCost,
+  getTenantCurrentPeriodUsage,
+  getTenantPastUsageByMonth,
+  getTenantPastStorageByMonth,
+  recordStorageCost,
+  upsertDailyStorageSnapshot,
+  getAverageStoredBytesForTenantPeriod,
+  getStorageStatsByTierForTenantPeriod,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

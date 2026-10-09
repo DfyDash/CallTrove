@@ -11,6 +11,15 @@ const purgeConfirmInput = document.getElementById("purge-confirm-input");
 const confirmPurgeBtn = document.getElementById("confirm-purge-btn");
 const cancelPurgeBtn = document.getElementById("cancel-purge-btn");
 const purgeError = document.getElementById("purge-error");
+const purgeOverdueBanner = document.getElementById("purge-overdue-banner");
+
+// How many days past becoming purge-eligible an account can sit still
+// un-purged before it's flagged as needing attention, rather than just
+// quietly waiting for someone to notice -- see tenantPurge.js's
+// all-or-nothing purge: a repeatedly-failing purge otherwise leaves an
+// account stuck in cancellation_pending with nothing surfacing that on
+// its own.
+const PURGE_OVERDUE_DAYS = 2;
 
 const activityRows = document.getElementById("operator-activity-rows");
 const activityPrevBtn = document.getElementById("operator-activity-prev-btn");
@@ -20,10 +29,173 @@ let activityPage = 1;
 let activityLoaded = false;
 
 const analyticsSummary = document.getElementById("operator-analytics-summary");
-const analyticsRows = document.getElementById("operator-analytics-rows");
-const accountsChartSvg = document.getElementById("operator-accounts-chart");
-const accountsChartTooltip = document.getElementById("operator-chart-tooltip");
+const costSummary = document.getElementById("operator-cost-summary");
+const awsSpendSummary = document.getElementById("operator-aws-spend-summary");
+const awsCostSummary = document.getElementById("operator-aws-cost-summary");
+const accountSearchInput = document.getElementById("operator-account-search");
+const accountSearchResults = document.getElementById("operator-search-results");
+const accountSearchScope = document.getElementById("operator-search-scope");
 let cachedTenants = [];
+let searchQuery = "";
+let searchScope = "name"; // "name" | "owner" -- which field the typed search matches against
+
+// A canceled tenant is dead weight on a live financial view -- no owner,
+// no connected GHL account, nothing left to analyze, just a row of
+// zeroes (exactly what prompted this). Analytics and Cost & revenue
+// exclude them by default; Accounts still shows every status, since
+// that's the tab you'd actually use to find/restore/delete one.
+function activeOnly(list) {
+  return list.filter((t) => t.status !== "canceled");
+}
+
+function matchesSearch(t, q) {
+  const field = searchScope === "owner" ? t.ownerUsername : t.name;
+  return (field || "").toLowerCase().includes(q);
+}
+
+// Shared sort+search core for every tab that lists accounts. The list is
+// ALWAYS grouped/sorted by account name, regardless of searchScope --
+// deliberately kept simple: switching the search filter to "Owner" only
+// changes what your typed text matches against, it never reorganizes the
+// page itself, so there's one consistent layout to learn rather than the
+// list visibly rearranging every time the filter changes. Each tab passes
+// its own base list (the full set for Accounts, activeOnly() for
+// Analytics/Cost & revenue) so the same search term narrows each tab's
+// own population rather than a single shared list.
+function filterAndSort(baseList) {
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q ? baseList.filter((t) => matchesSearch(t, q)) : baseList;
+  return [...filtered].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+}
+
+// A-Z grouping -- same pattern as the Contacts page's own directory
+// (public/contacts.js's loadContacts): instead of one long list (or a
+// page of 20 with no sense of where in the alphabet you are), accounts
+// are grouped under a letter header, with a jump strip of every letter
+// above the table -- a grey letter has no accounts under it right now,
+// an accent-colored one does and jumps straight to that group.
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+function groupByLetter(tenants) {
+  const grouped = {};
+  for (const t of tenants) {
+    const name = t.name || "";
+    const letter = name ? name[0].toUpperCase() : "#";
+    const key = ALPHABET.includes(letter) ? letter : "#";
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(t);
+  }
+  return grouped;
+}
+
+// groupIdPrefix keeps each tab's jump targets/header ids distinct
+// (accounts-A, analytics-A, cost-A, ...) since Analytics/Cost & revenue
+// can have a different active-letter set than Accounts (activeOnly()
+// excludes canceled tenants) even though all three show the same search.
+function renderAzStrip(stripEl, grouped, groupIdPrefix) {
+  const letters = grouped["#"] ? ["#", ...ALPHABET] : ALPHABET;
+  stripEl.innerHTML = letters
+    .map((letter) => {
+      const active = grouped[letter] && grouped[letter].length > 0;
+      return `<a href="#${groupIdPrefix}-${encodeURIComponent(letter)}" class="az-letter${active ? " has-contacts" : ""}">${escapeHtml(letter)}</a>`;
+    })
+    .join("");
+}
+
+// Renders <tr> group-header rows interleaved with each letter's own
+// tenant rows into tbody, via rowTemplate(tenant) -> inner <tr> html.
+// colspan matches the table's real column count so the header row still
+// looks right as a single banner across every column.
+function renderGroupedRows(tbody, stripEl, tenants, groupIdPrefix, colspan, rowTemplate) {
+  const grouped = groupByLetter(tenants);
+  renderAzStrip(stripEl, grouped, groupIdPrefix);
+  const activeLetters = Object.keys(grouped).sort((a, b) => (a === "#" ? -1 : b === "#" ? 1 : a.localeCompare(b)));
+
+  tbody.innerHTML = "";
+  for (const letter of activeLetters) {
+    const header = document.createElement("tr");
+    header.innerHTML = `<td colspan="${colspan}" class="contact-group-header" id="${groupIdPrefix}-${escapeHtml(letter)}">${escapeHtml(letter)}</td>`;
+    tbody.appendChild(header);
+    for (const t of grouped[letter]) {
+      const row = document.createElement("tr");
+      row.dataset.tenantId = t.id;
+      row.innerHTML = rowTemplate(t);
+      tbody.appendChild(row);
+    }
+  }
+}
+
+// --- Search scope (Account name / Owner) -- picks which field the typed
+// search matches, see matchesSearch() and filterAndSort()'s own comment
+// for why this never changes how the list is grouped/sorted, only what
+// counts as a match. ---
+const SCOPE_PLACEHOLDERS = { name: "Search by account name...", owner: "Search by owner..." };
+accountSearchScope.addEventListener("change", () => {
+  searchScope = accountSearchScope.value;
+  accountSearchInput.placeholder = SCOPE_PLACEHOLDERS[searchScope];
+  // Re-run whatever's currently typed against the new field, rather than
+  // requiring it to be retyped.
+  const value = accountSearchInput.value.trim();
+  if (value) renderSearchDropdown(value);
+  renderAll();
+});
+
+// --- Search dropdown (same interaction as Contacts' sidebar search:
+// type, see a live dropdown of matches, click one to commit it as the
+// filter) -- client-side only, no fetch needed, the full account list is
+// already in cachedTenants. Searches every account regardless of status
+// (so a canceled one is still findable from here, e.g. to go manage it
+// on Accounts), even though Analytics/Cost & revenue won't show it if
+// it's canceled -- see activeOnly() above.
+let searchDebounce;
+accountSearchInput.addEventListener("input", () => {
+  const value = accountSearchInput.value.trim();
+  clearTimeout(searchDebounce);
+  if (!value) {
+    accountSearchResults.hidden = true;
+    accountSearchResults.innerHTML = "";
+    searchQuery = "";
+    renderAll();
+    return;
+  }
+  searchDebounce = setTimeout(() => renderSearchDropdown(value), 200);
+});
+
+accountSearchInput.addEventListener("focus", () => {
+  if (accountSearchInput.value.trim() && accountSearchResults.innerHTML) accountSearchResults.hidden = false;
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".search-wrap")) accountSearchResults.hidden = true;
+});
+
+function renderSearchDropdown(query) {
+  const q = query.toLowerCase();
+  const matches = cachedTenants.filter((t) => matchesSearch(t, q)).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+  accountSearchResults.innerHTML = "";
+  accountSearchResults.hidden = false;
+  if (matches.length === 0) {
+    accountSearchResults.innerHTML = `<li class="search-empty">No matching accounts.</li>`;
+    return;
+  }
+  for (const t of matches) {
+    const li = document.createElement("li");
+    li.className = "search-result-item";
+    li.innerHTML = `${escapeHtml(t.name)}<span class="contact-phone">${escapeHtml(t.ownerUsername || "No owner")}</span>`;
+    li.addEventListener("click", () => {
+      // Commit whichever field was actually searched -- if scope is
+      // "owner", the box should hold the owner's name (what matchesSearch
+      // checks against), not the account's own name.
+      const committed = searchScope === "owner" ? t.ownerUsername || "" : t.name || "";
+      accountSearchInput.value = committed;
+      searchQuery = committed;
+      accountSearchResults.hidden = true;
+      renderAll();
+    });
+    accountSearchResults.appendChild(li);
+  }
+}
 
 let csrfToken = "";
 let pendingPurgeTenantId = null;
@@ -47,7 +219,7 @@ async function loadSession() {
   if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
 
   if (!me.isOperator) {
-    operatorRows.innerHTML = `<tr><td colspan="4">Operator access required.</td></tr>`;
+    operatorRows.innerHTML = `<tr><td colspan="5">Operator access required.</td></tr>`;
     return false;
   }
   return true;
@@ -57,6 +229,131 @@ function formatMoney(n) {
   return `$${Number(n).toFixed(2)}`;
 }
 
+// Plain formatMoney rounds a real sub-cent line item (Secrets Manager at
+// $0.00005, say) down to a misleading "$0.00" -- this is the one place
+// showing individual real AWS service costs, not rounded totals, so a
+// nonzero amount should never silently look like zero.
+function formatMoneyPrecise(n) {
+  const num = Number(n);
+  if (num !== 0 && Math.abs(num) < 0.01) return `$${num.toFixed(4)}`;
+  return formatMoney(num);
+}
+
+// The real, full AWS bill (src/awsCostExplorer.js) -- fetched once up
+// front alongside loadTenants, not re-fetched on every tenant-list
+// refresh the way cachedTenants is, since it's cached server-side for 6h
+// and costs AWS $0.01 per real fetch.
+async function loadAwsSpend() {
+  try {
+    const res = await fetch("/api/operator/aws-spend");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">${escapeHtml(data.error || "Could not load the real AWS bill.")}</p>`;
+      return;
+    }
+    renderAwsSpend(data);
+  } catch (err) {
+    awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load the real AWS bill.</p>`;
+  }
+}
+
+function renderAwsSpend(data) {
+  if (!data.services || data.services.length === 0) {
+    awsSpendSummary.innerHTML = `<p class="empty-state empty-state-pad">No AWS spend recorded yet this month.</p>`;
+    return;
+  }
+  const rows = data.services
+    .map((s) => `<tr><td>${escapeHtml(s.name)}</td><td class="amount">${formatMoneyPrecise(s.cost)}</td></tr>`)
+    .join("");
+  awsSpendSummary.innerHTML = `
+    <table>
+      <thead><tr><th>Service</th><th class="amount">Cost (${escapeHtml(data.start)} to ${escapeHtml(data.end)})</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td><strong>Total</strong></td><td class="amount"><strong>${formatMoney(data.total)}</strong></td></tr></tfoot>
+    </table>
+  `;
+}
+
+// The four AWS-console-style headline figures (src/awsCostExplorer.js's
+// getCostSummary) -- same data source and cache as the per-service
+// breakdown above, just a different shape.
+async function loadAwsCostSummary() {
+  try {
+    const res = await fetch("/api/operator/aws-spend-summary");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      awsCostSummary.innerHTML = `<p class="empty-state empty-state-pad">${escapeHtml(data.error || "Could not load the AWS cost summary.")}</p>`;
+      return;
+    }
+    renderAwsCostSummary(data);
+  } catch (err) {
+    awsCostSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load the AWS cost summary.</p>`;
+  }
+}
+
+// null when there's nothing sensible to compare against (last month had
+// $0 in that same window -- division by zero, not a real percentage).
+function percentChangeNote(current, previous, suffix) {
+  if (!previous) return null;
+  const pct = ((current - previous) / previous) * 100;
+  const arrow = pct >= 0 ? "↑" : "↓";
+  return `${arrow} ${Math.abs(Math.round(pct))}% ${suffix}`;
+}
+
+function renderAwsCostSummary(data) {
+  const mtdNote = percentChangeNote(data.monthToDate, data.lastMonthSamePeriod, "compared to last month for same period");
+  const forecastNote =
+    data.forecastTotal !== null
+      ? percentChangeNote(data.forecastTotal, data.lastMonthTotal, "compared to last month's total costs")
+      : data.forecastError;
+
+  awsCostSummary.innerHTML = `
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.monthToDate)}</div>
+      <div class="stat-label">Month-to-date cost</div>
+      ${mtdNote ? `<div class="stat-tile-note">${escapeHtml(mtdNote)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.lastMonthSamePeriod)}</div>
+      <div class="stat-label">Last month's cost for same time period</div>
+      ${data.lastMonthSamePeriodLabel ? `<div class="stat-tile-note">${escapeHtml(data.lastMonthSamePeriodLabel)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${data.forecastTotal === null ? "—" : formatMoney(data.forecastTotal)}</div>
+      <div class="stat-label">Total forecasted cost for current month</div>
+      ${forecastNote ? `<div class="stat-tile-note">${escapeHtml(forecastNote)}</div>` : ""}
+    </div>
+    <div class="stat-tile">
+      <div class="stat-value">${formatMoney(data.lastMonthTotal)}</div>
+      <div class="stat-label">Last month's total cost</div>
+    </div>
+  `;
+}
+
+// Disabled for a canceled tenant -- nothing left to provision storage
+// for, and switching it would have no effect anyway.
+function storageTierSelect(t) {
+  const tier = t.storageTier || "standard";
+  const disabled = t.status === "canceled" ? "disabled" : "";
+  const option = (value, label) => `<option value="${value}" ${tier === value ? "selected" : ""}>${label}</option>`;
+  return `<select class="storage-tier-select" data-id="${escapeHtml(t.id)}" ${disabled}>
+      ${option("standard", "Standard")}
+      ${option("hipaa", "HIPAA")}
+    </select>`;
+}
+
+// Whole days since a tenant became eligible for purge and still wasn't
+// (0 if not eligible yet, not pending, or just became eligible today).
+function daysPastEligible(t) {
+  if (t.status !== "cancellation_pending" || !t.purgeAt) return 0;
+  const ms = Date.now() - new Date(t.purgeAt).getTime();
+  return ms > 0 ? Math.floor(ms / (24 * 60 * 60 * 1000)) : 0;
+}
+
+function isPurgeOverdue(t) {
+  return daysPastEligible(t) >= PURGE_OVERDUE_DAYS;
+}
+
 function actionsForTenant(t) {
   if (t.status === "active") {
     return `<button type="button" class="cancel-tenant-btn" data-id="${escapeHtml(t.id)}">Cancel</button>`;
@@ -64,10 +361,16 @@ function actionsForTenant(t) {
   if (t.status === "cancellation_pending") {
     const purgeAt = new Date(t.purgeAt);
     const eligible = purgeAt <= new Date();
+    const overdueDays = daysPastEligible(t);
     return `<button type="button" class="restore-tenant-btn" data-id="${escapeHtml(t.id)}">Restore</button>
       <button type="button" class="purge-tenant-btn delete-btn" data-id="${escapeHtml(t.id)}" data-name="${escapeHtml(t.name)}" ${eligible ? "" : "disabled"}>
         ${eligible ? "Delete" : `Eligible ${purgeAt.toLocaleDateString()}`}
-      </button>`;
+      </button>
+      ${
+        isPurgeOverdue(t)
+          ? `<span class="purge-overdue-row-badge" title="Eligible for purge ${overdueDays} day(s) ago but still not purged -- check the Activity log for why it's failing">${overdueDays}d overdue</span>`
+          : ""
+      }`;
   }
   return `<span class="settings-note">-</span>`; // canceled -- nothing left to do
 }
@@ -75,43 +378,77 @@ function actionsForTenant(t) {
 async function loadTenants() {
   const res = await fetch("/api/operator/tenants");
   if (!res.ok) {
-    operatorRows.innerHTML = `<tr><td colspan="4">Could not load accounts.</td></tr>`;
-    analyticsRows.innerHTML = `<tr><td colspan="7">Could not load analytics.</td></tr>`;
-    analyticsSummary.innerHTML = "";
+    operatorRows.innerHTML = `<tr><td colspan="5">Could not load accounts.</td></tr>`;
+    analyticsSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load analytics.</p>`;
+    costSummary.innerHTML = `<p class="empty-state empty-state-pad">Could not load cost &amp; revenue.</p>`;
     return;
   }
   cachedTenants = await res.json();
+  renderAll();
+}
+
+function renderAll() {
   renderAccounts();
   renderAnalytics();
+  renderCostAndRevenue();
+}
+
+const accountsAzStrip = document.getElementById("accounts-az-strip");
+
+// Always computed off the full, unfiltered list -- an overdue purge must
+// stay visible regardless of whatever search is currently typed in, or
+// it could sit hidden behind a filter indefinitely, same problem this
+// banner exists to prevent in the first place.
+function renderPurgeOverdueBanner() {
+  const overdue = cachedTenants.filter(isPurgeOverdue);
+  purgeOverdueBanner.hidden = overdue.length === 0;
+  purgeOverdueBanner.textContent =
+    overdue.length === 0
+      ? ""
+      : `⚠ ${overdue.length} account${overdue.length === 1 ? "" : "s"} overdue for purge -- eligible but still not deleted: ${overdue
+          .map((t) => `"${t.name}" (${daysPastEligible(t)}d)`)
+          .join(", ")}`;
 }
 
 function renderAccounts() {
-  if (cachedTenants.length === 0) {
-    operatorRows.innerHTML = `<tr><td colspan="4">No accounts yet.</td></tr>`;
+  renderPurgeOverdueBanner();
+  const tenants = filterAndSort(cachedTenants);
+  if (tenants.length === 0) {
+    accountsAzStrip.innerHTML = "";
+    operatorRows.innerHTML = `<tr><td colspan="5">${cachedTenants.length === 0 ? "No accounts yet." : "No accounts match your search."}</td></tr>`;
     return;
   }
-  operatorRows.innerHTML = cachedTenants
-    .map(
-      (t) => `
-    <tr data-tenant-id="${escapeHtml(t.id)}">
-      <td data-label="Account">${escapeHtml(t.name)}</td>
+  renderGroupedRows(
+    operatorRows,
+    accountsAzStrip,
+    tenants,
+    "accounts",
+    5,
+    (t) => `
+      <td data-label="Account"><a href="#account/${encodeURIComponent(t.id)}" class="account-detail-link">${escapeHtml(t.name)}</a></td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
+      <td data-label="Storage tier">${storageTierSelect(t)}</td>
       <td data-label="Actions">${actionsForTenant(t)}</td>
-    </tr>`
-    )
-    .join("");
+    `
+  );
 }
 
+// Combined totals only, across every active account matching the current
+// search -- no per-account table here any more (see this tab's own note
+// in operator.html). For one account's own numbers, click into it from
+// Accounts -- see showAccountDetail()/renderAccountDetail() below, which
+// render the identical stat-tile shape for a single tenant.
 function renderAnalytics() {
-  if (cachedTenants.length === 0) {
-    analyticsSummary.innerHTML = "";
-    analyticsRows.innerHTML = `<tr><td colspan="7">No accounts yet.</td></tr>`;
-    renderAccountsChart([]);
+  // activeOnly: a canceled tenant has nothing left to analyze -- see
+  // activeOnly()'s own comment.
+  const tenants = filterAndSort(activeOnly(cachedTenants));
+  if (tenants.length === 0) {
+    analyticsSummary.innerHTML = `<p class="empty-state empty-state-pad">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</p>`;
     return;
   }
 
-  const totals = cachedTenants.reduce(
+  const totals = tenants.reduce(
     (acc, t) => ({
       ghlAccountCount: acc.ghlAccountCount + t.ghlAccountCount,
       totalCalls: acc.totalCalls + t.totalCalls,
@@ -124,218 +461,59 @@ function renderAnalytics() {
   );
 
   analyticsSummary.innerHTML = `
-    <div class="stat-tile"><div class="stat-value">${cachedTenants.length}</div><div class="stat-label">Accounts</div></div>
+    <div class="stat-tile"><div class="stat-value">${tenants.length}</div><div class="stat-label">Accounts</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.totalCalls}</div><div class="stat-label">Total calls</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.completedCalls}</div><div class="stat-label">Completed calls</div></div>
     <div class="stat-tile"><div class="stat-value">${totals.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
     <div class="stat-tile"><div class="stat-value">${Math.round(totals.transcribedMinutes * 10) / 10}</div><div class="stat-label">Transcribed minutes</div></div>
     <div class="stat-tile"><div class="stat-value">${formatMoney(totals.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
   `;
-
-  analyticsRows.innerHTML = cachedTenants
-    .map(
-      (t) => `
-    <tr data-tenant-id="${escapeHtml(t.id)}">
-      <td data-label="Account">${escapeHtml(t.name)}</td>
-      <td data-label="GHL accounts">${t.ghlAccountCount}</td>
-      <td data-label="Total calls">${t.totalCalls}</td>
-      <td data-label="Completed calls">${t.completedCalls}</td>
-      <td data-label="Recordings stored">${t.recordingsStored}</td>
-      <td data-label="Transcribed minutes">${t.transcribedMinutes}</td>
-      <td data-label="Est. transcribe cost">${formatMoney(t.estimatedTranscribeCost)}</td>
-    </tr>`
-    )
-    .join("");
-
-  renderAccountsChart(cachedTenants);
 }
 
-// --- Calls-by-account chart (same SVG bar-chart approach as the client
-// Coverage tab's month chart -- see settings.js -- just banded by account
-// instead of by month, since there's no per-operator time series data.) ---
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-const CHART = { width: 900, height: 260, margin: { top: 10, right: 10, bottom: 34, left: 40 } };
-
-function svgEl(tag, attrs) {
-  const el = document.createElementNS(SVG_NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  return el;
-}
-
-function topRoundedRectPath(x, y, w, h, r) {
-  const rad = Math.max(0, Math.min(r, w / 2, h));
-  if (rad === 0) return `M${x},${y} h${w} v${h} h${-w} Z`;
-  return `M${x},${y + rad} A${rad},${rad} 0 0 1 ${x + rad},${y} H${x + w - rad} A${rad},${rad} 0 0 1 ${x + w},${y + rad} V${y + h} H${x} Z`;
-}
-
-function niceMax(value) {
-  if (value <= 0) return 4;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  for (const step of [1, 2, 2.5, 5, 10]) {
-    const candidate = step * magnitude;
-    if (candidate >= value) return candidate;
-  }
-  return 10 * magnitude;
-}
-
-function truncateLabel(str, max) {
-  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
-}
-
-function renderAccountsChart(tenants) {
-  const { width, height, margin } = CHART;
-  accountsChartSvg.innerHTML = "";
-  accountsChartSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  accountsChartSvg.setAttribute("preserveAspectRatio", "none");
-  if (tenants.length === 0) return;
-
-  const plotW = width - margin.left - margin.right;
-  const plotH = height - margin.top - margin.bottom;
-  // Grouped, not stacked -- every account gets four independent bars
-  // sharing the 0 baseline, so each one (including "Stored") is directly
-  // comparable account-to-account by height alone. A stacked segment
-  // sits on top of the one below it at a floating baseline, which hides
-  // its true height -- the exact "plopped two colors on top of each
-  // other" complaint that sent us back to grouped bars in the first
-  // place, and stacking four series would only make that worse.
-  //
-  // All four numbers get their own bar and their own label, rather than
-  // showing two and expecting the other two to be read off by eye:
-  // Total calls and Completed calls aren't the same population as
-  // "Completed, no recording" -- subtracting the wrong pair (e.g.
-  // completedCalls - recordingsStored) silently gives the wrong gap,
-  // exactly the bug this replaced. "Missing" is t.completedMissing
-  // (computed server-side -- see db.listTenantsForOperator), not
-  // totalCalls minus recordingsStored -- a no-answer/busy/voicemail/
-  // failed/canceled call never had a recording to begin with, so
-  // counting it as "missing" overstates the real gap.
-  //
-  // totalCalls is always >= the other three for a given account, so it
-  // alone sets the scale.
-  const maxVal = niceMax(Math.max(...tenants.map((t) => t.totalCalls)));
-  const baselineY = margin.top + plotH;
-  const bandW = plotW / tenants.length;
-  const barGap = 3;
-  const barW = Math.min(22, Math.max(3, (bandW - 16 - barGap * 3) / 4));
-  const groupW = barW * 4 + barGap * 3;
-  const BAR_SERIES = [
-    { key: "totalCalls", color: "var(--ink)" },
-    { key: "completedCalls", color: "var(--accent)" },
-    { key: "recordingsStored", color: "var(--status-good)" },
-    { key: "completedMissing", color: "var(--status-critical)" },
-  ];
-
-  const tickCount = 4;
-  for (let i = 0; i <= tickCount; i++) {
-    const v = Math.round((maxVal / tickCount) * i);
-    const y = baselineY - (v / maxVal) * plotH;
-    accountsChartSvg.appendChild(svgEl("line", { x1: margin.left, x2: margin.left + plotW, y1: y, y2: y, class: "chart-gridline" }));
-    const label = svgEl("text", { x: margin.left - 8, y: y + 3, "text-anchor": "end", class: "chart-axis-label" });
-    label.textContent = v.toLocaleString();
-    accountsChartSvg.appendChild(label);
+// Own tab (Cost & revenue, separate from Analytics -- see operator.html),
+// still driven by the same filterAndSort() search as every other
+// account-listing tab, but combined totals only -- same reasoning as
+// renderAnalytics() above. Real cost_ledger sums (routes/operator.js's
+// /tenants -- see that route's own comment), not the live
+// transcribedMinutes-based estimate Analytics shows -- every number here
+// is a permanent receipt at the rate in effect when it happened.
+function renderCostAndRevenue() {
+  // activeOnly: see its own comment -- a canceled tenant is the exact
+  // kind of zeroed-out row this was built to stop cluttering this tab.
+  const tenants = filterAndSort(activeOnly(cachedTenants));
+  if (tenants.length === 0) {
+    costSummary.innerHTML = `<p class="empty-state empty-state-pad">${activeOnly(cachedTenants).length === 0 ? "No active accounts yet." : "No accounts match your search."}</p>`;
+    return;
   }
 
-  // Direct value labels above each bar -- without these, the only way to
-  // learn a bar's exact number is to hover it. With four bars per account
-  // now instead of two, they need more horizontal room each, so the
-  // account-count cutoff for showing them at all is lower than the
-  // two-bar version's.
-  const showValueLabels = tenants.length <= 4;
-
-  tenants.forEach((t, i) => {
-    const groupX = margin.left + i * bandW + (bandW - groupW) / 2;
-    const group = svgEl("g", {});
-
-    function valueLabel(x, barHeight, value) {
-      if (!showValueLabels || value <= 0) return;
-      const barTopY = baselineY - barHeight;
-      const el = svgEl("text", { x: x + barW / 2, y: Math.max(margin.top + 8, barTopY - 4), "text-anchor": "middle", class: "chart-axis-label" });
-      el.textContent = value.toLocaleString();
-      group.appendChild(el);
+  const totals = tenants.reduce(
+    (acc, t) => ({
+      transcriptionAwsCost: acc.transcriptionAwsCost + t.transcriptionAwsCost,
+      transcriptionRevenue: acc.transcriptionRevenue + t.transcriptionRevenue,
+      aiSummaryAwsCost: acc.aiSummaryAwsCost + t.aiSummaryAwsCost,
+      aiSummaryRevenue: acc.aiSummaryRevenue + t.aiSummaryRevenue,
+      storageAwsCost: acc.storageAwsCost + t.storageAwsCost,
+      storageRevenue: acc.storageRevenue + t.storageRevenue,
+      transcriptCleanupAwsCost: acc.transcriptCleanupAwsCost + t.transcriptCleanupAwsCost,
+      transcriptCleanupRevenue: acc.transcriptCleanupRevenue + t.transcriptCleanupRevenue,
+      totalAwsCost: acc.totalAwsCost + t.totalAwsCost,
+      totalRevenue: acc.totalRevenue + t.totalRevenue,
+      margin: acc.margin + t.margin,
+    }),
+    {
+      transcriptionAwsCost: 0, transcriptionRevenue: 0, aiSummaryAwsCost: 0, aiSummaryRevenue: 0,
+      storageAwsCost: 0, storageRevenue: 0, transcriptCleanupAwsCost: 0, transcriptCleanupRevenue: 0,
+      totalAwsCost: 0, totalRevenue: 0, margin: 0,
     }
-
-    let tallestH = 0;
-    BAR_SERIES.forEach((series, seriesIndex) => {
-      const value = t[series.key];
-      const h = (value / maxVal) * plotH;
-      tallestH = Math.max(tallestH, h);
-      const x = groupX + seriesIndex * (barW + barGap);
-      if (value > 0) {
-        const el = svgEl("path", { d: topRoundedRectPath(x, baselineY - h, barW, h, 3) });
-        el.setAttribute("class", "chart-bar-seg");
-        el.setAttribute("fill", series.color);
-        group.appendChild(el);
-      }
-      valueLabel(x, h, value);
-    });
-
-    const hit = svgEl("rect", {
-      x: margin.left + i * bandW,
-      y: margin.top,
-      width: bandW,
-      height: plotH,
-      class: "chart-bar-hit",
-      tabindex: t.totalCalls > 0 ? "0" : "-1",
-    });
-    if (t.totalCalls > 0) {
-      const move = (e) => showAccountsChartTooltip(e, t, i, bandW, tallestH);
-      hit.addEventListener("pointerenter", move);
-      hit.addEventListener("pointermove", move);
-      hit.addEventListener("pointerleave", hideAccountsChartTooltip);
-      hit.addEventListener("focus", move);
-      hit.addEventListener("blur", hideAccountsChartTooltip);
-    }
-    group.appendChild(hit);
-
-    const label = svgEl("text", {
-      x: margin.left + i * bandW + bandW / 2,
-      y: height - 6,
-      "text-anchor": "middle",
-      class: "chart-axis-label",
-    });
-    label.textContent = truncateLabel(t.name, Math.max(4, Math.floor(bandW / 6)));
-    group.appendChild(label);
-
-    accountsChartSvg.appendChild(group);
-  });
-}
-
-function showAccountsChartTooltip(e, t, i, bandW, tallestH) {
-  const rect = accountsChartSvg.getBoundingClientRect();
-  const scaleX = rect.width / CHART.width;
-  const scaleY = rect.height / CHART.height;
-  const { margin } = CHART;
-  const cx = (margin.left + i * bandW + bandW / 2) * scaleX;
-  const cy = (margin.top + (CHART.height - margin.top - margin.bottom - tallestH)) * scaleY;
-
-  accountsChartTooltip.hidden = false;
-  accountsChartTooltip.style.left = `${cx}px`;
-  accountsChartTooltip.style.top = `${Math.max(0, cy - 8)}px`;
-  accountsChartTooltip.textContent = "";
-  const nameLine = document.createElement("div");
-  nameLine.textContent = t.name;
-
-  function tooltipRow(label, value) {
-    const row = document.createElement("div");
-    const valueSpan = document.createElement("span");
-    valueSpan.className = "tooltip-value";
-    valueSpan.textContent = String(value);
-    row.append(`${label}: `, valueSpan);
-    return row;
-  }
-
-  accountsChartTooltip.append(
-    nameLine,
-    tooltipRow("Total calls", t.totalCalls),
-    tooltipRow("Completed calls", t.completedCalls),
-    tooltipRow("Stored", t.recordingsStored),
-    tooltipRow("No recording found", t.completedMissing)
   );
-}
 
-function hideAccountsChartTooltip() {
-  accountsChartTooltip.hidden = true;
+  costSummary.innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.totalAwsCost)}</div><div class="stat-label">Total AWS cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.margin)}</div><div class="stat-label">Margin</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(totals.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
+  `;
 }
 
 operatorRows.addEventListener("click", async (e) => {
@@ -378,6 +556,29 @@ operatorRows.addEventListener("click", async (e) => {
     purgeConfirm.hidden = false;
     purgeConfirmInput.focus();
   }
+});
+
+operatorRows.addEventListener("change", async (e) => {
+  const select = e.target.closest(".storage-tier-select");
+  if (!select) return;
+
+  const tenant = cachedTenants.find((t) => t.id === select.dataset.id);
+  const previousTier = tenant ? tenant.storageTier || "standard" : "standard";
+  const tier = select.value;
+  select.disabled = true;
+  const res = await fetch(`/api/operator/tenants/${select.dataset.id}/storage-tier`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ tier }),
+  });
+  select.disabled = false;
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    alert(data.error || "Could not change storage tier");
+    select.value = previousTier;
+    return;
+  }
+  loadTenants();
 });
 
 cancelPurgeBtn.addEventListener("click", () => {
@@ -450,10 +651,12 @@ activityNextBtn.addEventListener("click", () => {
 
 // --- Tabs ---
 
-const TAB_NAMES = ["accounts", "analytics", "activity"];
+const TAB_NAMES = ["accounts", "analytics", "cost", "activity"];
+const accountDetailSection = document.getElementById("tab-account-detail");
 
 function activateTab(tab) {
   if (!TAB_NAMES.includes(tab)) tab = "accounts";
+  accountDetailSection.hidden = true;
   for (const name of TAB_NAMES) {
     document.getElementById(`tab-${name}`).hidden = name !== tab;
     const link = document.querySelector(`#operator-tabs [data-tab="${name}"]`);
@@ -471,10 +674,76 @@ document.getElementById("operator-tabs").addEventListener("click", (e) => {
   activateTab(link.dataset.tab);
 });
 
+// --- Account detail (click an account's name on the Accounts tab) ---
+// Reached via a real <a href="#account/<id>">, not intercepted the way
+// ordinary [data-tab] links are -- native navigation sets location.hash
+// itself (pushing a real history entry, so the browser's own Back button
+// works), and the hashchange listener below reacts to it. Uses the same
+// cachedTenants data every other tab already has in memory, so no extra
+// fetch.
+function renderAccountDetail(t) {
+  document.getElementById("account-detail-name").textContent = t.name;
+  document.getElementById("account-detail-meta").textContent =
+    `Owner: ${t.ownerUsername || "(none)"} -- Status: ${t.status}`;
+
+  document.getElementById("account-detail-analytics-summary").innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${t.ghlAccountCount}</div><div class="stat-label">GHL accounts</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.totalCalls}</div><div class="stat-label">Total calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.completedCalls}</div><div class="stat-label">Completed calls</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.recordingsStored}</div><div class="stat-label">Recordings stored</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.transcribedMinutes}</div><div class="stat-label">Transcribed minutes</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.estimatedTranscribeCost)}</div><div class="stat-label">Est. transcribe cost</div></div>
+  `;
+
+  document.getElementById("account-detail-cost-summary").innerHTML = `
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionAwsCost)}</div><div class="stat-label">Transcription cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptionRevenue)}</div><div class="stat-label">Transcription revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryAwsCost)}</div><div class="stat-label">AI summary cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.aiSummaryRevenue)}</div><div class="stat-label">AI summary revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${t.storedGB} GB</div><div class="stat-label">Storage used</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageAwsCost)}</div><div class="stat-label">Storage cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.storageRevenue)}</div><div class="stat-label">Storage overage revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptCleanupAwsCost)}</div><div class="stat-label">Transcript cleanup cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.transcriptCleanupRevenue)}</div><div class="stat-label">Transcript cleanup revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalAwsCost)}</div><div class="stat-label">Total cost</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.totalRevenue)}</div><div class="stat-label">Total revenue</div></div>
+    <div class="stat-tile"><div class="stat-value">${formatMoney(t.margin)}</div><div class="stat-label">Margin</div></div>
+  `;
+}
+
+function showAccountDetail(tenantId) {
+  const t = cachedTenants.find((x) => x.id === tenantId);
+  if (!t) {
+    activateTab("accounts"); // stale/bad id (e.g. a bookmarked link to a since-purged account) -- fall back rather than show a blank page
+    return;
+  }
+  for (const name of TAB_NAMES) {
+    document.getElementById(`tab-${name}`).hidden = true;
+    const link = document.querySelector(`#operator-tabs [data-tab="${name}"]`);
+    if (link) link.classList.toggle("active", name === "accounts"); // still "within" Accounts, conceptually
+  }
+  accountDetailSection.hidden = false;
+  renderAccountDetail(t);
+}
+
+document.getElementById("account-detail-back-btn").addEventListener("click", () => activateTab("accounts"));
+
+function routeToHash(hash) {
+  if (hash.startsWith("account/")) {
+    showAccountDetail(decodeURIComponent(hash.slice("account/".length)));
+  } else {
+    activateTab(hash);
+  }
+}
+
+window.addEventListener("hashchange", () => routeToHash(location.hash.replace("#", "")));
+
 (async () => {
   const isOperator = await loadSession();
   if (isOperator) {
     await loadTenants();
-    activateTab(location.hash.replace("#", ""));
+    loadAwsSpend();
+    loadAwsCostSummary();
+    routeToHash(location.hash.replace("#", ""));
   }
 })();

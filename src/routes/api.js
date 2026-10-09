@@ -5,8 +5,9 @@ const totp = require("../totp");
 const emailOtp = require("../emailOtp");
 const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
+const { sanitizeForFilename } = require("../filenames");
 const transcription = require("../transcription");
-const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds } = require("../auth");
+const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds, displayName } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
 const router = express.Router();
@@ -80,6 +81,10 @@ router.get("/me", async (req, res) => {
     accounts,
     currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
     transcriptionEnabled: transcription.isEnabled(),
+    // Settings > Billing names the tenant in its intro line -- already
+    // fetching the tenant row above for cancellationPending below, so
+    // this is free.
+    tenantName: tenant ? tenant.name : null,
     csrfToken: req.session.csrfToken,
     // Set only during the grace period (before lockout, which requireAuth
     // enforces once purgeAt actually passes) -- lets every page show a
@@ -214,7 +219,14 @@ router.post("/account/email/start", requireCsrf, async (req, res) => {
     await email.sendEmail({
       to: address,
       subject: "Confirm your CallTrove email address",
-      text: `Your CallTrove verification code is: ${code}\n\nEnter this code in CallTrove to confirm this email address. This code expires in 10 minutes.\n\nIf you didn't request this, you can ignore this email.`,
+      text: `Your CallTrove verification code is: ${code}\n\nEnter this code in CallTrove to confirm this email address. This code expires in 10 minutes and shouldn't be shared with anyone.\n\nDidn't request this? No change happens unless this code is entered.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Confirm your email",
+        explain: "Someone requested to use this email address for a CallTrove account. If that's you, enter the code below to confirm it.",
+        securityNote: "Didn't request this? No change happens unless this code is entered.",
+        requestIp: req.ip,
+        baseUrl: `${req.protocol}://${req.get("host")}`,
+      }),
     });
   } catch (err) {
     console.error("[email-otp] failed to send verification code:", err);
@@ -320,7 +332,7 @@ router.get("/calls/stats", requireAccount, async (req, res) => {
 
 function buildDownloadFilename(call) {
   const ext = call.storageKey.split(".").pop();
-  const who = (call.name || call.phone || call.contactId || "call").replace(/[^a-zA-Z0-9]+/g, "_");
+  const who = sanitizeForFilename(call.name || call.phone || call.contactId || "call");
   const date = call.occurredAt ? new Date(call.occurredAt).toISOString().slice(0, 10) : "unknown-date";
   return `${who}_${date}_${call.direction || "call"}.${ext}`;
 }
@@ -364,7 +376,18 @@ router.get("/calls/:id/recording", async (req, res) => {
     success: true,
   });
 
-  const playback = await getPlayback(call.storageKey, filename);
+  let playback;
+  try {
+    playback = await getPlayback(call.storageKey, filename, call.storageTier);
+  } catch (err) {
+    // No global async-error handler in this app (see the sibling
+    // /transcribe route's own try/catch) -- without this, a rejected
+    // promise here (e.g. storage/index.js's bucketForTier throwing on a
+    // misconfigured tier) would just hang the request with no response
+    // at all, rather than a clean error.
+    console.error(`[api] failed to get playback for call ${call.id}:`, err);
+    return res.status(500).json({ error: "failed to load recording" });
+  }
   if (playback.redirectUrl) {
     return res.redirect(playback.redirectUrl);
   }
@@ -398,6 +421,10 @@ router.get("/calls/:id/transcript", async (req, res) => {
     words: call.transcriptWords,
     editedAt: call.transcriptEditedAt,
     editedBy: call.transcriptEditedBy,
+    cleanupStatus: call.transcriptCleanupStatus,
+    cleanupAttempts: call.transcriptCleanupAttempts,
+    cleanedTranscript: call.transcriptCleaned,
+    cleanupChanges: call.transcriptCleanupChanges,
   });
 });
 
@@ -429,7 +456,7 @@ router.put("/calls/:id/transcript", requireCsrf, async (req, res) => {
     return res.status(400).json({ error: "transcript cannot be empty" });
   }
 
-  await db.updateCallTranscript(call.id, transcript, req.session.user.username);
+  await db.updateCallTranscript(call.id, transcript, displayName(req.session.user));
   await logAccess(req, { action: "transcript_edited", callId: call.id, success: true });
   res.json({ status: "updated" });
 });
@@ -469,9 +496,9 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   }
 
   try {
-    const buffer = await getBuffer(call.storageKey);
+    const buffer = await getBuffer(call.storageKey, call.storageTier);
     const extension = call.storageKey.split(".").pop();
-    await transcription.startJob(call.id, buffer, extension);
+    await transcription.startJob(call.id, buffer, extension, call.storageTier);
     await db.markTranscriptionPending(call.id);
     await logAccess(req, { action: "transcription_requested", callId: call.id, success: true });
     res.json({ status: "pending" });

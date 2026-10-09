@@ -53,11 +53,16 @@ function dispositionLabel(disposition) {
   return disposition.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+// "4:11" reads as a clock time or a ratio to anyone who isn't already
+// thinking in minutes:seconds -- spelling out the units makes it
+// unambiguous for the non-technical audience this page is written for
+// (see the digest narrative's own plain-language rework).
 function formatDuration(seconds) {
   if (!seconds) return "-";
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (m === 0) return `${s} sec`;
+  return `${m} min ${s} sec`;
 }
 
 // --- shared sidebar chrome (session bar, admin "viewing calls for", quick search) ---
@@ -74,6 +79,8 @@ async function loadSession() {
   document.getElementById("account-summary").textContent = `Signed in as ${me.username} (${me.role}).`;
   renderCancellationBanner(me);
   if (operatorNavLink) operatorNavLink.hidden = !me.isOperator;
+  const billingSubhead = document.getElementById("billing-subhead");
+  if (billingSubhead && me.tenantName) billingSubhead.textContent = `Current charges applied to ${me.tenantName} are shown below.`;
 
   // Same resolution/switcher pattern as app.js -- see the comment on
   // currentAccountId's declaration above.
@@ -118,13 +125,20 @@ async function loadSession() {
 const dangerZone = document.getElementById("danger-zone");
 const openCancelBtn = document.getElementById("open-cancel-btn");
 const cancelConfirm = document.getElementById("cancel-confirm");
-const cancelConfirmName = document.getElementById("cancel-confirm-name");
+const cancelConfirmCheckbox = document.getElementById("cancel-confirm-checkbox");
 const cancelConfirmInput = document.getElementById("cancel-confirm-input");
 const confirmCancelBtn = document.getElementById("confirm-cancel-btn");
 const cancelCancelBtn = document.getElementById("cancel-cancel-btn");
 const cancelError = document.getElementById("cancel-error");
 const gracePeriodDaysEl = document.getElementById("grace-period-days");
+const gracePeriodDaysEl2 = document.getElementById("grace-period-days-2");
 let tenantName = "";
+
+// Shorter than typing the account name back (which could be long/awkward
+// for some tenant names) but still a deliberate, typed action -- not just
+// a click. Checked server-side too (src/routes/admin.js), same as every
+// other confirm-by-typing flow in this app.
+const CANCEL_CONFIRM_PHRASE = "CANCEL MY ACCOUNT";
 
 async function loadDangerZone() {
   const res = await fetch("/api/tenant/status");
@@ -132,14 +146,23 @@ async function loadDangerZone() {
   if (!tenant.isOwner) return; // stays hidden -- only the paying owner can see or trigger this
   if (tenant.status !== "active") return; // already canceled/pending -- nothing new to offer here, account-canceled.html covers that state
   tenantName = tenant.name;
-  cancelConfirmName.textContent = tenant.name;
   gracePeriodDaysEl.textContent = tenant.gracePeriodDays;
+  gracePeriodDaysEl2.textContent = tenant.gracePeriodDays;
   dangerZone.hidden = false;
+}
+
+// Both the warning checkbox and the typed phrase are required before the
+// button is even clickable -- not just validated on click -- so there's no
+// way to fat-finger past the warning by tabbing straight to the button.
+function updateConfirmBtnState() {
+  confirmCancelBtn.disabled = !cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE;
 }
 
 openCancelBtn.addEventListener("click", () => {
   cancelConfirm.hidden = false;
   cancelConfirmInput.value = "";
+  cancelConfirmCheckbox.checked = false;
+  updateConfirmBtnState();
   cancelConfirmInput.focus();
 });
 
@@ -148,12 +171,11 @@ cancelCancelBtn.addEventListener("click", () => {
   cancelError.hidden = true;
 });
 
+cancelConfirmCheckbox.addEventListener("change", updateConfirmBtnState);
+cancelConfirmInput.addEventListener("input", updateConfirmBtnState);
+
 confirmCancelBtn.addEventListener("click", async () => {
-  if (cancelConfirmInput.value !== tenantName) {
-    cancelError.textContent = "That doesn't match the account name.";
-    cancelError.hidden = false;
-    return;
-  }
+  if (!cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE) return; // button should already be disabled -- just a guard
   if (!confirm(`This will lock everyone out of "${tenantName}" immediately and permanently delete its data after the grace period. Are you sure?`)) {
     return;
   }
@@ -161,7 +183,7 @@ confirmCancelBtn.addEventListener("click", async () => {
   const res = await fetch("/api/admin/tenant/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ confirmName: cancelConfirmInput.value }),
+    body: JSON.stringify({ confirmPhrase: cancelConfirmInput.value }),
   });
   if (res.ok) {
     location.href = "/account-canceled.html";
@@ -170,7 +192,7 @@ confirmCancelBtn.addEventListener("click", async () => {
   const body = await res.json().catch(() => ({}));
   cancelError.textContent = body.error || "Could not cancel the account.";
   cancelError.hidden = false;
-  confirmCancelBtn.disabled = false;
+  updateConfirmBtnState();
 });
 
 async function loadViewAsOptions() {
@@ -219,7 +241,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "backfill", "activity", "access", "danger"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "baa", "backfill", "activity", "access", "danger"];
 const tabLoaded = {};
 
 function activateTab(tab) {
@@ -238,6 +260,8 @@ function activateTab(tab) {
   if (tab === "accounts" && !tabLoaded.accounts) loadGhlAccountsTab();
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
+  if (tab === "billing" && !tabLoaded.billing) loadBilling();
+  if (tab === "baa" && !tabLoaded.baa) loadBaa();
   if (tab === "backfill" && !tabLoaded.backfill) loadBackfillStatus();
   if (tab === "activity" && !tabLoaded.activity) loadAuditLog();
   if (tab === "access" && !tabLoaded.access) loadAccessLog();
@@ -526,20 +550,128 @@ async function loadTeam() {
 // --- GHL accounts (multi-tenant: connected locations) ---
 
 const ghlAccountRows = document.getElementById("ghl-account-rows");
+const ghlAppUrlSection = document.getElementById("ghl-app-url-section");
+const ghlAppUrlList = document.getElementById("ghl-app-url-list");
 const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
 const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
 
+function formatLastSynced(iso) {
+  return iso ? new Date(iso).toLocaleString() : "Never";
+}
+
+// Reconnect is the same "go authorize through GHL's own location picker"
+// flow as the main Connect button -- GHL's OAuth screen doesn't support
+// pre-targeting one location from our side, so there's nothing to pick
+// here beyond sending the admin there and letting the existing callback
+// logic (matched on GHL's own location ID) sort out whether that's a new
+// account or an update to this one. Offered on *active* rows too, not
+// just disconnected ones -- re-authorizing in place is also the fix for a
+// stuck/stale sync (an expired refresh token, etc.), without having to
+// disconnect first.
+function reconnectGhlAccount() {
+  location.href = "/api/admin/oauth/connect";
+}
+
+async function disconnectGhlAccount(id, name, btn) {
+  if (!confirm(`Disconnect "${name}"? New calls will stop syncing until you reconnect. Everything already recorded -- recordings, contacts, transcripts -- stays exactly as it is and comes right back when you reconnect the same location.`)) {
+    return;
+  }
+  btn.disabled = true;
+  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/disconnect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+  });
+  if (res.ok) {
+    loadGhlAccountsTab();
+    return;
+  }
+  btn.disabled = false;
+  const body = await res.json().catch(() => ({}));
+  alert(body.error || "Could not disconnect this account.");
+}
+
+async function saveGhlAppUrl(id, btn) {
+  const input = ghlAppUrlList.querySelector(`[data-app-url-input="${CSS.escape(id)}"]`);
+  const status = ghlAppUrlList.querySelector(`[data-app-url-status="${CSS.escape(id)}"]`);
+  btn.disabled = true;
+  status.textContent = "Saving...";
+  status.classList.remove("ghl-url-error");
+  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/app-url`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ appUrl: input.value }),
+  });
+  btn.disabled = false;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    status.textContent = body.error || "Could not save.";
+    status.classList.add("ghl-url-error");
+    return;
+  }
+  input.value = body.appUrl || "";
+  status.textContent = body.appUrl ? "Saved." : "Cleared -- links use standard GHL.";
+  const hint = ghlAppUrlList.querySelector(`[data-app-url-hint="${CSS.escape(id)}"]`);
+  if (hint && body.appUrl) hint.remove();
+}
+
 async function loadGhlAccountsTab() {
   tabLoaded.accounts = true;
-  const res = await fetch("/api/admin/ghl-accounts");
+  const res = await fetch("/api/admin/ghl-accounts/status");
   const { accounts, oauthConfigured } = await res.json();
 
   ghlAccountRows.innerHTML = accounts.length
-    ? accounts.map((a) => `<tr><td>${escapeHtml(a.name || a.ghlLocationId)}</td><td>${escapeHtml(a.ghlLocationId)}</td></tr>`).join("")
-    : `<tr><td colspan="2" class="empty-state">No GHL accounts connected yet.</td></tr>`;
+    ? accounts
+        .map((a) => {
+          const isActive = !a.uninstalledAt;
+          const statusHtml = isActive
+            ? `<span class="ghl-status-active">Connected</span>`
+            : `<span class="ghl-status-disconnected">Disconnected ${escapeHtml(new Date(a.uninstalledAt).toLocaleDateString())}</span>`;
+          const actionHtml = isActive
+            ? `<button type="button" class="delete-btn" data-disconnect="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name || a.ghlLocationId)}">Disconnect</button>
+               <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
+            : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
+          return `<tr>
+            <td data-label="Location name">${escapeHtml(a.name || a.ghlLocationId)}</td>
+            <td data-label="GHL location ID">${escapeHtml(a.ghlLocationId)}</td>
+            <td data-label="Status">${statusHtml}</td>
+            <td data-label="Last synced">${escapeHtml(formatLastSynced(a.lastSyncedAt))}</td>
+            <td class="ghl-account-actions">${actionHtml}</td>
+          </tr>`;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty-state">No GHL accounts connected yet.</td></tr>`;
 
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
+
+  const activeAccounts = accounts.filter((a) => !a.uninstalledAt);
+  ghlAppUrlSection.hidden = activeAccounts.length === 0;
+  ghlAppUrlList.innerHTML = activeAccounts
+    .map((a) => {
+      const label = a.name || a.ghlLocationId;
+      return `<div class="ghl-url-item">
+        <label class="ghl-url-label" for="app-url-${escapeHtml(a.id)}">${escapeHtml(label)}</label>
+        <div class="ghl-url-cell">
+          <input type="text" id="app-url-${escapeHtml(a.id)}" class="ghl-url-input" data-app-url-input="${escapeHtml(a.id)}" value="${escapeHtml(a.ghlAppUrl || "")}" placeholder="app.gohighlevel.com" autocomplete="off" spellcheck="false" />
+          <button type="button" class="ghl-reconnect-btn" data-app-url-save="${escapeHtml(a.id)}">Save</button>
+        </div>
+        <span class="settings-note ghl-url-status" data-app-url-status="${escapeHtml(a.id)}" role="status"></span>
+        ${a.suggestSettingAddress ? `<span class="settings-note ghl-url-hint" data-app-url-hint="${escapeHtml(a.id)}">This account looks white-labeled. Enter the address you log into GHL at so the links open the right site.</span>` : ""}
+      </div>`;
+    })
+    .join("");
+  ghlAppUrlList.querySelectorAll("[data-app-url-save]").forEach((btn) => {
+    btn.addEventListener("click", () => saveGhlAppUrl(btn.dataset.appUrlSave, btn));
+  });
+  ghlAppUrlList.querySelectorAll("[data-app-url-input]").forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveGhlAppUrl(input.dataset.appUrlInput, ghlAppUrlList.querySelector(`[data-app-url-save="${CSS.escape(input.dataset.appUrlInput)}"]`));
+    });
+  });
+  ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
+  ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
+    btn.addEventListener("click", () => disconnectGhlAccount(btn.dataset.disconnect, btn.dataset.name, btn));
+  });
 }
 
 connectGhlAccountBtn.addEventListener("click", () => {
@@ -602,6 +734,286 @@ async function loadCallReport() {
   reportData = await res.json();
   renderReportLeaderboard();
   if (selectedRepId) renderReportDetail();
+  loadDigest();
+}
+
+// --- Analytics digest (twice-daily, metadata-only, no-transcription accounts) ---
+
+const digestSectionEl = document.getElementById("digest-section");
+
+// Shown only for accounts without transcription on, and only once the
+// background job (src/callDigestJob.js) has actually computed a first
+// snapshot -- a freshly connected account has neither, and that's not an
+// error state worth a message, just nothing to show yet.
+async function loadDigest() {
+  try {
+    const [digestRes, settingsRes] = await Promise.all([
+      fetch(`/api/admin/call-digest?accountId=${encodeURIComponent(currentAccountId)}`),
+      fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`),
+    ]);
+    const { digest } = await digestRes.json();
+    const settings = await settingsRes.json();
+    if (settings.autoTranscribeEnabled || !digest) {
+      digestSectionEl.hidden = true;
+      return;
+    }
+    await populateDigestScheduleForm(settings);
+    renderDigest(digest);
+    digestSectionEl.hidden = false;
+  } catch (err) {
+    digestSectionEl.hidden = true;
+  }
+}
+
+// Adds the given IANA zone as a selectable option if the curated list
+// doesn't already have it -- an admin's real browser timezone (or one
+// they've explicitly saved before) can be anything, not just the ~16
+// common ones listed in the dropdown.
+function ensureTimezoneOption(select, tz) {
+  if (!Array.from(select.options).some((o) => o.value === tz)) {
+    const opt = document.createElement("option");
+    opt.value = tz;
+    opt.textContent = tz.replace(/_/g, " ");
+    select.insertBefore(opt, select.firstChild);
+  }
+}
+
+// Until an account's schedule has been customized (see schema.sql's
+// comment on digest_schedule_customized), the timezone shown here is
+// detected from whichever admin's browser happens to load this page
+// first, then silently saved so the background job -- which has no
+// browser of its own -- picks up the same value. This only ever fires
+// once per account; after that (auto-detected or manually chosen), it's
+// an ordinary setting nothing overwrites but the Save button.
+async function populateDigestScheduleForm(settings) {
+  document.getElementById("digest-time-1").value = settings.digestTime1 || "08:00";
+  document.getElementById("digest-time-2").value = settings.digestTime2 || "20:00";
+  const tzSelect = document.getElementById("digest-timezone");
+
+  if (!settings.digestScheduleCustomized) {
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    ensureTimezoneOption(tzSelect, detected);
+    tzSelect.value = detected;
+    try {
+      await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+        body: JSON.stringify({ digestTimezone: detected }),
+      });
+    } catch (err) {
+      // Non-fatal -- the form still shows the detected zone even if this
+      // silent save failed; a later manual Save click retries it.
+    }
+  } else {
+    ensureTimezoneOption(tzSelect, settings.digestTimezone);
+    tzSelect.value = settings.digestTimezone;
+  }
+}
+
+document.getElementById("digest-schedule-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const statusEl = document.getElementById("digest-schedule-status");
+  const form = e.target;
+  const submitBtn = form.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  statusEl.textContent = "Saving...";
+  try {
+    const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({
+        digestTime1: document.getElementById("digest-time-1").value,
+        digestTime2: document.getElementById("digest-time-2").value,
+        digestTimezone: document.getElementById("digest-timezone").value,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "Could not save the schedule");
+    }
+    statusEl.textContent = "Saved. Takes effect from the next run onward.";
+  } catch (err) {
+    statusEl.textContent = err.message;
+  }
+  submitBtn.disabled = false;
+});
+
+function compareLabel(current, prev, { lowerIsBetter = false, unit = "", formatMagnitude } = {}) {
+  if (prev === 0 && current === 0) return null;
+  const delta = current - prev;
+  if (delta === 0) return { text: "Same as yesterday", good: true };
+  const better = lowerIsBetter ? delta < 0 : delta > 0;
+  const arrow = delta > 0 ? "↑" : "↓";
+  const magnitude = formatMagnitude
+    ? formatMagnitude(Math.abs(delta))
+    : unit === "%"
+      ? `${Math.abs(delta)}pts`
+      : `${Math.abs(delta)}${unit}`;
+  return { text: `${arrow} ${magnitude} vs. yesterday`, good: better };
+}
+
+function renderDigest(digest) {
+  const stats = digest.stats;
+
+  document.getElementById("digest-timestamp").textContent =
+    "As of " + new Date(digest.computedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  const narrativeEl = document.getElementById("digest-narrative");
+  if (digest.narrative) {
+    narrativeEl.textContent = digest.narrative;
+    narrativeEl.hidden = false;
+  } else {
+    narrativeEl.hidden = true;
+  }
+
+  document.getElementById("digest-calls-total").textContent = stats.totalCalls;
+  setCompare("digest-calls-compare", stats.totalCalls, stats.totalCallsPrev, { unit: "" });
+
+  document.getElementById("digest-avg-duration").textContent = formatDuration(stats.avgDurationSeconds);
+  setCompare("digest-duration-compare", stats.avgDurationSeconds, stats.avgDurationSecondsPrev, { lowerIsBetter: true, formatMagnitude: formatDuration });
+
+  document.getElementById("digest-missed-rate").textContent = `${stats.missedRatePct}%`;
+  const missedCompareEl = document.getElementById("digest-missed-compare");
+  const missedCompare = compareLabel(stats.missedRatePct, stats.missedRatePctPrev, { lowerIsBetter: true, unit: "%" });
+  if (stats.isBestDayThisWeek) {
+    missedCompareEl.textContent = "Best day this week";
+    missedCompareEl.className = "stat-compare stat-compare-good";
+  } else {
+    applyCompare(missedCompareEl, missedCompare);
+  }
+
+  document.getElementById("digest-unreturned-total").textContent = stats.unreturnedCount;
+  setCompare("digest-unreturned-compare", stats.unreturnedCount, stats.unreturnedCountPrev, { lowerIsBetter: true, unit: "" });
+
+  renderDigestOutcomeBars(stats.dispositionBreakdown);
+  renderDigestUnreturned(stats.unreturnedCalls);
+  renderDigestTrend(stats.trend);
+  renderDigestTopReps(stats.topReps);
+}
+
+function setCompare(elId, current, prev, opts) {
+  applyCompare(document.getElementById(elId), compareLabel(current, prev, opts));
+}
+
+function applyCompare(el, compare) {
+  if (!compare) {
+    el.textContent = "";
+    el.className = "stat-compare";
+    return;
+  }
+  el.textContent = compare.text;
+  el.className = `stat-compare ${compare.good ? "stat-compare-good" : "stat-compare-bad"}`;
+}
+
+const DIGEST_OUTCOME_LABELS = { completed: "Completed", "no-answer": "No answer", voicemail: "Voicemail", other: "Busy / canceled" };
+const DIGEST_OUTCOME_ORDER = ["completed", "no-answer", "voicemail", "other"];
+
+function renderDigestOutcomeBars(breakdown) {
+  const container = document.getElementById("digest-outcome-bars");
+  const byBucket = {};
+  let total = 0;
+  for (const row of breakdown) {
+    byBucket[row.bucket] = row.count;
+    total += row.count;
+  }
+  if (total === 0) {
+    container.innerHTML = `<p class="digest-empty">No calls came in today.</p>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const bucket of DIGEST_OUTCOME_ORDER) {
+    const count = byBucket[bucket] || 0;
+    if (count === 0 && bucket === "other") continue;
+    const pct = Math.round((count / total) * 100);
+    const row = document.createElement("div");
+    row.className = "rep-bar-row rep-bar-row-static";
+    row.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(DIGEST_OUTCOME_LABELS[bucket])}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${count}</span>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function renderDigestUnreturned(calls) {
+  const heading = document.getElementById("digest-unreturned-heading");
+  const list = document.getElementById("digest-unreturned-list");
+  heading.textContent = `Unreturned calls${calls.length ? ` · ${calls.length} contact${calls.length === 1 ? "" : "s"}` : ""}`;
+  if (calls.length === 0) {
+    list.innerHTML = `<p class="digest-empty">Nobody's waiting on a callback right now.</p>`;
+    return;
+  }
+  list.innerHTML = "";
+  calls.forEach((call, i) => {
+    const row = document.createElement("div");
+    row.className = "unreturned-row";
+    const waitLabel = call.waitMinutes >= 60 ? `${Math.floor(call.waitMinutes / 60)}h ${call.waitMinutes % 60}m waiting` : `${call.waitMinutes}m waiting`;
+    const when = new Date(call.occurredAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    row.innerHTML = `
+      <div>
+        <div class="unreturned-name">${escapeHtml(call.contactName || "(unknown contact)")}</div>
+        <div class="unreturned-meta">${escapeHtml(dispositionLabel(call.disposition))} ${escapeHtml(when)} &middot; ${escapeHtml(waitLabel)}</div>
+      </div>
+      ${i === 0 ? `<span class="unreturned-oldest-badge">Oldest</span>` : ""}
+    `;
+    list.appendChild(row);
+  });
+}
+
+function renderDigestTrend(trend) {
+  const container = document.getElementById("digest-trend-bars");
+  if (trend.length === 0) {
+    container.innerHTML = `<p class="digest-empty">Not enough history yet.</p>`;
+    return;
+  }
+  const maxCount = Math.max(1, ...trend.map((d) => d.count));
+  container.innerHTML = "";
+  for (const day of trend) {
+    const label = new Date(`${day.day}T00:00:00`).toLocaleDateString(undefined, { weekday: "short" });
+    const pct = Math.round((day.count / maxCount) * 100);
+    const row = document.createElement("div");
+    row.className = "rep-bar-row rep-bar-row-static";
+    row.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(label)}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${day.count}</span>
+    `;
+    container.appendChild(row);
+  }
+}
+
+function renderDigestTopReps(reps) {
+  const barsContainer = document.getElementById("digest-top-rep-bars");
+  const rowsEl = document.getElementById("digest-top-rep-rows");
+  if (reps.length === 0) {
+    barsContainer.innerHTML = `<p class="digest-empty">No calls handled today.</p>`;
+    rowsEl.innerHTML = `<tr><td colspan="4" class="empty-state">No calls handled today.</td></tr>`;
+    return;
+  }
+  const maxTotal = Math.max(1, ...reps.map((r) => r.total));
+  barsContainer.innerHTML = "";
+  rowsEl.innerHTML = "";
+  for (const rep of reps) {
+    const pct = Math.round((rep.total / maxTotal) * 100);
+    const barRow = document.createElement("div");
+    barRow.className = "rep-bar-row rep-bar-row-static";
+    barRow.innerHTML = `
+      <span class="rep-bar-name">${escapeHtml(rep.name || "(unnamed)")}</span>
+      <div class="rep-bar-track"><div class="rep-bar-fill w-${widthBucket(pct)}"></div></div>
+      <span class="rep-bar-total">${rep.total}</span>
+    `;
+    barsContainer.appendChild(barRow);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td data-label="Rep">${escapeHtml(rep.name || "(unnamed)")}</td>
+      <td data-label="Calls">${rep.total}</td>
+      <td data-label="Avg. duration">${formatDuration(rep.avgDurationSeconds)}</td>
+      <td data-label="Unique contacts">${rep.uniqueContacts}</td>
+    `;
+    rowsEl.appendChild(tr);
+  }
 }
 
 function renderReportLeaderboard() {
@@ -1099,12 +1511,14 @@ function hideRepTrendTooltip() {
 
 const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
 const aiSummaryToggle = document.getElementById("ai-summary-toggle");
+const transcriptCleanupToggle = document.getElementById("transcript-cleanup-toggle");
 
 async function loadTranscriptionSettings() {
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
   const settings = await res.json();
   autoTranscribeToggle.checked = !!settings.autoTranscribeEnabled;
   aiSummaryToggle.checked = !!settings.aiSummaryEnabled;
+  transcriptCleanupToggle.checked = !!settings.transcriptCleanupEnabled;
 }
 
 autoTranscribeToggle.addEventListener("change", async () => {
@@ -1136,6 +1550,149 @@ aiSummaryToggle.addEventListener("change", async () => {
   aiSummaryToggle.disabled = false;
   tabLoaded.activity = false;
 });
+
+transcriptCleanupToggle.addEventListener("change", async () => {
+  transcriptCleanupToggle.disabled = true;
+  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ transcriptCleanupEnabled: transcriptCleanupToggle.checked }),
+  });
+  if (!res.ok) {
+    alert("Could not update the setting");
+    transcriptCleanupToggle.checked = !transcriptCleanupToggle.checked;
+  }
+  transcriptCleanupToggle.disabled = false;
+  tabLoaded.activity = false;
+});
+
+// --- Billing (client-facing -- what this tenant is actually being
+// charged, read from the same cost_ledger receipts the operator's own
+// Cost & revenue tab reads) ---
+
+function formatMoney(n) {
+  return `$${Number(n).toFixed(2)}`;
+}
+
+function billingMonthLabel(yyyyMmDd) {
+  // yyyy-mm-dd, always the first of the month -- parsed as UTC (the "Z"
+  // suffix) so the displayed month never shifts a day backward for
+  // anyone west of UTC, same reasoning as the db layer returning this as
+  // a plain string instead of a Date in the first place.
+  return new Date(`${yyyyMmDd}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+// --- HIPAA / BAA ---
+
+const baaTextEl = document.getElementById("baa-text");
+const baaAcceptedBanner = document.getElementById("baa-accepted-banner");
+const baaAcceptedSummary = document.getElementById("baa-accepted-summary");
+const baaAcceptFormWrap = document.getElementById("baa-accept-form-wrap");
+const baaAcceptForm = document.getElementById("baa-accept-form");
+const baaAcceptError = document.getElementById("baa-accept-error");
+const baaNotOwnerNote = document.getElementById("baa-not-owner-note");
+let baaHash = "";
+
+async function loadBaa() {
+  const res = await fetch("/api/admin/baa");
+  if (!res.ok) return;
+  const baa = await res.json();
+  tabLoaded.baa = true;
+
+  baaTextEl.textContent = baa.text;
+  baaHash = baa.hash;
+
+  if (baa.acceptance) {
+    const when = new Date(baa.acceptance.acceptedAt).toLocaleString();
+    baaAcceptedSummary.textContent = `${baa.acceptance.fullName} (${baa.acceptance.title}) on ${when}.`;
+    baaAcceptedBanner.hidden = false;
+    baaAcceptFormWrap.hidden = true;
+    baaNotOwnerNote.hidden = true;
+  } else if (baa.canAccept) {
+    baaAcceptedBanner.hidden = true;
+    baaAcceptFormWrap.hidden = false;
+    baaNotOwnerNote.hidden = true;
+  } else {
+    baaAcceptedBanner.hidden = true;
+    baaAcceptFormWrap.hidden = true;
+    baaNotOwnerNote.hidden = false;
+  }
+}
+
+baaAcceptForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  baaAcceptError.hidden = true;
+  const btn = document.getElementById("baa-accept-btn");
+  btn.disabled = true;
+  const res = await fetch("/api/admin/baa/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({
+      fullName: document.getElementById("baa-full-name").value.trim(),
+      title: document.getElementById("baa-title").value.trim(),
+      agree: document.getElementById("baa-agree-checkbox").checked,
+      confirmHash: baaHash,
+    }),
+  });
+  btn.disabled = false;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    baaAcceptError.textContent = body.error || "could not record acceptance";
+    baaAcceptError.hidden = false;
+    return;
+  }
+  tabLoaded.baa = false;
+  loadBaa();
+});
+
+async function loadBilling() {
+  const res = await fetch("/api/admin/billing");
+  if (!res.ok) return;
+  const billing = await res.json();
+
+  const { usedGB, freeGB, remainingGB, overageGB, overageRate } = billing.storage;
+  document.getElementById("billing-storage-label").textContent = `${usedGB.toFixed(1)} GB of ${freeGB} GB free`;
+  document.getElementById("billing-storage-fill").style.width = `${Math.min(100, (usedGB / freeGB) * 100)}%`;
+  if (overageGB > 0) {
+    document.getElementById("billing-storage-remaining").textContent = `${overageGB.toFixed(1)} GB over`;
+    document.getElementById("billing-storage-note").textContent =
+      `You're ${overageGB.toFixed(1)} GB past the free allowance, billed at ${formatMoney(overageRate)}/GB-month.`;
+  } else {
+    document.getElementById("billing-storage-remaining").textContent = `${remainingGB.toFixed(1)} GB remaining`;
+    document.getElementById("billing-storage-note").textContent = `The first ${freeGB} GB is free. Past that, storage is ${formatMoney(overageRate)}/GB-month.`;
+  }
+
+  const cur = billing.currentPeriod;
+  document.getElementById("billing-transcription-amount").textContent = formatMoney(cur.transcriptionRevenue);
+  document.getElementById("billing-transcription-label").textContent = `Transcription (${cur.transcriptionMinutes.toFixed(0)} min)`;
+  document.getElementById("billing-summary-amount").textContent = formatMoney(cur.aiSummaryRevenue);
+  document.getElementById("billing-summary-label").textContent = `AI summaries (${cur.aiSummaryCalls} calls)`;
+  document.getElementById("billing-cleanup-amount").textContent = formatMoney(cur.transcriptCleanupRevenue);
+  document.getElementById("billing-cleanup-label").textContent = `Transcript cleanup (${cur.transcriptCleanupCalls} calls)`;
+  document.getElementById("billing-total-amount").textContent = formatMoney(cur.total);
+
+  const rowsEl = document.getElementById("billing-history-rows");
+  const emptyEl = document.getElementById("billing-history-empty");
+  if (billing.pastMonths.length === 0) {
+    rowsEl.innerHTML = "";
+    emptyEl.hidden = false;
+  } else {
+    emptyEl.hidden = true;
+    rowsEl.innerHTML = billing.pastMonths
+      .map(
+        (m) => `<tr>
+          <td>${escapeHtml(billingMonthLabel(m.month))}</td>
+          <td>${formatMoney(m.transcriptionRevenue)}</td>
+          <td>${formatMoney(m.aiSummaryRevenue)}</td>
+          <td>${formatMoney(m.transcriptCleanupRevenue)}</td>
+          <td>${formatMoney(m.storageRevenue)}</td>
+          <td class="amount">${formatMoney(m.total)}</td>
+        </tr>`
+      )
+      .join("");
+  }
+  tabLoaded.billing = true;
+}
 
 // --- Historical backfill & export ---
 

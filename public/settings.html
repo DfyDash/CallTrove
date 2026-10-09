@@ -55,6 +55,8 @@
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
+          <a href="#billing" class="nav-link" data-tab="billing">Billing</a>
+          <a href="#baa" class="nav-link" data-tab="baa">HIPAA / BAA</a>
           <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
           <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
@@ -140,10 +142,19 @@
               <tr>
                 <th>Location name</th>
                 <th>GHL location ID</th>
+                <th>Status</th>
+                <th>Last synced</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="ghl-account-rows"></tbody>
           </table>
+
+          <div id="ghl-app-url-section" class="ghl-app-url-section" hidden>
+            <h2 class="ghl-app-url-heading">GHL web address</h2>
+            <p class="settings-note">Where you log into GHL, used for the "Open in GHL" links. Leave it blank for standard GHL (app.gohighlevel.com); white-labeled agencies enter their own branded address.</p>
+            <div id="ghl-app-url-list"></div>
+          </div>
 
           <p><button type="button" id="connect-ghl-account-btn" class="button-link">+ Connect a GHL account</button></p>
           <p class="settings-note" id="ghl-oauth-not-configured" hidden>
@@ -153,6 +164,111 @@
 
         <!-- Call report -->
         <section id="tab-report" class="settings-tab-panel viz-root" hidden>
+          <!-- Analytics digest: twice-daily metadata-only snapshot, shown
+               only for accounts without transcription on (see
+               src/callDigestJob.js). Hidden entirely when the account has
+               transcription on, or when no snapshot has been computed yet. -->
+          <div id="digest-section" hidden>
+            <div class="digest-card">
+              <div class="digest-header">
+                <div>
+                  <h2>Analytics Digest</h2>
+                  <span class="digest-timestamp" id="digest-timestamp"></span>
+                </div>
+              </div>
+
+              <form id="digest-schedule-form" class="admin-form">
+                <label>Runs at
+                  <input type="time" name="digestTime1" id="digest-time-1" required />
+                </label>
+                <label>and
+                  <input type="time" name="digestTime2" id="digest-time-2" required />
+                </label>
+                <label>Time zone
+                  <select name="digestTimezone" id="digest-timezone">
+                    <option value="America/New_York">Eastern (New York)</option>
+                    <option value="America/Chicago">Central (Chicago)</option>
+                    <option value="America/Denver">Mountain (Denver)</option>
+                    <option value="America/Phoenix">Mountain, no DST (Phoenix)</option>
+                    <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                    <option value="America/Anchorage">Alaska</option>
+                    <option value="Pacific/Honolulu">Hawaii</option>
+                    <option value="America/Toronto">Eastern (Toronto)</option>
+                    <option value="America/Mexico_City">Mexico City</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Europe/Paris">Paris / Berlin</option>
+                    <option value="Asia/Kolkata">India</option>
+                    <option value="Asia/Manila">Philippines</option>
+                    <option value="Asia/Dubai">Dubai</option>
+                    <option value="Australia/Sydney">Sydney</option>
+                    <option value="UTC">UTC</option>
+                  </select>
+                </label>
+                <button type="submit">Save</button>
+                <span id="digest-schedule-status" class="settings-note"></span>
+              </form>
+
+              <p class="digest-narrative" id="digest-narrative" hidden></p>
+
+              <div class="stat-grid">
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-calls-total"></div>
+                  <div class="stat-label">Calls today</div>
+                  <div class="stat-compare" id="digest-calls-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-avg-duration"></div>
+                  <div class="stat-label">Avg. call duration</div>
+                  <div class="stat-compare" id="digest-duration-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-missed-rate"></div>
+                  <div class="stat-label">Missed-call rate</div>
+                  <div class="stat-compare" id="digest-missed-compare"></div>
+                </div>
+                <div class="stat-tile">
+                  <div class="stat-value" id="digest-unreturned-total"></div>
+                  <div class="stat-label">Unreturned calls</div>
+                  <div class="stat-compare" id="digest-unreturned-compare"></div>
+                </div>
+              </div>
+
+              <div class="digest-two-col">
+                <div class="rep-bars-card">
+                  <h3>Outcome breakdown</h3>
+                  <div id="digest-outcome-bars"></div>
+                </div>
+                <div class="rep-bars-card">
+                  <h3 id="digest-unreturned-heading">Unreturned calls</h3>
+                  <div class="unreturned-list" id="digest-unreturned-list"></div>
+                </div>
+              </div>
+
+              <div class="rep-bars-card">
+                <h3>7-day call volume</h3>
+                <div id="digest-trend-bars"></div>
+              </div>
+
+              <div class="rep-bars-card">
+                <h3>Top reps today</h3>
+                <div id="digest-top-rep-bars"></div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Rep</th>
+                      <th>Calls</th>
+                      <th>Avg. duration</th>
+                      <th>Unique contacts</th>
+                    </tr>
+                  </thead>
+                  <tbody id="digest-top-rep-rows"></tbody>
+                </table>
+              </div>
+
+              <p class="digest-upsell">Turn on call transcription for content-level insight -- sentiment, recurring themes, and follow-up reasons based on what was actually said.</p>
+            </div>
+          </div>
+
           <div id="report-leaderboard">
             <h1>Call report</h1>
             <p class="settings-note">Volume and quality of calls across the whole team. Click a rep to see their individual breakdown.</p>
@@ -305,6 +421,7 @@
               </span>
               Automatically transcribe new calls going forward
             </label>
+            <p class="settings-rate">$0.0195 per minute transcribed</p>
             <p class="settings-note">
               Only affects calls picked up from now on -- turning this on never
               transcribes existing recordings. Anyone can still transcribe an
@@ -324,6 +441,7 @@
               </span>
               Summarize each call and post it as a note on the contact
             </label>
+            <p class="settings-rate">$0.007 per call summarized</p>
             <p class="settings-note">
               Billed per call analyzed, in addition to transcription itself.
               Only runs for calls that have a transcript.
@@ -333,6 +451,125 @@
               other connected GHL accounts keep their own setting unchanged.
             </p>
           </div>
+          <div class="settings-section">
+            <h2>Transcript cleanup</h2>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="transcript-cleanup-toggle" />
+                <span class="toggle-slider"></span>
+              </span>
+              Automatically double-check low-confidence words in each transcript
+            </label>
+            <p class="settings-rate">Billed at exact cost, usually under a cent -- no markup, nothing charged when nothing was flagged</p>
+            <p class="settings-note">
+              Speech-to-text occasionally mishears a word -- a name is the
+              most common case. This re-checks only the specific words it
+              flagged as unsure, using the rest of the conversation for
+              context, and never touches anything it was already confident
+              about. You're charged exactly what that check cost, not a
+              flat fee -- a call with nothing flagged costs nothing.
+            </p>
+            <p class="settings-note">
+              This only applies to the account selected above (top left) --
+              other connected GHL accounts keep their own setting unchanged.
+            </p>
+          </div>
+          <p class="settings-note">
+            You're not being charged for this yet -- billing hasn't been turned on. These prices are what you'll pay once it is.
+          </p>
+        </section>
+
+        <!-- Billing -->
+        <section id="tab-billing" class="settings-tab-panel" hidden>
+          <h1>Billing</h1>
+          <p class="settings-note" id="billing-subhead">Current charges applied to your account are shown below.</p>
+          <p class="settings-note">
+            Billing hasn't been turned on yet -- these are what you'd owe, not an active charge.
+          </p>
+
+          <div class="settings-section">
+            <h2>Storage</h2>
+            <div class="storage-meter">
+              <div class="storage-meter-top">
+                <span id="billing-storage-label">— of 100 GB free</span>
+                <span id="billing-storage-remaining" class="settings-note" style="margin:0"></span>
+              </div>
+              <div class="storage-meter-track"><div id="billing-storage-fill" class="storage-meter-fill" style="width:0%"></div></div>
+              <p id="billing-storage-note" class="settings-note"></p>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2>This month so far</h2>
+            <div class="stat-grid">
+              <div class="stat-tile">
+                <div id="billing-transcription-amount" class="stat-value">$0.00</div>
+                <div id="billing-transcription-label" class="stat-label">Transcription</div>
+              </div>
+              <div class="stat-tile">
+                <div id="billing-summary-amount" class="stat-value">$0.00</div>
+                <div id="billing-summary-label" class="stat-label">AI summaries</div>
+              </div>
+              <div class="stat-tile">
+                <div id="billing-cleanup-amount" class="stat-value">$0.00</div>
+                <div id="billing-cleanup-label" class="stat-label">Transcript cleanup</div>
+              </div>
+              <div class="stat-tile">
+                <div id="billing-total-amount" class="stat-value">$0.00</div>
+                <div class="stat-label">Total so far</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2>Past months</h2>
+            <table>
+              <thead>
+                <tr><th>Month</th><th>Transcription</th><th>AI summaries</th><th>Cleanup</th><th>Storage</th><th class="amount">Total</th></tr>
+              </thead>
+              <tbody id="billing-history-rows"></tbody>
+            </table>
+            <p id="billing-history-empty" class="settings-note" hidden>No completed months yet.</p>
+          </div>
+        </section>
+
+        <!-- HIPAA / BAA -->
+        <section id="tab-baa" class="settings-tab-panel" hidden>
+          <h1>HIPAA / BAA</h1>
+          <p class="settings-note">
+            CallTrove's Business Associate Agreement. This is not negotiable --
+            you either accept it as shown, or your account stays on the
+            standard (non-HIPAA) tier. Only your account's owner can accept it,
+            and it's the same self-serve, electronic-acceptance model AWS
+            itself uses for its own BAA.
+          </p>
+
+          <div id="baa-accepted-banner" class="baa-accepted-banner" hidden>
+            <strong>Accepted.</strong> <span id="baa-accepted-summary"></span>
+          </div>
+
+          <div class="settings-section">
+            <h2>Agreement</h2>
+            <pre id="baa-text" class="baa-text-box"></pre>
+          </div>
+
+          <div id="baa-accept-form-wrap" class="settings-section" hidden>
+            <h2>Accept</h2>
+            <form id="baa-accept-form" class="admin-form">
+              <label>Full legal name <input type="text" name="fullName" id="baa-full-name" required autocomplete="name" /></label>
+              <label>Title <input type="text" name="title" id="baa-title" required autocomplete="organization-title" /></label>
+              <label class="cancel-warning-box">
+                <input type="checkbox" id="baa-agree-checkbox" required />
+                <span>I have read this Business Associate Agreement and agree to it on behalf of my company.</span>
+              </label>
+              <button type="submit" id="baa-accept-btn">I Agree &amp; Accept</button>
+              <span id="baa-accept-error" class="login-error" hidden></span>
+            </form>
+          </div>
+
+          <p id="baa-not-owner-note" class="settings-note" hidden>
+            Only your account's owner can accept this agreement.
+          </p>
         </section>
 
         <!-- Import past calls & export -->
@@ -428,11 +665,18 @@
             <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
 
             <div id="cancel-confirm" hidden>
+              <label class="cancel-warning-box">
+                <input type="checkbox" id="cancel-confirm-checkbox" />
+                <span>
+                  I understand that once I cancel, I have <span id="grace-period-days-2">7</span> days
+                  to download all recordings before this account and its recordings are permanently deleted.
+                </span>
+              </label>
               <p class="settings-note">
-                Type the account name (<strong id="cancel-confirm-name"></strong>) to confirm.
+                Type <strong>CANCEL MY ACCOUNT</strong> to confirm.
               </p>
               <input type="text" id="cancel-confirm-input" autocomplete="off" />
-              <button type="button" id="confirm-cancel-btn" class="delete-btn">Permanently cancel</button>
+              <button type="button" id="confirm-cancel-btn" class="delete-btn" disabled>Permanently cancel</button>
               <button type="button" id="cancel-cancel-btn">Never mind</button>
               <p id="cancel-error" class="login-error" hidden></p>
             </div>

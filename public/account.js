@@ -204,6 +204,13 @@ function hideEmailOtpPanels() {
   emailOtpConfirmPanel.hidden = true;
   emailOtpOnPanel.hidden = true;
   emailOtpPasswordConfirm.hidden = true;
+  // These get disabled right before their fetch (see the click handlers
+  // below) to stop a double-click from sending two code emails, but
+  // nothing else ever re-enables them -- without this, a button that
+  // successfully sent a code once would stay disabled for the rest of the
+  // page's life, silently breaking any later legitimate resend.
+  document.getElementById("email-otp-start-btn").disabled = false;
+  document.getElementById("email-otp-resend-btn").disabled = false;
 }
 
 // Driven by the same GET /api/account/mfa response refreshMfaStatus already
@@ -236,21 +243,26 @@ function refreshEmailOtpStatus(data) {
   }
 }
 
-document.getElementById("email-otp-start-btn").addEventListener("click", async () => {
+document.getElementById("email-otp-start-btn").addEventListener("click", async (e) => {
+  e.target.disabled = true;
   const res = await fetch("/api/account/email/start", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({ email: emailOtpAddressInput.value.trim() }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return alert(data.error || "Could not send a verification code.");
+  if (!res.ok) {
+    e.target.disabled = false;
+    return alert(data.error || "Could not send a verification code.");
+  }
   refreshMfaStatus();
 });
 
 document.getElementById("email-otp-setup-cancel-btn").addEventListener("click", refreshMfaStatus);
 
-document.getElementById("email-otp-resend-btn").addEventListener("click", async () => {
+document.getElementById("email-otp-resend-btn").addEventListener("click", async (e) => {
   if (!pendingEmailAddress) return refreshMfaStatus();
+  e.target.disabled = true;
   const res = await fetch("/api/account/email/start", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
@@ -258,6 +270,7 @@ document.getElementById("email-otp-resend-btn").addEventListener("click", async 
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    e.target.disabled = false;
     emailOtpSetupError.textContent = data.error || "Could not send a new code.";
     emailOtpSetupError.hidden = false;
     return;

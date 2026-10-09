@@ -14,6 +14,8 @@
 // reachable through cross-region inference, not an in-region endpoint, so
 // there is no plausible default to guess here; this deliberately has none.
 
+const { stripJsonCodeFence } = require("./bedrockJson");
+
 const REGION = process.env.BEDROCK_REGION || process.env.S3_REGION;
 const MODEL_ID = process.env.BEDROCK_MODEL_ID;
 
@@ -85,9 +87,19 @@ async function summarizeTranscript(transcriptText) {
   const text = payload.content && payload.content[0] && payload.content[0].text;
   if (!text) throw new Error("Bedrock response had no text content");
 
+  // Anthropic's Messages API shape (which this is, even over Bedrock)
+  // always includes usage -- the cost-ledger basis for this call
+  // (src/callSummaryPoller.js, src/billingRates.js's per-token Bedrock
+  // rates). Defaulting to 0 rather than throwing if it's ever missing:
+  // a pricing gap in the ledger is a lesser failure than losing a
+  // summary that otherwise parsed fine.
+  const usage = payload.usage || {};
+  const inputTokens = usage.input_tokens || 0;
+  const outputTokens = usage.output_tokens || 0;
+
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(stripJsonCodeFence(text));
   } catch (err) {
     throw new Error(`Bedrock did not return valid JSON: ${text.slice(0, 200)}`);
   }
@@ -104,6 +116,8 @@ async function summarizeTranscript(transcriptText) {
       followUpNeeded: Boolean(parsed.followUpNeeded),
       followUpDetails: parsed.followUpDetails || null,
     },
+    inputTokens,
+    outputTokens,
   };
 }
 

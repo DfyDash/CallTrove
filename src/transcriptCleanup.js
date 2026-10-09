@@ -1,0 +1,224 @@
+// Transcript cleanup via Claude on Bedrock -- the Bedrock-based answer to
+// GHL's poor call-audio quality, picked over audio preprocessing
+// (ffmpeg-style noise reduction before transcription, which research
+// showed can just as easily *hurt* accuracy as help it -- see the
+// decision not to build that). This instead asks the same model already
+// used for call summaries (src/callSummary.js) to look at the words AWS
+// Transcribe itself was least confident about and decide, from the
+// surrounding context it can already see, whether each one is right or
+// should be something else. Nothing it's confident about is ever touched.
+//
+// Same Bedrock-over-direct-Anthropic-API reasoning as callSummary.js: the
+// transcript may contain PHI, and Bedrock is covered under the account's
+// existing AWS BAA.
+
+const { stripJsonCodeFence } = require("./bedrockJson");
+
+const REGION = process.env.BEDROCK_REGION || process.env.S3_REGION;
+const MODEL_ID = process.env.BEDROCK_MODEL_ID;
+
+function isEnabled() {
+  return process.env.TRANSCRIPT_CLEANUP_ENABLED === "true" && !!MODEL_ID && !!REGION;
+}
+
+let bedrockClient;
+function getBedrockClient() {
+  if (!bedrockClient) {
+    const { BedrockRuntimeClient } = require("@aws-sdk/client-bedrock-runtime");
+    bedrockClient = new BedrockRuntimeClient({ region: REGION });
+  }
+  return bedrockClient;
+}
+
+// Must match public/app.js's own LOW_CONFIDENCE_THRESHOLD exactly -- that
+// file decides which words the *person* sees flagged in the transcript
+// view; this decides which words Bedrock is asked to reconsider. The two
+// drifting apart would mean either asking (and paying) to reconsider
+// words nobody sees flagged, or leaving a visibly-flagged word untouched
+// by cleanup for no reason a user could tell.
+const LOW_CONFIDENCE_THRESHOLD = 0.5;
+
+// Distinctive marker unlikely to ever appear in real transcribed speech
+// -- used to point Bedrock at exactly which words it may reconsider,
+// without having to send positions/indices back and forth. Anything
+// outside the markers is instructed to be left untouched.
+const MARK_OPEN = "⟦"; // ⟦
+const MARK_CLOSE = "⟧"; // ⟧
+
+// Same shape as renderTranscriptWordsHtml in public/app.js (punctuation
+// attaches with no leading space; everything else is space-joined) --
+// deliberately kept in sync with how the person actually reads the
+// transcript, so the flagged spots Bedrock sees line up with the ones
+// highlighted on screen.
+function buildMarkedText(words) {
+  let text = "";
+  let needsSpace = false;
+  let flaggedCount = 0;
+  for (const w of words) {
+    if (w.type === "punctuation") {
+      text += w.content;
+      continue;
+    }
+    if (needsSpace) text += " ";
+    needsSpace = true;
+    const flagged = typeof w.confidence === "number" && w.confidence < LOW_CONFIDENCE_THRESHOLD;
+    if (flagged) {
+      flaggedCount++;
+      text += `${MARK_OPEN}${w.content}${MARK_CLOSE}`;
+    } else {
+      text += w.content;
+    }
+  }
+  return { text, flaggedCount };
+}
+
+const SYSTEM_PROMPT = `You clean up a phone-call transcript of real, casual spoken conversation. Some words are wrapped like ${MARK_OPEN}this${MARK_CLOSE} -- these are the only words you may reconsider; the speech-to-text engine was least confident about exactly these ones. Everything else is unmarked and is already correct -- never change it.
+
+For each marked word, decide whether the speech-to-text engine likely MISHEARD it -- transcribed a different, wrong word in place of what the speaker actually said (often a homophone or similar-sounding word). Only change a marked word when a different word is clearly what was actually said. Never change a word just because different wording would read more smoothly, sound more formal, or be more grammatically "correct" as written prose -- that is not a transcription error, and fixing it would change what the person actually said, not just how it was transcribed.
+
+This is casual spoken conversation, not an essay. It will naturally include things that are NOT transcription errors and must be left exactly as transcribed: filler words ("uh", "um"), run-on or incomplete sentences, repeated words, and informal tag questions like "...correct?" or "...right?" tacked onto a statement to ask for confirmation. "You did fill out the form, correct?" means "isn't that right?" -- it is not asking whether the form was filled out *correctly*, and "correct" here is already the right word, not an error to fix. When in doubt, assume the person simply talks that way and leave the word unchanged.
+
+Judge the SIZE of the gap between the marked word and whatever you think was actually meant. You cannot hear the audio -- you cannot tell "the engine mangled a clearly-spoken word" apart from "the person actually said it that way" when the two would look identical in writing, so do not guess at that distinction. Instead: if the marked word is only a small step off from a word that already fits -- missing a trailing sound (a dropped "g" or "s"), a minor spelling variant, a clipped or softened ending ("billin" for "billing", "goin" for "going") -- leave it exactly as transcribed. That small a gap is exactly what casual pronunciation and ordinary transcription noise produce on their own, even when nothing was actually misheard, and "rounding it up" to the fuller, more standard spelling would be polishing style, not fixing a transcription error. Only correct a marked word when the gap is large -- a substantially different word, not a trimmed or softened version of one that was already basically there.
+
+Respond with ONLY a single JSON object, no other text, matching exactly this shape:
+{
+  "correctedText": "the full transcript with every marker removed, corrections applied only to genuine mishearings",
+  "changes": [{"original": "want", "corrected": "went", "reason": "short reason, grounded in the surrounding context"}]
+}
+If nothing needed correcting, "changes" must be an empty array and "correctedText" must be the original wording with the markers simply removed. Never invent content the transcript doesn't support.`;
+
+// Appended only when the call has a known, verified handler name (sourced
+// from GHL's own Messages API -- see src/db/index.js's handled_by_name --
+// never an account/tenant display name, which is just an internal label
+// with no guaranteed relationship to what's actually said aloud; see the
+// real near-miss this was scoped down from). Deliberately narrow: usable
+// only to resolve a marked word that looks like a garbled attempt at THIS
+// specific name, never as general license to insert or prefer it.
+function buildKnownNameNote(handledByName) {
+  return `\n\nOne more fact, independently verified (not something the speakers necessarily said correctly): the person who handled this call is named "${handledByName}". A marked word is, by definition, one the speech-to-text engine was very unsure about -- at that low a confidence, its guess can look quite different in writing from the real word even though it sounded similar when actually spoken (a short, oddly-clipped fragment is a very plausible garbled rendering of a longer name spoken quickly on a phone line, even if the two don't look alike on the page). If a marked word could plausibly be the engine's garbled attempt at hearing this specific name -- judge by how it could have sounded, not by how similar the letters look written out -- correct it to the real name. Do not use this fact for anything else: not to change any other word, not to assume the name must appear somewhere, and not to "improve" a marked word that isn't plausibly a mishearing of this name just because it's unusual or a proper noun.`;
+}
+
+// Deterministic backstop for the "billin" -> "billing" failure mode found
+// in real testing: told directly not to round a casually-clipped ending up
+// to its fuller spelling, the model sometimes does it anyway -- even while
+// its own stated "reason" names the clipping explicitly. Prompting alone
+// wasn't reliable enough, so this catches the specific, narrow shape of
+// that mistake in code regardless of what the model decided: a "change"
+// that is really just the original word with a short suffix tacked on is
+// never a different word, so it's never a mishearing -- it's always
+// rejected, no matter how the model justified it.
+function isMereCompletion(original, corrected) {
+  const o = original.toLowerCase();
+  const c = corrected.toLowerCase();
+  const added = c.length - o.length;
+  return c.startsWith(o) && added >= 1 && added <= 3;
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Changes rejected by isMereCompletion are still baked into the model's
+// own correctedText (it wrote the fuller word into the prose directly,
+// not just into the changes list) -- so rejecting one from the list alone
+// isn't enough; the actual wording has to be reverted too, or the
+// corrected transcript would show a word nothing in "changes" accounts
+// for. Only the first occurrence is touched, matching the one marked
+// instance this change came from.
+function rejectMereCompletions(correctedText, changes) {
+  let text = correctedText;
+  const kept = [];
+  for (const change of changes) {
+    if (isMereCompletion(change.original, change.corrected)) {
+      text = text.replace(new RegExp(`\\b${escapeRegExp(change.corrected)}\\b`), change.original);
+      continue;
+    }
+    kept.push(change);
+  }
+  return { text, kept };
+}
+
+// Same bound and same reasoning as callSummary.js's MAX_TRANSCRIPT_CHARS.
+const MAX_TRANSCRIPT_CHARS = 100_000;
+
+// Throws on any failure -- the caller (routes/api.js's on-demand route)
+// treats a thrown error as "mark this cleanup failed", same posture as
+// callSummary.js's summarizeTranscript.
+//
+// Returns { changed: false } with no Bedrock call at all when nothing is
+// flagged -- a transcript with no low-confidence words costs nothing to
+// "clean up" and shouldn't pretend otherwise.
+async function cleanTranscript(words, { handledByName } = {}) {
+  if (!Array.isArray(words) || words.length === 0) {
+    throw new Error("no word-level transcript data available to clean up");
+  }
+
+  const { text: markedText, flaggedCount } = buildMarkedText(words);
+  if (flaggedCount === 0) {
+    return { bedrockCalled: false, changed: false, correctedText: null, changes: [], inputTokens: 0, outputTokens: 0 };
+  }
+  if (markedText.length > MAX_TRANSCRIPT_CHARS) {
+    throw new Error(`transcript too long to clean up completely (${markedText.length} chars) -- skipping rather than processing a partial transcript`);
+  }
+
+  const { InvokeModelCommand } = require("@aws-sdk/client-bedrock-runtime");
+
+  const system = handledByName ? `${SYSTEM_PROMPT}${buildKnownNameNote(handledByName)}` : SYSTEM_PROMPT;
+
+  const body = JSON.stringify({
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 4096,
+    system,
+    messages: [{ role: "user", content: `Transcript:\n\n${markedText}` }],
+  });
+
+  const res = await getBedrockClient().send(
+    new InvokeModelCommand({
+      modelId: MODEL_ID,
+      contentType: "application/json",
+      accept: "application/json",
+      body,
+    })
+  );
+
+  const payload = JSON.parse(new TextDecoder().decode(res.body));
+  const text = payload.content && payload.content[0] && payload.content[0].text;
+  if (!text) throw new Error("Bedrock response had no text content");
+
+  const usage = payload.usage || {};
+  const inputTokens = usage.input_tokens || 0;
+  const outputTokens = usage.output_tokens || 0;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonCodeFence(text));
+  } catch (err) {
+    throw new Error(`Bedrock did not return valid JSON: ${text.slice(0, 200)}`);
+  }
+  if (typeof parsed.correctedText !== "string") {
+    throw new Error("Bedrock JSON was missing a usable correctedText field");
+  }
+  const changes = Array.isArray(parsed.changes)
+    ? parsed.changes
+        .filter((c) => c && typeof c.original === "string" && typeof c.corrected === "string")
+        .map((c) => ({ original: c.original, corrected: c.corrected, reason: typeof c.reason === "string" ? c.reason : null }))
+    : [];
+
+  // Defensive: strip any marker the model failed to remove rather than
+  // let one leak into a transcript someone actually reads -- the prompt
+  // instructs it to always remove them, but nothing here should trust
+  // that blindly for text a person is going to see.
+  const markerStripped = parsed.correctedText.split(MARK_OPEN).join("").split(MARK_CLOSE).join("");
+  const { text: correctedText, kept: keptChanges } = rejectMereCompletions(markerStripped, changes);
+
+  return {
+    bedrockCalled: true,
+    changed: keptChanges.length > 0,
+    correctedText,
+    changes: keptChanges,
+    inputTokens,
+    outputTokens,
+  };
+}
+
+module.exports = { isEnabled, cleanTranscript, LOW_CONFIDENCE_THRESHOLD };

@@ -29,12 +29,26 @@ const { processCallMessage } = require("./poller");
 const PAGE_SIZE = 100;
 const DELAY_MS = Number(process.env.BACKFILL_DELAY_MS || 250);
 
+// S3 Standard, real rate (see the pricing notes doc) -- used only to turn
+// a dry run's total minutes into a dollar estimate, never for billing math.
+const STORAGE_COST_PER_MINUTE_PER_MONTH = 0.0000206;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runForAccount(account, api, totals) {
-  console.log(`[backfill] account ${account.id} (${account.ghlLocationId}): starting full history walk (oldest calls first)`);
+// dryRun: walks the same conversations/call-messages GHL already has and
+// sums their self-reported duration (message.meta.call.duration -- the
+// same field GHL's own Call Report is built from), but never downloads a
+// recording, calls processCallMessage, or touches the DB. Lets the real
+// backfill cost for an account be computed (total minutes x the real S3
+// rate) before committing to storing anything, instead of estimating from
+// sample data.
+async function runForAccount(account, api, totals, { dryRun = false } = {}) {
+  console.log(
+    `[backfill] account ${account.id} (${account.ghlLocationId}): starting full history walk (oldest calls first)` +
+      (dryRun ? " [dry run -- counting only, no downloads]" : "")
+  );
 
   let cursor = {};
   let pageNum = 0;
@@ -63,13 +77,20 @@ async function runForAccount(account, api, totals) {
 
       for (const message of messages) {
         totals.callsFound += 1;
+
+        if (dryRun) {
+          const durationSeconds = (message.meta && message.meta.call && message.meta.call.duration) || 0;
+          totals.totalDurationSeconds += durationSeconds;
+          continue;
+        }
+
         const before = await db.getCallByGhlId(message.id);
         if (before) {
           totals.callsSkipped += 1; // already captured by a prior run or the live poller
           continue;
         }
         try {
-          await processCallMessage(conversation, message, { api, ghlAccountId: account.id });
+          await processCallMessage(conversation, message, { api, ghlAccountId: account.id, tenantId: account.tenantId, storageTier: account.storageTier });
           totals.callsSaved += 1;
         } catch (err) {
           totals.callsFailed += 1;
@@ -99,7 +120,7 @@ async function runForAccount(account, api, totals) {
 // setting the process's own exit code on a per-request failure would be
 // wrong. The CLI entry point at the bottom of this file still behaves
 // exactly as before.
-async function run({ tenantId } = {}) {
+async function run({ tenantId, dryRun = false } = {}) {
   const accounts = tenantId ? await db.listActiveGhlAccountsForTenant(tenantId) : await db.listAllActiveGhlAccounts();
 
   const totals = {
@@ -108,6 +129,7 @@ async function run({ tenantId } = {}) {
     callsSaved: 0,
     callsSkipped: 0,
     callsFailed: 0,
+    totalDurationSeconds: 0,
   };
 
   let ranAny = false;
@@ -116,7 +138,7 @@ async function run({ tenantId } = {}) {
     if (!api.isConfigured()) continue;
     ranAny = true;
     try {
-      await runForAccount(account, api, totals);
+      await runForAccount(account, api, totals, { dryRun });
     } catch (err) {
       console.error(`[backfill] account ${account.id} (${account.ghlLocationId}): backfill failed:`, err);
     }
@@ -124,6 +146,16 @@ async function run({ tenantId } = {}) {
 
   if (!ranAny) {
     throw new Error("no configured GHL accounts found, aborting");
+  }
+
+  if (dryRun) {
+    totals.totalMinutes = totals.totalDurationSeconds / 60;
+    totals.estimatedMonthlyStorageCost = totals.totalMinutes * STORAGE_COST_PER_MINUTE_PER_MONTH;
+    console.log(
+      `[backfill] dry run done. conversations scanned: ${totals.conversationsSeen}, call messages found: ${totals.callsFound}, ` +
+        `total history: ${totals.totalMinutes.toFixed(1)} min, estimated ongoing storage cost: $${totals.estimatedMonthlyStorageCost.toFixed(4)}/month`
+    );
+    return totals;
   }
 
   console.log(
@@ -140,7 +172,8 @@ module.exports = { run };
 // imports `run` to offer this from the admin UI, and closing the pool
 // there would take down the whole app's database connection.
 if (require.main === module) {
-  run()
+  const dryRun = process.argv.includes("--dry-run");
+  run({ dryRun })
     .catch((err) => {
       console.error("[backfill] fatal error:", err.message);
       process.exitCode = 1;

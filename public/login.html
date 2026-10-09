@@ -28,6 +28,7 @@
       <div id="login-error" class="login-error" hidden>Incorrect username or password.</div>
       <div id="login-pending" class="login-error" hidden>Check your email for a link to set your password before logging in.</div>
       <div id="login-activated" class="login-notice" hidden>Password set — you can log in now.</div>
+      <div id="login-reset" class="login-notice" hidden>Password reset — you can log in now.</div>
       <label>
         Username
         <input type="text" name="username" autocomplete="username" required autofocus />
@@ -37,7 +38,7 @@
         <input type="password" name="password" autocomplete="current-password" required />
       </label>
       <button type="submit">Log in</button>
-      <p class="forgot-password">Forgot your password? Ask your admin to reset it from Manage Users.</p>
+      <p class="forgot-password"><a href="/forgot-password.html">Forgot your password?</a></p>
     </form>
   </div>
   <script src="login.js"></script>

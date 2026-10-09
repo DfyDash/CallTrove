@@ -12,6 +12,13 @@ const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
 const callSummaryPoller = require("./callSummaryPoller");
+const transcriptCleanupPoller = require("./transcriptCleanupPoller");
+const callDigestJob = require("./callDigestJob");
+const storageCostJob = require("./storageCostJob");
+const mergeWatchJob = require("./mergeWatchJob");
+const alerting = require("./alerting");
+const billingRates = require("./billingRates");
+const db = require("./db");
 
 const app = express();
 
@@ -23,10 +30,15 @@ app.set("trust proxy", 1); // behind nginx, which terminates TLS
 // mediaSrc: recording playback redirects to a presigned S3 URL when
 // STORAGE_DRIVER=s3 (a different origin than the app itself), so that
 // origin has to be allowed explicitly or the browser silently refuses to
-// load the audio -- the <audio> element renders, but nothing plays.
+// load the audio -- the <audio> element renders, but nothing plays. Both
+// storage-tier buckets (billingRates.js's STORAGE_TIERS) need to be
+// allowed, not just one -- a HIPAA-tier account's recordings redirect to
+// a different bucket origin than a standard-tier account's.
 const mediaSrc = ["'self'"];
-if (process.env.STORAGE_DRIVER === "s3" && process.env.S3_BUCKET) {
-  mediaSrc.push(`https://${process.env.S3_BUCKET}.s3.${process.env.S3_REGION || "us-east-1"}.amazonaws.com`);
+if (process.env.STORAGE_DRIVER === "s3") {
+  const region = process.env.S3_REGION || "us-east-1";
+  const buckets = new Set(Object.values(billingRates.STORAGE_TIERS).map((t) => t.bucket).filter(Boolean));
+  for (const bucket of buckets) mediaSrc.push(`https://${bucket}.s3.${region}.amazonaws.com`);
 }
 
 app.use(
@@ -113,6 +125,13 @@ app.get("/signup.js", (req, res) => res.sendFile(path.join(__dirname, "..", "pub
 // /set-password) -- there's no session yet at this point either.
 app.get("/set-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.html")));
 app.get("/set-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "set-password.js")));
+// Self-service password reset (routes/auth.js's /forgot-password and
+// /reset-password) -- reachable pre-login same as the pages above, since
+// this is specifically for someone who can't log in yet.
+app.get("/forgot-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "forgot-password.html")));
+app.get("/forgot-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "forgot-password.js")));
+app.get("/reset-password.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.html")));
+app.get("/reset-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
@@ -123,6 +142,22 @@ app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname,
 // .ico file, which every modern browser accepts fine.
 app.get("/favicon.ico", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
 app.use("/fonts", express.static(path.join(__dirname, "..", "public", "fonts")));
+
+// Public, unauthenticated -- an external watchdog (scripts/app-watchdog.sh,
+// run outside this process entirely) curls this to confirm the app itself
+// is actually up and can reach its database, since a process that has
+// crashed or wedged can't report its own death from inside itself. Not
+// wired into src/alerting.js's in-process failure tracking for the same
+// reason -- that module lives in this process too.
+app.get("/healthz", async (req, res) => {
+  try {
+    await db.pool.query("SELECT 1");
+    res.status(200).json({ status: "ok" });
+  } catch (err) {
+    res.status(503).json({ status: "error", error: err.message });
+  }
+});
+
 app.use("/auth", authRouter);
 
 app.use(requireAuth);
@@ -137,11 +172,37 @@ app.listen(port, () => {
   console.log(`CallTrove listening on port ${port}`);
 });
 
+// uncaughtException already crashed the process by default before this
+// handler existed (Node's own default with nothing registered) -- this
+// just logs clearly first, then exits the same way, so systemd's restart
+// still happens. Not routed through src/alerting.js: its failure-streak
+// tracking lives in this same process's memory, which a crash-and-restart
+// wipes every time, so "N in a row" could never accumulate here -- that
+// failure mode is scripts/app-watchdog.sh's job instead (external,
+// persists its own state on disk).
+process.on("uncaughtException", (err) => {
+  console.error("[server] uncaught exception, exiting for a clean restart:", err);
+  process.exit(1);
+});
+
+// Doesn't exit -- an unhandled rejection doesn't necessarily leave the
+// process corrupted the way an uncaught exception can, and this process
+// keeps running either way, so alerting's in-memory streak tracking works
+// normally here (unlike the crash case above).
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] unhandled rejection:", reason);
+  alerting.recordFailure("unhandled app errors", reason).catch(() => {});
+});
+
 // Call ingestion now happens by polling GHL's own API rather than a GHL
 // workflow/webhook -- see src/poller.js for why.
 poller.start();
 transcriptionPoller.start();
 callSummaryPoller.start();
+transcriptCleanupPoller.start();
+callDigestJob.start();
+storageCostJob.start();
+mergeWatchJob.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand

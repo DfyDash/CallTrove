@@ -15,6 +15,7 @@ const dispositionSelect = document.getElementById("disposition-select");
 const statGrid = document.getElementById("stat-grid");
 const contactContext = document.getElementById("contact-context");
 const contactContextName = document.getElementById("contact-context-name");
+const contactExportLink = document.getElementById("contact-export-link");
 const backToContactsBtn = document.getElementById("back-to-contacts-btn");
 const dateFromInput = document.getElementById("date-from");
 const dateToInput = document.getElementById("date-to");
@@ -27,6 +28,11 @@ const nextPageBtn = document.getElementById("next-page-btn");
 let viewAs = "";
 let transcriptionEnabled = false;
 let csrfToken = "";
+// Gates the "export everything for this contact" link -- a bulk-download
+// tool for someone else's full call/transcript history is an admin-only
+// action, same boundary routes/admin.js's /download-all route itself
+// enforces server-side; this only controls whether the link is shown.
+let isAdmin = false;
 // Picked up from ?accountId= on initial load (set by the switcher itself
 // navigating here -- see loadSession below) and threaded onto every API
 // call afterward. This is the multi-tenant boundary on the client side --
@@ -126,10 +132,12 @@ async function loadSession() {
     });
   }
 
-  if (me.role === "admin") {
+  isAdmin = me.role === "admin";
+  if (isAdmin) {
     adminNav.hidden = false;
     await loadViewAsOptions();
   }
+  updateContactContextUi();
 }
 
 async function loadViewAsOptions() {
@@ -236,14 +244,18 @@ function updateContactContextUi() {
     backToContactsBtn.textContent = "← Back to all contacts";
     contactContextName.textContent = `Viewing: ${state.contactLabel}`;
     contactContext.hidden = false;
+    contactExportLink.hidden = !isAdmin;
+    contactExportLink.href = `/api/admin/download-all?contactId=${encodeURIComponent(state.contactId)}`;
   } else if (state.hasRecording !== null) {
     backToContactsBtn.textContent = "← Clear filter";
     contactContextName.textContent = state.hasRecording
       ? "Showing calls with a recording"
       : "Showing calls with no recording found";
     contactContext.hidden = false;
+    contactExportLink.hidden = true;
   } else {
     contactContext.hidden = true;
+    contactExportLink.hidden = true;
   }
 }
 
@@ -342,11 +354,18 @@ function outcomeBadge(disposition) {
   return `<span class="outcome-badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
+// "4:11" reads as a clock time or a ratio to anyone not already thinking
+// in minutes:seconds -- spelling out the units makes it unambiguous. Only
+// the static pre-playback label (the table's Duration column, the play
+// button's initial time), not the live scrubber (mmss() below) -- once
+// audio is actually playing, "0 min 4 sec / 4 min 23 sec" ticking live
+// would be unusual next to every other player's plain M:SS convention.
 function formatDuration(seconds) {
   if (!seconds) return "-";
   const m = Math.floor(seconds / 60);
   const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
+  if (m === 0) return `${s} sec`;
+  return `${m} min ${s} sec`;
 }
 
 function renderCalls(data) {
@@ -439,6 +458,51 @@ function transcriptEditedNoteHtml(data) {
   return `<p class="transcript-edited-note">Edited by ${escapeHtml(data.editedBy || "someone")} on ${escapeHtml(when)}</p>`;
 }
 
+// How many words renderTranscriptWordsHtml actually flagged -- the same
+// threshold, so this always matches what's visibly highlighted above it.
+function countFlaggedWords(words) {
+  if (!Array.isArray(words)) return 0;
+  return words.filter((w) => typeof w.confidence === "number" && w.confidence < LOW_CONFIDENCE_THRESHOLD).length;
+}
+
+// Bedrock-based transcript cleanup (see src/transcriptCleanup.js,
+// src/transcriptCleanupPoller.js) -- runs automatically in the background
+// for accounts that opted in (Settings -> Transcription), reconsidering
+// only the words flagged above using the surrounding context. Purely a
+// read-only display of whatever the poller already did; there's no
+// button here anymore -- nothing to trigger, nothing to retry by hand.
+// Omitted entirely when there's nothing flagged (nothing to report on,
+// regardless of status) or the account never opted in (cleanupStatus
+// stays 'none' forever for every call made before/without that).
+function transcriptCleanupSectionHtml(data, flaggedCount) {
+  if (flaggedCount === 0) return "";
+  if (!data.cleanupStatus || data.cleanupStatus === "none") return "";
+
+  if (data.cleanupStatus === "pending") {
+    return `<div class="transcript-cleanup-result"><p class="settings-note">Checking ${flaggedCount} flagged word(s) for transcription errors…</p></div>`;
+  }
+
+  if (data.cleanupStatus === "failed") {
+    return `<div class="transcript-cleanup-result"><p class="settings-note">Couldn't finish checking ${flaggedCount} flagged word(s) for transcription errors.</p></div>`;
+  }
+
+  if (!data.cleanupChanges || data.cleanupChanges.length === 0) {
+    return `<div class="transcript-cleanup-result"><p class="settings-note">Checked ${flaggedCount} flagged word(s) -- none needed correcting.</p></div>`;
+  }
+  const items = data.cleanupChanges
+    .map(
+      (c) =>
+        `<li><s>${escapeHtml(c.original)}</s> &rarr; <strong>${escapeHtml(c.corrected)}</strong>${c.reason ? ` <span class="settings-note">(${escapeHtml(c.reason)})</span>` : ""}</li>`
+    )
+    .join("");
+  return `
+    <div class="transcript-cleanup-result">
+      <p class="settings-note">Checked ${flaggedCount} flagged word(s), corrected ${data.cleanupChanges.length}:</p>
+      <ul class="transcript-cleanup-changes">${items}</ul>
+    </div>
+  `;
+}
+
 // Renders the read (not editing) view of a transcript into its
 // .transcript-body -- shared by the initial lazy-load, "Cancel" out of
 // edit mode, and right after a successful save.
@@ -446,12 +510,27 @@ function renderTranscriptView(body, callId, data) {
   const textHtml = data.words && data.words.length
     ? renderTranscriptWordsHtml(data.words)
     : escapeHtml(data.transcript || "(empty transcript)");
+  const flaggedCount = countFlaggedWords(data.words);
   body.innerHTML = `
     <p class="transcript-text">${textHtml}</p>
     ${transcriptEditedNoteHtml(data)}
+    ${transcriptCleanupSectionHtml(data, flaggedCount)}
     <button type="button" class="transcript-edit-btn" data-call="${callId}">Edit</button>
+    <button type="button" class="transcript-collapse-btn">&#9660; Close transcript</button>
   `;
   body.querySelector(".transcript-edit-btn").addEventListener("click", () => renderTranscriptEditor(body, callId, data));
+  // Long transcripts push this well below the row's own "View transcript"
+  // toggle -- styled to match that same toggle (plain text, triangle
+  // marker, no button chrome) so it reads as the same control, just
+  // repeated at the bottom. Closing the <details> from here and scrolling
+  // it back into view means never having to scroll all the way back up
+  // just to collapse it.
+  body.querySelector(".transcript-collapse-btn").addEventListener("click", () => {
+    const details = body.closest(".transcript-details");
+    if (!details) return;
+    details.open = false;
+    details.scrollIntoView({ block: "nearest" });
+  });
 }
 
 // Switches a transcript's body into a plain-text editor -- see

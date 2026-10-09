@@ -34,9 +34,23 @@ function sessionUser(user) {
     username: user.username,
     role: user.role,
     ghlUserId: user.ghlUserId,
+    ghlUserName: user.ghlUserName || null,
     tenantId: user.tenantId,
     isOperator: Boolean(user.isOperator),
+    firstName: user.firstName || null,
+    lastName: user.lastName || null,
   };
+}
+
+// A person's actual name for display, never their login (which is just
+// their email -- see the real bug this was pulled out to fix: the
+// transcript "Edited by" note was showing a raw email address). Prefers
+// firstName/lastName (self-signup's own fields) over ghlUserName (set
+// from GHL's user list at invite time -- see createInvitedUser) over the
+// username/email, which is the last resort, not the default.
+function displayName(user) {
+  const full = [user.firstName, user.lastName].filter(Boolean).join(" ");
+  return full || user.ghlUserName || user.username;
 }
 
 // Which GHL accounts this login can reach right now. Looked up fresh from
@@ -142,4 +156,4 @@ function requireCsrf(req, res, next) {
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, sessionUser, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf, getAccessibleAccountIds };
+module.exports = { hashPassword, verifyPassword, sessionUser, displayName, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf, getAccessibleAccountIds };
