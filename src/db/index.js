@@ -1212,7 +1212,9 @@ async function getUserByUsername(username) {
             is_operator AS "isOperator", totp_enabled AS "totpEnabled",
             email_otp_enabled AS "emailOtpEnabled", email, email_verified_at AS "emailVerifiedAt",
             first_name AS "firstName", last_name AS "lastName"
-     FROM users WHERE username = $1`,
+     FROM users WHERE lower(username) = lower($1)
+     ORDER BY (username = $1) DESC
+     LIMIT 1`,
     [username]
   );
   return rows[0] || null;

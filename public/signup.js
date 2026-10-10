@@ -3,7 +3,7 @@ const ERROR_MESSAGES = {
   email: "Enter a valid email address.",
   mismatch: "Password and confirmation don't match.",
   tooshort: "Password must be at least 8 characters.",
-  taken: "That username is already taken.",
+  taken: "An account with that email already exists.",
   hipaa: "Choose Yes or No for the health-information question.",
 };
 

@@ -374,8 +374,10 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const firstName = ((req.body || {}).firstName || "").trim();
   const lastName = ((req.body || {}).lastName || "").trim();
   const businessName = ((req.body || {}).businessName || "").trim();
-  const username = ((req.body || {}).username || "").trim();
   const address = ((req.body || {}).email || "").trim().toLowerCase();
+  // The email IS the login: same value as the username, so there is one
+  // thing to remember and nothing to collide on but the email itself.
+  const username = address;
   const { password, confirmPassword } = req.body || {};
   const hipaaAnswer = (req.body || {}).hipaa;
 
@@ -425,7 +427,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
     await email.sendEmail({
       to: address,
       subject: `Welcome to CallTrove, ${firstName}`,
-      text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with the username you chose (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
+      text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with your email address (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
       html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName }),
     });
   } catch (err) {
