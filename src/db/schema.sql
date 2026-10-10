@@ -898,6 +898,7 @@ CREATE TABLE IF NOT EXISTS pending_signups (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
   consumed_tenant_id UUID REFERENCES tenants(id)
 );
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS baa_title TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

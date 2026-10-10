@@ -1629,6 +1629,7 @@ baaAcceptForm.addEventListener("submit", async (e) => {
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({
       fullName: document.getElementById("baa-full-name").value.trim(),
+      title: document.getElementById("baa-title").value.trim(),
       agree: document.getElementById("baa-agree-checkbox").checked,
       confirmHash: baaHash,
     }),

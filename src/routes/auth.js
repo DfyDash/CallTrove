@@ -400,10 +400,11 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   // A HIPAA signup accepts the BAA as part of creating the account: the
   // signer's name, the box ticked, and the hash of the exact text shown.
   const baaFullName = (((req.body || {}).baaFullName) || "").trim();
+  const baaTitle = (((req.body || {}).baaTitle) || "").trim();
   const baaText = buildBaaText({ companyName: businessName });
   const baaHash = createHash("sha256").update(baaText, "utf8").digest("hex");
   if (hipaaAnswer === "yes") {
-    if (!baaFullName || (req.body || {}).baaAgree !== "on" || (req.body || {}).baaHash !== baaHash) {
+    if (!baaFullName || !baaTitle || (req.body || {}).baaAgree !== "on" || (req.body || {}).baaHash !== baaHash) {
       return res.redirect("/signup.html?error=baa");
     }
   }
@@ -442,6 +443,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
     passwordSalt: salt,
     hipaaRequested: hipaaAnswer === "yes",
     baaFullName: hipaaAnswer === "yes" ? baaFullName : null,
+    baaTitle: hipaaAnswer === "yes" ? baaTitle : null,
     baaTextHash: hipaaAnswer === "yes" ? baaHash : null,
     baaVersion: hipaaAnswer === "yes" ? BAA_VERSION : null,
     baaIp: req.ip,

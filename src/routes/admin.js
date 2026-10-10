@@ -184,8 +184,8 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
 
   const fullName = (req.body?.fullName || "").trim();
   const title = (req.body?.title || "").trim();
-  if (!fullName) {
-    return res.status(400).json({ error: "full name is required" });
+  if (!fullName || !title) {
+    return res.status(400).json({ error: "full name and title are required" });
   }
   if (req.body?.agree !== true) {
     return res.status(400).json({ error: "you must check the box to agree" });

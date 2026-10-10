@@ -139,7 +139,7 @@ form.addEventListener("submit", (e) => {
   }
   try {
     const saved = {};
-    ["firstName", "lastName", "businessName", "email", "baaFullName"].forEach((n) => (saved[n] = form.elements[n].value));
+    ["firstName", "lastName", "businessName", "email", "baaFullName", "baaTitle"].forEach((n) => (saved[n] = form.elements[n].value));
     saved.hipaa = hipaaChoice() ? "yes" : "no";
     saved.baaAgree = document.getElementById("signup-baa-agree").checked;
     sessionStorage.setItem(SAVED_KEY, JSON.stringify(saved));
@@ -184,7 +184,7 @@ if (error) {
     const saved = JSON.parse(sessionStorage.getItem(SAVED_KEY) || "null");
     sessionStorage.removeItem(SAVED_KEY);
     if (saved) {
-      ["firstName", "lastName", "businessName", "email", "baaFullName"].forEach((n) => (form.elements[n].value = saved[n] || ""));
+      ["firstName", "lastName", "businessName", "email", "baaFullName", "baaTitle"].forEach((n) => (form.elements[n].value = saved[n] || ""));
       const radio = form.querySelector(`input[name="hipaa"][value="${saved.hipaa}"]`);
       if (radio) radio.checked = true;
       document.getElementById("signup-baa-agree").checked = !!saved.baaAgree;

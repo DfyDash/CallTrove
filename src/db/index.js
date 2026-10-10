@@ -2400,10 +2400,10 @@ async function createPendingSignup(p) {
   );
   await pool.query(
     `INSERT INTO pending_signups (id, first_name, last_name, business_name, email, password_hash, password_salt, hipaa_requested,
-                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent, baa_title)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [p.id, p.firstName, p.lastName, p.businessName, p.email, p.passwordHash, p.passwordSalt, !!p.hipaaRequested,
-     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null]
+     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null, p.baaTitle || null]
   );
 }
 
@@ -2453,12 +2453,12 @@ async function createAccountFromPendingSignup(id) {
     if (p.hipaa_requested && p.baa_full_name) {
       await client.query(
         `INSERT INTO baa_acceptances (id, tenant_id, user_id, full_name, title, baa_version, baa_text_hash, ip_address, user_agent, accepted_at)
-         VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8, $9)`,
-        [randomUUID(), tenantId, userId, p.baa_full_name, p.baa_version, p.baa_text_hash, p.baa_ip, p.baa_user_agent, p.baa_accepted_at]
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [randomUUID(), tenantId, userId, p.baa_full_name, p.baa_title || '', p.baa_version, p.baa_text_hash, p.baa_ip, p.baa_user_agent, p.baa_accepted_at]
       );
       await client.query(
         `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, 'baa_accepted', $4, $5)`,
-        [randomUUID(), userId, p.email, `BAA accepted for "${p.business_name}" by ${p.baa_full_name} at signup`, tenantId]
+        [randomUUID(), userId, p.email, `BAA accepted for "${p.business_name}" by ${p.baa_full_name}${p.baa_title ? ` (${p.baa_title})` : ""} at signup`, tenantId]
       );
     }
     await client.query(`UPDATE pending_signups SET consumed_tenant_id = $2 WHERE id = $1`, [id, tenantId]);
