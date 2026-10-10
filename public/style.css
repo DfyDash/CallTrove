@@ -2535,3 +2535,10 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .plan-detail { margin-top: auto; padding-top: 0.5rem; font-size: 0.8rem; line-height: 1.4; color: var(--muted); }
 @media (max-width: 620px) { .plan-grid { grid-template-columns: 1fr; } }
 .plan-grid + .settings-note { margin-top: 1rem; }
+
+.settings-note-flush { margin: 0; }
+.storage-meter-fill { width: 0; }
+.connect-prompt { max-width: 560px; margin: 4rem auto; padding: 2rem; text-align: center; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.connect-prompt h1 { font-size: 1.4rem; margin: 0 0 0.75rem; }
+.connect-prompt p { margin: 0 0 1.25rem; line-height: 1.5; color: var(--muted); }
+.no-accounts #admin-nav, .no-accounts #account-switcher-wrap { display: none !important; }

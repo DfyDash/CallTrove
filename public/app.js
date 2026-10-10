@@ -102,9 +102,15 @@ function applyDateRange(from, to, preset = null) {
   loadCalls();
 }
 
+// Resolves once /api/me has been read, so the first data requests can wait
+// for it (a customer with no connected account gets a prompt instead).
+let resolveMe;
+const meReady = new Promise((r) => (resolveMe = r));
+
 async function loadSession() {
   const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
+  resolveMe(me);
   transcriptionEnabled = !!me.transcriptionEnabled;
   csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
@@ -822,8 +828,14 @@ dateToInput.value = state.dateTo;
 updatePresetButtonsUi();
 updateContactContextUi();
 
-loadSession();
-loadDispositions().then(() => {
-  dispositionSelect.value = state.disposition || "";
+loadSession().catch(() => resolveMe(null));
+meReady.then((me) => {
+  if (hasNoAccounts(me)) {
+    showConnectPrompt(me);
+    return;
+  }
+  loadDispositions().then(() => {
+    dispositionSelect.value = state.disposition || "";
+  });
+  loadCalls();
 });
-loadCalls();
