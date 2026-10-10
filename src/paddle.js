@@ -48,11 +48,13 @@ async function accountForPendingSignup(pendingId, status, req) {
   if (result.status === "created") {
     try {
       const email = require("./email");
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const verifyUrl = `${baseUrl}/auth/verify-email?token=${encodeURIComponent(require("./emailVerifyToken").createEmailVerifyToken(result.userId, result.email))}`;
       await email.sendEmail({
         to: result.email,
         subject: `Welcome to CallTrove, ${result.firstName}`,
-        text: `Your CallTrove account is ready. Sign in at ${req.protocol}://${req.get("host")}/login.html with your email address (${result.email}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-        html: email.welcomeEmailHtml(result.email, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName: result.firstName }),
+        text: `Your CallTrove account is ready.\n\nFirst, confirm your email address (it lets you reset your password if you forget it): ${verifyUrl}\n\nSign in at ${baseUrl}/login.html with your email address (${result.email}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
+        html: email.welcomeEmailHtml(result.email, { baseUrl, firstName: result.firstName, verifyUrl }),
       });
     } catch (err) {
       console.error("[paddle] account created but welcome email failed:", err.message);

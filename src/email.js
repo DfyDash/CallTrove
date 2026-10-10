@@ -211,7 +211,7 @@ function inviteEmailHtml(inviteUrl, { accountName, invitedBy, requestIp }) {
 // {{first_action_url}} is the GoHighLevel connection step in Settings,
 // since a signed-up-but-never-connected account is a dead end otherwise;
 // {{dashboard_url}} is the login page.
-function welcomeEmailHtml(username, { baseUrl, firstName }) {
+function welcomeEmailHtml(username, { baseUrl, firstName, verifyUrl }) {
   const safeUsername = escapeHtml(username);
   const loginUrl = escapeHtml(`${baseUrl}/login.html`);
   const connectUrl = escapeHtml(`${baseUrl}/settings.html`);
@@ -225,6 +225,7 @@ function welcomeEmailHtml(username, { baseUrl, firstName }) {
 <tr><td>${brandHeaderHtml()}</td></tr>
 <tr><td style="font-size:20px; font-weight:600; color:${BRAND.dark}; padding-top:20px; padding-bottom:8px;">${heading}</td></tr>
 <tr><td style="font-size:15px; color:${BRAND.muted}; line-height:1.5; padding-bottom:24px;">Your account is ready, and you signed up with <strong style="color:${BRAND.dark};">${safeUsername}</strong>.</td></tr>
+${verifyUrl ? `<tr><td style="padding-bottom:24px;"><table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="background:${BRAND.light}; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:16px;"><div style="font-size:14px; color:${BRAND.dark}; line-height:1.5; padding-bottom:12px;"><strong>First, confirm your email address.</strong> It lets you reset your password if you ever forget it.</div><a href="${escapeHtml(verifyUrl)}" style="display:inline-block; padding:10px 20px; background:${BRAND.accent}; border-radius:8px; font-size:14px; font-weight:700; color:#FFFFFF; text-decoration:none;">Confirm my email</a></td></tr></table></td></tr>` : ""}
 <tr><td style="font-size:12px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:${BRAND.accent}; padding-bottom:12px;">Here's how to get started</td></tr>
 <tr><td>
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr><td style="background:${BRAND.light}; border:1px solid ${BRAND.cardBorder}; border-radius:8px; padding:16px;">

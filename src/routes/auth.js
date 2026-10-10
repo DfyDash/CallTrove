@@ -492,11 +492,22 @@ router.get("/checkout-config", checkoutLimiter, async (req, res) => {
   });
 });
 
+// The link in the welcome email. Only marks the address verified -- it
+// deliberately does not turn on email sign-in codes, so clicking it can't
+// change how anyone logs in.
+router.get("/verify-email", checkoutLimiter, async (req, res) => {
+  const t = require("../emailVerifyToken").readEmailVerifyToken(String(req.query.token || ""));
+  const user = t ? await db.getUserById(t.userId) : null;
+  if (!user || !user.email || user.email.toLowerCase() !== t.email) return res.redirect("/login.html?verifyerror=1");
+  if (!user.emailVerifiedAt) await db.verifyUserEmail(user.id);
+  res.redirect("/login.html?verified=1");
+});
+
 router.get("/checkout-status", checkoutLimiter, async (req, res) => {
   const id = String(req.query.id || "");
   const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
   if (!pending) return res.status(404).json({ error: "not found" });
-  res.json({ ready: !!pending.consumedTenantId });
+  res.json({ ready: !!pending.consumedTenantId, emailed: email.isEnabled() });
 });
 
 // Same brute-force shape as mfaLimiter above -- keyed by the token itself

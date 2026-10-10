@@ -1152,8 +1152,9 @@ tbody tr:last-child td {
 }
 
 .login-notice {
-  color: #1a7f37;
+  color: var(--good);
   font-size: 0.85rem;
+  line-height: 1.45;
 }
 
 .cancel-card {

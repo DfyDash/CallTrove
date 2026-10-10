@@ -8,7 +8,17 @@ if (params.get("activated")) {
   document.getElementById("login-activated").hidden = false;
 }
 if (params.get("paid")) {
-  document.getElementById("login-paid").hidden = false;
+  document.getElementById(params.get("emailed") ? "login-paid-emailed" : "login-paid").hidden = false;
+}
+if (params.get("verified")) {
+  document.getElementById("login-verified").hidden = false;
+}
+if (params.get("verifyerror")) {
+  document.getElementById("login-verify-failed").hidden = false;
+}
+if (params.get("email")) {
+  document.querySelector('input[name="username"]').value = params.get("email");
+  document.querySelector('input[name="password"]').focus();
 }
 if (params.get("reset")) {
   document.getElementById("login-reset").hidden = false;

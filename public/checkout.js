@@ -23,6 +23,12 @@ function fail(message) {
   fallback.hidden = false;
 }
 
+function loginUrl(emailed) {
+  return "/login.html?paid=1" + (emailed ? "&emailed=1" : "") + (accountEmail ? "&email=" + encodeURIComponent(accountEmail) : "");
+}
+
+let accountEmail = "";
+
 async function waitForAccount() {
   statusEl.textContent = "Thanks! Setting up your account...";
   for (let i = 0; i < 60; i++) {
@@ -30,7 +36,7 @@ async function waitForAccount() {
     const res = await fetch("/auth/checkout-status?id=" + encodeURIComponent(pendingId)).catch(() => null);
     const body = res && res.ok ? await res.json() : null;
     if (body && body.ready) {
-      location.href = "/login.html?paid=1";
+      location.href = loginUrl(body.emailed);
       return;
     }
   }
@@ -44,9 +50,10 @@ async function start() {
   if (!res.ok) return fail("Checkout isn't available right now. Please try again later.");
   const cfg = await res.json();
   if (cfg.ready) {
-    location.href = "/login.html?paid=1";
+    location.href = loginUrl(false);
     return;
   }
+  accountEmail = (cfg.checkout && cfg.checkout.email) || "";
   const labels = wizardLabels(cfg.hipaaRequested);
   renderWizardSteps(stepsEl, labels, labels.length);
   document.getElementById("plan-name").textContent = cfg.hipaaRequested ? "CallTrove for HIPAA" : "CallTrove";
