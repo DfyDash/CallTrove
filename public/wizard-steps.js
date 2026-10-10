@@ -13,7 +13,7 @@ function renderWizardSteps(el, labels, current) {
       const text = document.createElement("span");
       text.className = "wizard-label";
       text.textContent = label;
-      item.append(dot, text);
+      item.append(text, dot);
       return item;
     })
   );
