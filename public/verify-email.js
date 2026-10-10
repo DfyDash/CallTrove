@@ -14,6 +14,7 @@ const ERRORS = {
   expired: "That code has expired. Send a new code.",
   toomany: "Too many wrong tries. Send a new code.",
   missing: "This sign-up has expired. Please start again.",
+  ratelimit: "Too many attempts from this connection. Please try again in a while.",
 };
 
 function showError(message) {
@@ -85,7 +86,8 @@ resendBtn.addEventListener("click", async () => {
     return;
   }
   if (body.error === "limit") showError("You've used all your codes. Please start again.");
-  else if (body.error === "cooldown") startCooldown(30);
+  else if (body.error === "cooldown") startCooldown(body.resendIn || 30);
+  else if (body.error === "ratelimit") showError(ERRORS.ratelimit);
   else showError("We couldn't send a new code. Please try again in a moment.");
   if (body.error !== "limit") resendBtn.disabled = false;
 });

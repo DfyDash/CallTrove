@@ -198,6 +198,23 @@ async function login(ctx, email) {
     ok("the right code works", (await post("/auth/verify-code", { id: s.id, code: lastCode(e) })).body.ok === true);
     ok("payment page opens once confirmed", (await fetch(`${U}/auth/checkout-config?id=${s.id}`, { headers: hdr() })).status === 200);
     ok("garbage ids are refused cleanly", (await post("/auth/verify-code", { id: "nope", code: "123456" })).status === 404);
+    ok("confirming twice (two tabs / double click) still says OK", (await post("/auth/verify-code", { id: s.id, code: "000000" })).body.ok === true);
+
+    // an email outage must not use up the person's codes
+    const o = await apiSignup({ email: `out${stamp}@example.com`, business: "Outage Co " + stamp });
+    sql(`update pending_signups set email_code_last_sent = now() - interval '1 minute' where id='${o.id}'`);
+    const sendsBefore = sql(`select email_code_sends from pending_signups where id='${o.id}'`);
+    fs.writeFileSync("/var/tmp/ct-test-fail-email", "");
+    const down = await post("/auth/resend-code", { id: o.id });
+    fs.unlinkSync("/var/tmp/ct-test-fail-email");
+    ok("email provider down: the person is told it failed", down.status === 502 && down.body.error === "send_failed");
+    ok("...and it does not use up a send or start the 30s wait", sql(`select email_code_sends from pending_signups where id='${o.id}'`) === sendsBefore && sql(`select email_code_last_sent is null from pending_signups where id='${o.id}'`) === "t");
+    ok("...so they can try again straight away", (await post("/auth/resend-code", { id: o.id })).body.ok === true);
+    const cd = await post("/auth/resend-code", { id: o.id });
+    ok("the wait tells the page how long is really left", cd.body.error === "cooldown" && cd.body.resendIn >= 1 && cd.body.resendIn <= 30, JSON.stringify(cd.body));
+    let limited;
+    for (let i = 0; i < 62; i++) limited = await fetch(U + "/auth/verify-code", { method: "POST", headers: { ...FWD, "X-Forwarded-For": "10.9.9.9", "Content-Type": "application/json" }, body: JSON.stringify({ id: "nope", code: "123456" }) });
+    ok("too many requests from one address: a clear JSON answer, not a blank error", limited.status === 429 && (await limited.json()).error === "ratelimit");
 
     // paying for an unconfirmed address never makes an account
     const u = `unv${stamp}@example.com`;

@@ -484,7 +484,8 @@ async function sendSignupCode(pendingId, address, req) {
     });
   } catch (err) {
     console.error("[signup] failed to send verification code:", err);
-    return false;
+    await db.revertPendingEmailCode(pendingId).catch(() => {});
+    return { ok: false, reason: "send_failed" };
   }
   return { ok: true };
 }
@@ -550,7 +551,13 @@ router.get("/verify-status", checkoutLimiter, async (req, res) => {
   });
 });
 
-const verifyCodeLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: true, legacyHeaders: false });
+const verifyCodeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ ok: false, error: "ratelimit" }),
+});
 
 router.post("/verify-code", verifyCodeLimiter, express.json(), async (req, res) => {
   const id = String((req.body || {}).id || "");
@@ -570,7 +577,7 @@ router.post("/resend-code", verifyCodeLimiter, express.json(), async (req, res) 
   if (!pending || pending.consumedTenantId || pending.emailOk) return res.status(404).json({ error: "not found" });
   const sent = await sendSignupCode(id, pending.email, req);
   if (sent && sent.ok) return res.json({ ok: true, resendIn: 30 });
-  if (sent && sent.reason === "cooldown") return res.json({ ok: false, error: "cooldown" });
+  if (sent && sent.reason === "cooldown") return res.json({ ok: false, error: "cooldown", resendIn: Math.max(1, secondsUntilResend(pending.emailCodeLastSent)) });
   if (sent && sent.reason === "limit") return res.json({ ok: false, error: "limit" });
   res.status(502).json({ error: "send_failed" });
 });

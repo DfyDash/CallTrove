@@ -2444,6 +2444,16 @@ async function issuePendingEmailCode(id, codeHash, expiresAt) {
   return { ok: false, reason: why[0].sends >= 6 ? "limit" : "cooldown" };
 }
 
+// Undoes issuePendingEmailCode when the email could not actually be sent, so a
+// provider hiccup doesn't use up one of the 6 sends or start the 30s wait.
+async function revertPendingEmailCode(id) {
+  await pool.query(
+    `UPDATE pending_signups SET email_code_sends = GREATEST(email_code_sends - 1, 0), email_code_last_sent = NULL, email_code_hash = NULL
+     WHERE id = $1 AND email_verified_at IS NULL`,
+    [id]
+  );
+}
+
 // Checks a code. Every check counts as an attempt; 5 wrong ones burn the code.
 async function checkPendingEmailCode(id, codeHash) {
   const { rows } = await pool.query(
@@ -2453,7 +2463,11 @@ async function checkPendingEmailCode(id, codeHash) {
     [id]
   );
   const r = rows[0];
-  if (!r) return "missing";
+  if (!r) {
+    // Already confirmed (a double submit, or the page open in two tabs) is a success, not an error.
+    const { rows: done } = await pool.query(`SELECT email_verified_at IS NOT NULL AS v FROM pending_signups WHERE id = $1 AND consumed_tenant_id IS NULL`, [id]);
+    return done[0] && done[0].v ? "ok" : "missing";
+  }
   if (r.attempts > 5) return "toomany";
   if (!r.hash || !r.expires || new Date(r.expires) < new Date()) return "expired";
   const a = Buffer.from(r.hash), b = Buffer.from(codeHash);
@@ -2653,6 +2667,7 @@ module.exports = {
   createPendingSignup,
   getPendingSignup,
   issuePendingEmailCode,
+  revertPendingEmailCode,
   checkPendingEmailCode,
   createAccountFromPendingSignup,
   usageAllowed,
