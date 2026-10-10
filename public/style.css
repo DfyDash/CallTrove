@@ -1152,9 +1152,15 @@ tbody tr:last-child td {
 }
 
 .login-notice {
-  color: var(--good);
+  color: var(--ink);
   font-size: 0.85rem;
   line-height: 1.45;
+}
+.login-notice::before {
+  content: "\2713";
+  color: var(--accent);
+  font-weight: 700;
+  margin-right: 0.4rem;
 }
 
 .cancel-card {
@@ -2462,7 +2468,7 @@ form .password-wrap .password-toggle,
 .checkout-price { margin: 0.25rem 0 1.25rem; font-size: 2.25rem; font-weight: 700; color: var(--accent-text); }
 .checkout-points { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: 0.75rem; }
 .checkout-points li { position: relative; padding-left: 1.5rem; line-height: 1.4; }
-.checkout-points li::before { content: "\2713"; position: absolute; left: 0; color: var(--good); font-weight: 700; }
+.checkout-points li::before { content: "\2713"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
 .checkout-pane { min-width: 0; }
 .checkout-frame { min-height: 480px; }
 @media (max-width: 820px) {
@@ -2481,7 +2487,7 @@ form .password-wrap .password-toggle,
 }
 .wizard-step.is-current { color: var(--ink); font-weight: 600; }
 .wizard-step.is-current .wizard-dot { background: var(--accent); border-color: var(--accent); color: #fff; }
-.wizard-step.is-done .wizard-dot { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+.wizard-step.is-done .wizard-dot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 @media (max-width: 560px) { .wizard-step:not(.is-current) .wizard-label { display: none; } }
 .signup-step-title { font-size: 1.25rem; margin: 0 0 0.75rem; }
 .js-steps .signup-step:not(.is-current) { display: none; }
