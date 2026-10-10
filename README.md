@@ -8,6 +8,10 @@ file, and stores everything in an organized, searchable, per-contact call
 history with role-based access (admins see everything; regular users see
 only calls they personally handled).
 
+> **Waiting to go live:** self-serve sign-up with Paddle billing is built and tested but is **not on
+> `main` or production yet**. Everything that must happen before launch is in
+> [`docs/PRODUCTION-DEPLOY-CHECKLIST.md`](docs/PRODUCTION-DEPLOY-CHECKLIST.md). Tests: `bash tests/run.sh`.
+
 **Phase**: prototype. No real client/PHI data yet, and most of a HIPAA
 compliance layer still isn't built (BAAs, formal compliance
 documentation, retention/purge policy are deliberately phase 2 --
