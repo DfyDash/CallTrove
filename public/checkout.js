@@ -82,6 +82,7 @@ async function start() {
   window.Paddle.Checkout.open({
     settings: {
       displayMode: "inline",
+      showAddDiscounts: false,
       variant: "one-page",
       theme: currentTheme(),
       frameTarget: "checkout-frame",
