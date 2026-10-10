@@ -85,6 +85,19 @@ function logForOperator(req, action, message) {
 // user of a canceled tenant still needs to see "contact your account
 // owner" and /api/admin/* would 403 them before they got that far.
 
+// Subscription state (written only by Paddle's signed webhooks) plus the
+// public values the browser needs to open Paddle's checkout. customData
+// carries the tenant id so the webhook can match the subscription back.
+router.get("/subscription", async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  const checkout = require("../paddle").checkoutConfig();
+  res.json({
+    status: tenant.subscriptionStatus || null,
+    periodEnd: tenant.subscriptionPeriodEnd || null,
+    checkout: checkout ? { ...checkout, tenantId: tenant.id, email: req.session.user.email || null } : null,
+  });
+});
+
 router.post("/tenant/cancel", requireCsrf, async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });

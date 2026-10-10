@@ -1645,7 +1645,59 @@ baaAcceptForm.addEventListener("submit", async (e) => {
   loadBaa();
 });
 
+async function loadSubscription() {
+  const card = document.getElementById("subscription-card");
+  const res = await fetch("/api/admin/subscription");
+  if (!res.ok) return;
+  const sub = await res.json();
+  if (!sub.checkout && !sub.status) return;
+  card.hidden = false;
+  const labels = { active: "Active", trialing: "Free trial", past_due: "Payment overdue", paused: "Paused", canceled: "Canceled" };
+  const statusEl = document.getElementById("subscription-status");
+  const btn = document.getElementById("subscribe-btn");
+  const live = sub.status === "active" || sub.status === "trialing" || sub.status === "past_due";
+  statusEl.textContent = sub.status
+    ? `Status: ${labels[sub.status] || sub.status}` + (sub.periodEnd && live ? ` -- current period ends ${new Date(sub.periodEnd).toLocaleDateString()}` : "")
+    : "No subscription yet.";
+  if (!sub.checkout || live) return;
+  btn.hidden = false;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      if (!window.Paddle) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
+          s.onload = resolve;
+          s.onerror = () => reject(new Error("Could not load checkout."));
+          document.head.appendChild(s);
+        });
+      }
+      if (sub.checkout.environment === "sandbox") window.Paddle.Environment.set("sandbox");
+      window.Paddle.Initialize({
+        token: sub.checkout.clientToken,
+        eventCallback: (ev) => {
+          if (ev.name === "checkout.completed") {
+            statusEl.textContent = "Thanks! Your subscription is being activated -- refresh in a moment.";
+            btn.hidden = true;
+          }
+        },
+      });
+      window.Paddle.Checkout.open({
+        items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
+        customData: { tenantId: sub.checkout.tenantId },
+        ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
+      });
+    } catch (err) {
+      statusEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function loadBilling() {
+  loadSubscription().catch(() => {});
   const res = await fetch("/api/admin/billing");
   if (!res.ok) return;
   const billing = await res.json();

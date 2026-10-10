@@ -46,10 +46,11 @@ app.use(
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://cdn.paddle.com"],
         styleSrc: ["'self'"],
         imgSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", "https://checkout-service.paddle.com", "https://sandbox-checkout-service.paddle.com"],
+        frameSrc: ["https://buy.paddle.com", "https://sandbox-buy.paddle.com"],
         mediaSrc,
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -157,6 +158,9 @@ app.get("/healthz", async (req, res) => {
     res.status(503).json({ status: "error", error: err.message });
   }
 });
+
+// Paddle webhooks: public (authenticated by signature), raw body required.
+app.post("/webhooks/paddle", express.raw({ type: "application/json", limit: "1mb" }), require("./paddle").webhookHandler);
 
 app.use("/auth", authRouter);
 

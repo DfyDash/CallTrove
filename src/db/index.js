@@ -1466,7 +1466,11 @@ async function getTenantById(id) {
   const { rows } = await pool.query(
     `SELECT id, name, owner_user_id AS "ownerUserId", status, storage_tier AS "storageTier",
             cancellation_requested_at AS "cancellationRequestedAt",
-            purge_at AS "purgeAt", canceled_at AS "canceledAt"
+            purge_at AS "purgeAt", canceled_at AS "canceledAt",
+            paddle_customer_id AS "paddleCustomerId",
+            paddle_subscription_id AS "paddleSubscriptionId",
+            subscription_status AS "subscriptionStatus",
+            subscription_period_end AS "subscriptionPeriodEnd"
      FROM tenants WHERE id = $1`,
     [id]
   );
@@ -2267,7 +2271,47 @@ async function listPhiAccessLog(tenantId, { page = 1, pageSize = 50 } = {}) {
   return { entries: rows, total, page: pageNum, pageSize: size };
 }
 
+// Applies one Paddle subscription event to its tenant. Idempotent and
+// order-safe: a repeated event_id is ignored, and an event older than the
+// last one applied (Paddle can deliver out of order) is recorded but does
+// not overwrite newer state. Returns "applied" | "duplicate" | "stale" |
+// "unknown_tenant".
+async function applyPaddleSubscriptionEvent({ eventId, eventType, occurredAt, tenantId, customerId, subscriptionId, status, periodEnd }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ins = await client.query(
+      `INSERT INTO paddle_events (event_id, event_type) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [eventId, eventType]
+    );
+    if (ins.rowCount === 0) {
+      await client.query("COMMIT");
+      return "duplicate";
+    }
+    const upd = await client.query(
+      `UPDATE tenants SET paddle_customer_id = COALESCE($2, paddle_customer_id),
+              paddle_subscription_id = $3, subscription_status = $4,
+              subscription_period_end = $5, subscription_event_at = $6
+       WHERE id = $1 AND (subscription_event_at IS NULL OR subscription_event_at <= $6)`,
+      [tenantId, customerId, subscriptionId, status, periodEnd, occurredAt]
+    );
+    if (upd.rowCount === 0) {
+      const exists = await client.query(`SELECT 1 FROM tenants WHERE id = $1`, [tenantId]);
+      await client.query("COMMIT");
+      return exists.rowCount ? "stale" : "unknown_tenant";
+    }
+    await client.query("COMMIT");
+    return "applied";
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  applyPaddleSubscriptionEvent,
   pool,
   DEFAULT_TENANT_ID,
   DEFAULT_GHL_ACCOUNT_ID,

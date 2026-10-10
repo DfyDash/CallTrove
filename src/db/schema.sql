@@ -847,3 +847,19 @@ CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
 -- for white-labeled locations but not the brand's web address, so this has
 -- to be entered once rather than detected.
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
+
+-- Paddle billing (one subscription per tenant). Populated only by Paddle's
+-- signed webhooks (src/paddle.js) -- nothing here gates access to the app
+-- yet; it just records what Paddle says. paddle_events makes webhook
+-- delivery idempotent (Paddle retries and may deliver out of order).
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_event_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS paddle_events (
+  event_id     TEXT PRIMARY KEY,
+  event_type   TEXT NOT NULL,
+  received_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
