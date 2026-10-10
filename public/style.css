@@ -2519,3 +2519,8 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .signup-plan-price { font-weight: 600; color: var(--accent-text); white-space: nowrap; }
 .signup-plan-detail { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
 .login-card.signup-health-wide { width: min(560px, calc(100vw - 2rem)); }
+
+/* Logo lockup: the wordmark sits level with the phone, the padlock hangs below. */
+.login-brand, .sidebar-brand { align-items: flex-start; }
+.login-brand .brand-name { margin-top: 2px; }
+.sidebar-brand .brand-name { margin-top: 1px; }
