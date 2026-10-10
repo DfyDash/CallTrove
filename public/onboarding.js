@@ -6,17 +6,21 @@ let baaHash = "";
 
 const baaSection = document.getElementById("onboarding-baa");
 const billingSection = document.getElementById("onboarding-billing");
+const stepsEl = document.getElementById("wizard-steps");
+let hipaaFlow = false;
 
 async function start() {
   const me = await (await fetch("/api/me")).json();
   csrfToken = me.csrfToken || "";
   const sub = await (await fetch("/api/admin/subscription")).json();
+  hipaaFlow = !!sub.hipaaRequested;
   if (sub.hipaaRequested) {
     const baa = await (await fetch("/api/admin/baa")).json();
     if (!baa.acceptance && baa.canAccept) {
       document.getElementById("baa-text").textContent = baa.text;
       baaHash = baa.hash;
       baaSection.hidden = false;
+      renderWizardSteps(stepsEl, wizardLabels(true), 4);
       return;
     }
   }
@@ -34,7 +38,6 @@ document.getElementById("baa-accept-form").addEventListener("submit", async (e) 
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({
       fullName: document.getElementById("baa-full-name").value.trim(),
-      title: document.getElementById("baa-title").value.trim(),
       agree: document.getElementById("baa-agree-checkbox").checked,
       confirmHash: baaHash,
     }),
@@ -50,6 +53,16 @@ document.getElementById("baa-accept-form").addEventListener("submit", async (e) 
   showBilling(await (await fetch("/api/admin/subscription")).json());
 });
 
+function fmtRate(n) {
+  return "$" + String(Number(n));
+}
+
+function currentTheme() {
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit === "light" || explicit === "dark") return explicit;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function showBilling(sub) {
   const live = sub.status === "active" || sub.status === "trialing" || sub.status === "past_due";
   if (!sub.checkout || live) {
@@ -57,48 +70,72 @@ function showBilling(sub) {
     return;
   }
   billingSection.hidden = false;
+  renderWizardSteps(stepsEl, wizardLabels(!!sub.hipaaRequested), wizardLabels(!!sub.hipaaRequested).length);
+  document.getElementById("onboarding-card").classList.add("onboarding-card-wide");
   const statusEl = document.getElementById("subscription-status");
-  const btn = document.getElementById("subscribe-btn");
+  document.getElementById("plan-name").textContent = sub.hipaaRequested ? "CallTrove for HIPAA" : "CallTrove";
+  document.getElementById("onboarding-price").textContent = sub.checkout.priceLabel || "";
+
+  const points = ["Every call recording from your GoHighLevel account, saved and searchable"];
+  if (sub.hipaaRequested) points.push("Business Associate Agreement on file");
+  if (sub.storage) {
+    points.push(`${sub.storage.freeGB} GB of recording storage included, then ${fmtRate(sub.storage.overagePerGbMonth)} per GB per month`);
+  }
+  if (sub.rates) {
+    points.push(`Transcripts and AI summaries as you use them: ${fmtRate(sub.rates.transcriptionPerMinute)} per minute of transcription, ${fmtRate(sub.rates.aiSummaryPerCall)} per AI summary`);
+  }
+  points.push("Usage is charged to the same card as it adds up");
+  const list = document.getElementById("plan-points");
+  list.replaceChildren(...points.map((t) => Object.assign(document.createElement("li"), { textContent: t })));
+
+  const fallback = document.getElementById("checkout-fallback");
   if (!sub.checkout.priceId) {
-    statusEl.textContent = "Pricing for your plan isn't available yet. Please contact support.";
+    document.getElementById("checkout-frame").hidden = true;
+    fallback.textContent = "Pricing for your plan isn't available yet. Please contact support.";
+    fallback.hidden = false;
     return;
   }
-  document.getElementById("onboarding-price").textContent = sub.checkout.priceLabel || "";
-  statusEl.textContent = "Subscribe to start using CallTrove.";
-  btn.hidden = false;
-  btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    try {
-      if (!window.Paddle) {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
-          s.onload = resolve;
-          s.onerror = () => reject(new Error("Could not load checkout."));
-          document.head.appendChild(s);
-        });
+  openCheckout(sub, statusEl, fallback).catch((err) => {
+    fallback.textContent = (err && err.message) || "Could not load checkout.";
+    fallback.hidden = false;
+  });
+}
+
+async function openCheckout(sub, statusEl, fallback) {
+  if (!window.Paddle) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
+      s.onload = resolve;
+      s.onerror = () => reject(new Error("Could not load checkout. Check your connection and refresh."));
+      document.head.appendChild(s);
+    });
+  }
+  if (sub.checkout.environment === "sandbox") window.Paddle.Environment.set("sandbox");
+  window.Paddle.Initialize({
+    token: sub.checkout.clientToken,
+    eventCallback: (ev) => {
+      if (ev.name === "checkout.completed") {
+        statusEl.textContent = "Thanks! Activating your subscription...";
+        waitForActivation(statusEl);
+      } else if (ev.name === "checkout.error" || ev.name === "checkout.failed") {
+        fallback.textContent = "Checkout ran into a problem. Refresh the page to try again.";
+        fallback.hidden = false;
       }
-      if (sub.checkout.environment === "sandbox") window.Paddle.Environment.set("sandbox");
-      window.Paddle.Initialize({
-        token: sub.checkout.clientToken,
-        eventCallback: (ev) => {
-          if (ev.name === "checkout.completed") {
-            statusEl.textContent = "Thanks! Activating your subscription...";
-            btn.hidden = true;
-            waitForActivation(statusEl);
-          }
-        },
-      });
-      window.Paddle.Checkout.open({
-        items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
-        customData: { tenantId: sub.checkout.tenantId },
-        ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
-      });
-    } catch (err) {
-      statusEl.textContent = err.message;
-    } finally {
-      btn.disabled = false;
-    }
+    },
+  });
+  window.Paddle.Checkout.open({
+    settings: {
+      displayMode: "inline",
+      variant: "one-page",
+      theme: currentTheme(),
+      frameTarget: "checkout-frame",
+      frameInitialHeight: 480,
+      frameStyle: "width: 100%; min-width: 312px; background-color: transparent; border: none;",
+    },
+    items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
+    customData: { tenantId: sub.checkout.tenantId },
+    ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
   });
 }
 

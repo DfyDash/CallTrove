@@ -25,40 +25,59 @@
         </div>
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
       </div>
+      <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
       <div id="signup-error" class="login-error" hidden></div>
-      <label>
-        First name
-        <input type="text" name="firstName" autocomplete="given-name" required autofocus />
-      </label>
-      <label>
-        Last name
-        <input type="text" name="lastName" autocomplete="family-name" required />
-      </label>
-      <label>
-        Business or agency name
-        <input type="text" name="businessName" autocomplete="organization" required />
-      </label>
-      <label>
-        Email address (this is your login)
-        <input type="email" name="email" autocomplete="username" required />
-      </label>
-      <fieldset class="signup-hipaa">
-        <legend>Will you store health information (HIPAA)?</legend>
-        <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
-        <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
-      </fieldset>
-      <label>
-        Password
-        <input type="password" name="password" autocomplete="new-password" minlength="8" required />
-      </label>
-      <label>
-        Confirm password
-        <input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required />
-      </label>
-      <button type="submit">Create account</button>
+
+      <div class="signup-step" data-step="1">
+        <h1 class="signup-step-title">Tell us about you</h1>
+        <label>
+          First name
+          <input type="text" name="firstName" autocomplete="given-name" required autofocus />
+        </label>
+        <label>
+          Last name
+          <input type="text" name="lastName" autocomplete="family-name" required />
+        </label>
+        <label>
+          Business or agency name
+          <input type="text" name="businessName" autocomplete="organization" required />
+        </label>
+      </div>
+
+      <div class="signup-step" data-step="2">
+        <h1 class="signup-step-title">Create your login</h1>
+        <label>
+          Email address (this is your login)
+          <input type="email" name="email" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input type="password" name="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>
+          Confirm password
+          <input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required />
+        </label>
+      </div>
+
+      <div class="signup-step" data-step="3">
+        <h1 class="signup-step-title">Health information</h1>
+        <p class="settings-note">Will you store health information (HIPAA) in CallTrove? If you choose Yes, you'll review and accept a Business Associate Agreement next.</p>
+        <fieldset class="signup-hipaa">
+          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
+          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
+        </fieldset>
+      </div>
+
+      <div class="signup-nav">
+        <button type="button" id="signup-back" class="secondary-btn" hidden>Back</button>
+        <button type="button" id="signup-next">Continue</button>
+        <button type="submit" id="signup-submit">Create account</button>
+      </div>
       <p class="forgot-password">Already have an account? <a href="/login.html">Log in</a></p>
     </form>
   </div>
+  <script src="wizard-steps.js"></script>
   <script src="signup.js"></script>
 <script src="password-toggle.js"></script>
 </body>

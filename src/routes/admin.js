@@ -94,6 +94,16 @@ router.get("/subscription", async (req, res) => {
   res.json({
     status: tenant.subscriptionStatus || null,
     hipaaRequested: !!tenant.hipaaRequested,
+    // What the plan includes, by the tier the customer signed up for (the
+    // operator still switches the tenant's actual storage tier by hand for HIPAA).
+    storage: (() => {
+      const t = require("../billingRates").storageTier(tenant.hipaaRequested ? "hipaa" : "standard");
+      return { freeGB: t.freeGB, overagePerGbMonth: t.overagePerGbMonth };
+    })(),
+    rates: {
+      transcriptionPerMinute: require("../billingRates").CLIENT_TRANSCRIPTION_PER_MINUTE,
+      aiSummaryPerCall: require("../billingRates").CLIENT_AI_SUMMARY_PER_CALL,
+    },
     periodEnd: tenant.subscriptionPeriodEnd || null,
     checkout: checkout ? { ...checkout, tenantId: tenant.id, email: req.session.user.email || null } : null,
   });
@@ -174,8 +184,8 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
 
   const fullName = (req.body?.fullName || "").trim();
   const title = (req.body?.title || "").trim();
-  if (!fullName || !title) {
-    return res.status(400).json({ error: "full name and title are required" });
+  if (!fullName) {
+    return res.status(400).json({ error: "full name is required" });
   }
   if (req.body?.agree !== true) {
     return res.status(400).json({ error: "you must check the box to agree" });
@@ -202,7 +212,7 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
     ipAddress: req.ip,
     userAgent: req.get("user-agent"),
   });
-  await log(req, "baa_accepted", `BAA accepted for "${tenant.name}" by ${fullName} (${title})`);
+  await log(req, "baa_accepted", `BAA accepted for "${tenant.name}" by ${fullName}${title ? ` (${title})` : ""}`);
   res.json({ status: "accepted", acceptance });
 });
 

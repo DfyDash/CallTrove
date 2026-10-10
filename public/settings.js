@@ -1604,7 +1604,7 @@ async function loadBaa() {
 
   if (baa.acceptance) {
     const when = new Date(baa.acceptance.acceptedAt).toLocaleString();
-    baaAcceptedSummary.textContent = `${baa.acceptance.fullName} (${baa.acceptance.title}) on ${when}.`;
+    baaAcceptedSummary.textContent = `${baa.acceptance.fullName}${baa.acceptance.title ? ` (${baa.acceptance.title})` : ""} on ${when}.`;
     baaAcceptedBanner.hidden = false;
     baaAcceptFormWrap.hidden = true;
     baaNotOwnerNote.hidden = true;
@@ -1629,7 +1629,6 @@ baaAcceptForm.addEventListener("submit", async (e) => {
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({
       fullName: document.getElementById("baa-full-name").value.trim(),
-      title: document.getElementById("baa-title").value.trim(),
       agree: document.getElementById("baa-agree-checkbox").checked,
       confirmHash: baaHash,
     }),

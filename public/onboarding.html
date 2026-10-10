@@ -13,7 +13,7 @@
 <body>
   <div class="login-page">
     <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
-    <div class="login-card onboarding-card">
+    <div class="login-card onboarding-card" id="onboarding-card">
       <div class="login-brand">
         <div class="brand-mark">
           <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
@@ -26,13 +26,14 @@
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
       </div>
 
+      <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
+
       <section id="onboarding-baa" hidden>
         <h1 class="onboarding-title">Business Associate Agreement</h1>
         <p class="settings-note">You said you'll store health information. Read and accept the agreement below to continue.</p>
         <pre id="baa-text" class="baa-text-box"></pre>
         <form id="baa-accept-form" class="admin-form">
           <label>Full legal name <input type="text" id="baa-full-name" required autocomplete="name" /></label>
-          <label>Title <input type="text" id="baa-title" required autocomplete="organization-title" /></label>
           <label class="onboarding-agree"><input type="checkbox" id="baa-agree-checkbox" required /> I have read and agree to this agreement on behalf of my company.</label>
           <button type="submit" id="baa-accept-btn">I Agree &amp; Accept</button>
           <span id="baa-accept-error" class="login-error" hidden></span>
@@ -40,13 +41,23 @@
       </section>
 
       <section id="onboarding-billing" hidden>
-        <h1 class="onboarding-title">Start your subscription</h1>
-        <p id="onboarding-price" class="onboarding-price"></p>
-        <p id="subscription-status" class="settings-note"></p>
-        <button type="button" id="subscribe-btn" hidden>Subscribe</button>
+        <div class="checkout-layout">
+          <aside class="checkout-summary">
+            <p class="checkout-eyebrow" id="plan-eyebrow">Your plan</p>
+            <h1 class="onboarding-title" id="plan-name"></h1>
+            <p class="checkout-price"><span id="onboarding-price"></span></p>
+            <ul class="checkout-points" id="plan-points"></ul>
+            <p id="subscription-status" class="settings-note"></p>
+          </aside>
+          <div class="checkout-pane">
+            <div id="checkout-frame" class="checkout-frame"></div>
+            <p id="checkout-fallback" class="settings-note" hidden></p>
+          </div>
+        </div>
       </section>
     </div>
   </div>
+  <script src="wizard-steps.js"></script>
   <script src="onboarding.js"></script>
   <script src="password-toggle.js"></script>
 </body>
