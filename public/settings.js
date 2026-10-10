@@ -1656,6 +1656,11 @@ async function loadSubscription() {
   const statusEl = document.getElementById("subscription-status");
   const btn = document.getElementById("subscribe-btn");
   const live = sub.status === "active" || sub.status === "trialing" || sub.status === "past_due";
+  if (sub.status) {
+    document.getElementById("billing-usage-note").textContent = sub.status === "past_due"
+      ? "Your last payment didn't go through, so transcription and AI summaries are paused. Update your payment method in Paddle's email receipt to resume."
+      : "Usage is charged to the card on your subscription whenever it reaches $20, and whatever is left (if at least $1.00) after each month ends.";
+  }
   statusEl.textContent = sub.status
     ? `Status: ${labels[sub.status] || sub.status}` + (sub.periodEnd && live ? ` -- current period ends ${new Date(sub.periodEnd).toLocaleDateString()}` : "")
     : "No subscription yet.";

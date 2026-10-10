@@ -495,6 +495,10 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
     });
   }
 
+  if (!(await db.usageAllowed(req.session.user.tenantId))) {
+    return res.status(402).json({ error: "Transcription is paused because your subscription payment is overdue. Update your payment method to resume." });
+  }
+
   try {
     const buffer = await getBuffer(call.storageKey, call.storageTier);
     const extension = call.storageKey.split(".").pop();

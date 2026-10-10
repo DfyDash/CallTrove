@@ -860,6 +860,22 @@ ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hipaa_requested BOOLEAN NOT NULL DE
 -- until the BAA (if HIPAA was requested) is accepted and a subscription is
 -- live. Existing accounts keep the default (false) and are never gated.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS billing_required BOOLEAN NOT NULL DEFAULT false;
+-- Monthly usage billing (src/usageBillingJob.js): cost_ledger rows with a
+-- client_revenue are summed per tenant after each calendar month ends and
+-- sent to Paddle as ONE one-time charge on the tenant's subscription. A
+-- ledger row is claimed (usage_invoice_id set) before the Paddle call so a
+-- crash can never bill it twice; a still-'pending' invoice means the
+-- outcome is unknown and needs a human look, not an automatic retry.
+CREATE TABLE IF NOT EXISTS usage_invoices (
+  id           UUID PRIMARY KEY,
+  tenant_id    UUID NOT NULL REFERENCES tenants(id),
+  period_label TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'charged')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  charged_at   TIMESTAMPTZ
+);
+ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS usage_invoice_id UUID REFERENCES usage_invoices(id);
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

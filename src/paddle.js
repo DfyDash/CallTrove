@@ -82,4 +82,4 @@ async function webhookHandler(req, res) {
   }
 }
 
-module.exports = { webhookHandler, checkoutConfig, billingEnabled, ENV };
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, ENV };

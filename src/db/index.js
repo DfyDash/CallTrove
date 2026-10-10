@@ -213,7 +213,9 @@ async function listPendingCallSummaries() {
             c.ai_summary_attempts AS "attempts", g.tenant_id AS "tenantId"
      FROM calls c
      LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
-     WHERE c.ai_summary_status = 'pending'`
+     LEFT JOIN tenants t ON t.id = g.tenant_id
+     WHERE c.ai_summary_status = 'pending'
+       AND (t.id IS NULL OR NOT t.billing_required OR t.subscription_status IN ('active', 'trialing'))`
   );
   return rows;
 }
@@ -250,7 +252,9 @@ async function listPendingTranscriptCleanups() {
             c.ghl_account_id AS "ghlAccountId", c.transcript_cleanup_attempts AS "attempts", g.tenant_id AS "tenantId"
      FROM calls c
      LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
-     WHERE c.transcript_cleanup_status = 'pending'`
+     LEFT JOIN tenants t ON t.id = g.tenant_id
+     WHERE c.transcript_cleanup_status = 'pending'
+       AND (t.id IS NULL OR NOT t.billing_required OR t.subscription_status IN ('active', 'trialing'))`
   );
   return rows;
 }
@@ -2312,6 +2316,77 @@ async function applyPaddleSubscriptionEvent({ eventId, eventType, occurredAt, te
   }
 }
 
+// --- usage billing (see src/usageBillingJob.js and schema.sql's comment on
+// usage_invoices) ---
+
+// Paid features (transcription, AI summary, transcript cleanup) only run
+// for self-serve signups while their subscription is in good standing, so
+// a client whose card fails stops costing money. Accounts that don't go
+// through Paddle (billing_required false) are never affected.
+async function usageAllowed(tenantId) {
+  if (!tenantId) return true;
+  const { rows } = await pool.query(
+    `SELECT (NOT billing_required OR subscription_status IN ('active', 'trialing')) AS allowed FROM tenants WHERE id = $1`,
+    [tenantId]
+  );
+  return rows[0] ? rows[0].allowed : true;
+}
+
+// Tenants with a live Paddle subscription and ledger usage from before
+// `cutoff` that no invoice has claimed yet.
+async function listTenantsWithUnbilledUsage(cutoff) {
+  const { rows } = await pool.query(
+    `SELECT l.tenant_id AS "tenantId", t.paddle_subscription_id AS "subscriptionId", sum(l.client_revenue)::numeric AS "total"
+     FROM cost_ledger l JOIN tenants t ON t.id = l.tenant_id
+     WHERE l.usage_invoice_id IS NULL AND l.client_revenue > 0 AND l.created_at < $1
+       AND t.paddle_subscription_id IS NOT NULL AND t.subscription_status IN ('active', 'trialing')
+     GROUP BY l.tenant_id, t.paddle_subscription_id`,
+    [cutoff]
+  );
+  return rows.map((r) => ({ ...r, total: Number(r.total) }));
+}
+
+// Claims the tenant's unbilled rows for a new invoice, in one transaction.
+// Returns null (and claims nothing) if the total is under minCents -- those
+// rows simply roll into next month's invoice.
+async function claimUsageForInvoice({ invoiceId, tenantId, cutoff, periodLabel, minCents }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO usage_invoices (id, tenant_id, period_label, amount_cents) VALUES ($1, $2, $3, 0)`, [invoiceId, tenantId, periodLabel]);
+    const { rows } = await client.query(
+      `UPDATE cost_ledger SET usage_invoice_id = $1
+       WHERE tenant_id = $2 AND usage_invoice_id IS NULL AND client_revenue > 0 AND created_at < $3
+       RETURNING client_revenue`,
+      [invoiceId, tenantId, cutoff]
+    );
+    const cents = Math.round(rows.reduce((sum, r) => sum + Number(r.client_revenue), 0) * 100);
+    if (cents < minCents) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(`UPDATE usage_invoices SET amount_cents = $2 WHERE id = $1`, [invoiceId, cents]);
+    await client.query("COMMIT");
+    return { amountCents: cents };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function markUsageInvoiceCharged(invoiceId) {
+  await pool.query(`UPDATE usage_invoices SET status = 'charged', charged_at = now() WHERE id = $1`, [invoiceId]);
+}
+
+// Only for a Paddle call that definitely failed -- frees the rows so the
+// next cycle tries again.
+async function releaseUsageInvoice(invoiceId) {
+  await pool.query(`UPDATE cost_ledger SET usage_invoice_id = NULL WHERE usage_invoice_id = $1`, [invoiceId]);
+  await pool.query(`DELETE FROM usage_invoices WHERE id = $1`, [invoiceId]);
+}
+
 module.exports = {
   applyPaddleSubscriptionEvent,
   pool,
@@ -2437,6 +2512,11 @@ module.exports = {
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,
   getStorageStatsByTierForTenantPeriod,
+  usageAllowed,
+  listTenantsWithUnbilledUsage,
+  claimUsageForInvoice,
+  markUsageInvoiceCharged,
+  releaseUsageInvoice,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,
