@@ -42,13 +42,13 @@ if (process.env.STORAGE_DRIVER === "s3") {
   for (const bucket of buckets) mediaSrc.push(`https://${bucket}.s3.${region}.amazonaws.com`);
 }
 
-app.use(
-  helmet({
+function helmetWithStyles(styleSrc) {
+  return helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'", "https://cdn.paddle.com"],
-        styleSrc: ["'self'"],
+        styleSrc,
         imgSrc: ["'self'"],
         connectSrc: ["'self'", "https://checkout-service.paddle.com", "https://sandbox-checkout-service.paddle.com"],
         frameSrc: ["https://buy.paddle.com", "https://sandbox-buy.paddle.com"],
@@ -64,8 +64,16 @@ app.use(
     // doesn't send by default. Not worth the breakage for an app with no
     // need for the cross-origin isolation COEP exists to provide.
     crossOriginEmbedderPolicy: false,
-  })
-);
+  });
+}
+const strictHelmet = helmetWithStyles(["'self'"]);
+// Paddle.js sizes and styles its checkout frame with an inline style
+// attribute and a <style> element it injects, so the pages that open
+// Paddle's checkout (and only those) allow inline styles. Scripts stay
+// locked to this site and cdn.paddle.com everywhere.
+const paddleHelmet = helmetWithStyles(["'self'", "'unsafe-inline'"]);
+const PADDLE_PAGES = new Set(["/checkout.html", "/onboarding.html", "/settings.html"]);
+app.use((req, res, next) => (PADDLE_PAGES.has(req.path) ? paddleHelmet : strictHelmet)(req, res, next));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
