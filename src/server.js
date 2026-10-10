@@ -104,6 +104,7 @@ app.get("/", (req, res, next) => {
 app.get("/privacy.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "privacy.html")));
 app.get("/terms.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "terms.html")));
 app.get("/marketing.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "marketing.css")));
+app.get("/home.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "home.js")));
 
 // Unauthenticated: the login page itself and what it needs to render.
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "login.html")));
@@ -135,6 +136,7 @@ app.get("/reset-password.html", (req, res) => res.sendFile(path.join(__dirname, 
 app.get("/reset-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
+app.get("/password-toggle.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "password-toggle.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
 app.get("/favicon-32.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
 app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "apple-touch-icon.png")));
