@@ -2499,3 +2499,12 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .login-card:not(.onboarding-card-wide) .wizard-dot { width: 1.35rem; height: 1.35rem; font-size: 0.7rem; }
 .login-card:not(.onboarding-card-wide) .wizard-step { gap: 0.3rem; font-size: 0.75rem; white-space: nowrap; }
 .login-card:not(.onboarding-card-wide) .wizard-step + .wizard-step::before { width: 0.35rem; margin-right: 0; }
+
+/* The base login card is a fixed 280px; the agreement (and onboarding) need room to be read. */
+.login-card.signup-wide { width: min(860px, calc(100vw - 2rem)); }
+.signup-baa-box { max-height: 46vh; min-height: 220px; font-size: 0.9rem; }
+.signup-question { margin: 0 0 0.75rem; line-height: 1.5; }
+.onboarding-card { width: min(860px, calc(100vw - 2rem)); }
+.onboarding-card-wide { width: min(980px, calc(100vw - 2rem)); }
+.login-card label.onboarding-agree { flex-direction: row; align-items: flex-start; gap: 0.6rem; }
+.login-card label.onboarding-agree input { flex: 0 0 auto; width: auto; margin-top: 0.2rem; }

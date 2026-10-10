@@ -20,7 +20,7 @@ async function start() {
       document.getElementById("baa-text").textContent = baa.text;
       baaHash = baa.hash;
       baaSection.hidden = false;
-      renderWizardSteps(stepsEl, wizardLabels(true), 4);
+      renderWizardSteps(stepsEl, wizardLabels(true), 3);
       return;
     }
   }

@@ -13,7 +13,7 @@
 <body>
   <div class="login-page">
     <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
-    <form class="login-card" method="POST" action="/auth/signup">
+    <form class="login-card" id="signup-form" method="POST" action="/auth/signup">
       <div class="login-brand">
         <div class="brand-mark">
           <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
@@ -28,7 +28,7 @@
       <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
       <div id="signup-error" class="login-error" hidden></div>
 
-      <div class="signup-step" data-step="1">
+      <div class="signup-step" data-step="about">
         <h1 class="signup-step-title">Tell us about you</h1>
         <label>
           First name
@@ -44,7 +44,31 @@
         </label>
       </div>
 
-      <div class="signup-step" data-step="2">
+      <div class="signup-step" data-step="health">
+        <h1 class="signup-step-title">Health information</h1>
+        <p class="signup-question">Will any of the call recordings you store with CallTrove include health information, such as medical conditions, medications, treatment, or health insurance details?</p>
+        <fieldset class="signup-hipaa">
+          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
+          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
+        </fieldset>
+      </div>
+
+      <div class="signup-step" data-step="agreement">
+        <h1 class="signup-step-title">Business Associate Agreement</h1>
+        <p class="settings-note">Because your recordings may include health information, please read and accept this agreement.</p>
+        <pre id="signup-baa-text" class="baa-text-box signup-baa-box"></pre>
+        <input type="hidden" name="baaHash" id="signup-baa-hash" />
+        <label>
+          Your full legal name
+          <input type="text" name="baaFullName" id="signup-baa-name" autocomplete="name" required />
+        </label>
+        <label class="onboarding-agree">
+          <input type="checkbox" name="baaAgree" id="signup-baa-agree" required />
+          I have read and agree to this agreement on behalf of my company.
+        </label>
+      </div>
+
+      <div class="signup-step" data-step="login">
         <h1 class="signup-step-title">Create your login</h1>
         <label>
           Email address (this is your login)
@@ -58,15 +82,6 @@
           Confirm password
           <input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required />
         </label>
-      </div>
-
-      <div class="signup-step" data-step="3">
-        <h1 class="signup-step-title">Health information</h1>
-        <p class="settings-note">Will you store health information (HIPAA) in CallTrove? If you choose Yes, you'll review and accept a Business Associate Agreement next.</p>
-        <fieldset class="signup-hipaa">
-          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
-          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
-        </fieldset>
       </div>
 
       <div class="signup-nav">

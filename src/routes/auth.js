@@ -6,6 +6,7 @@ const totp = require("../totp");
 const emailOtp = require("../emailOtp");
 const email = require("../email");
 const { verifyPassword, hashPassword, sessionUser } = require("../auth");
+const { BAA_VERSION, buildBaaText } = require("../baaText");
 
 const router = express.Router();
 
@@ -370,6 +371,18 @@ const SIGNUP_EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // tenant's owner_user_id can point at them (same FK the other direction) --
 // so the sequence is: tenant with no owner yet, then the user, then link
 // the two (db.updateTenantOwner).
+// The BAA text a HIPAA signup is shown before their account exists. Built
+// from the business name they typed, same as the in-app version, and the
+// hash is echoed back on signup so the server can confirm the exact text
+// that was displayed is what got accepted.
+const baaPreviewLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false });
+router.get("/baa-preview", baaPreviewLimiter, (req, res) => {
+  const businessName = String(req.query.businessName || "").trim().slice(0, 200);
+  if (!businessName) return res.status(400).json({ error: "business name required" });
+  const text = buildBaaText({ companyName: businessName });
+  res.json({ text, hash: createHash("sha256").update(text, "utf8").digest("hex"), version: BAA_VERSION });
+});
+
 router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, async (req, res) => {
   const firstName = ((req.body || {}).firstName || "").trim();
   const lastName = ((req.body || {}).lastName || "").trim();
@@ -383,6 +396,16 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
 
   if (hipaaAnswer !== "yes" && hipaaAnswer !== "no") {
     return res.redirect("/signup.html?error=hipaa");
+  }
+  // A HIPAA signup accepts the BAA as part of creating the account: the
+  // signer's name, the box ticked, and the hash of the exact text shown.
+  const baaFullName = (((req.body || {}).baaFullName) || "").trim();
+  const baaText = buildBaaText({ companyName: businessName });
+  const baaHash = createHash("sha256").update(baaText, "utf8").digest("hex");
+  if (hipaaAnswer === "yes") {
+    if (!baaFullName || (req.body || {}).baaAgree !== "on" || (req.body || {}).baaHash !== baaHash) {
+      return res.redirect("/signup.html?error=baa");
+    }
   }
   if (!firstName || !lastName || !businessName || !username || !address || !password) {
     return res.redirect("/signup.html?error=missing");
@@ -409,6 +432,25 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   await db.createTenant({ id: tenantId, name: businessName, hipaaRequested: hipaaAnswer === "yes", billingRequired: true });
   await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
   await db.updateTenantOwner(tenantId, userId);
+  if (hipaaAnswer === "yes") {
+    await db.recordBaaAcceptance({
+      tenantId,
+      userId,
+      fullName: baaFullName,
+      title: "",
+      baaVersion: BAA_VERSION,
+      baaTextHash: baaHash,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent"),
+    });
+    await db.logAudit({
+      actorId: userId,
+      actorUsername: username,
+      action: "baa_accepted",
+      message: `BAA accepted for "${businessName}" by ${baaFullName} at signup`,
+      tenantId,
+    });
+  }
   // Stored as-provided, unverified -- same shape as the self-service
   // "start email verification" flow (db.setUserPendingEmail). Proving it
   // (and optionally turning it into an MFA method) happens later, in
