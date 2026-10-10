@@ -23,8 +23,8 @@ function fail(message) {
   fallback.hidden = false;
 }
 
-function loginUrl(emailed) {
-  return "/login.html?paid=1" + (emailed ? "&emailed=1" : "") + (accountEmail ? "&email=" + encodeURIComponent(accountEmail) : "");
+function loginUrl() {
+  return "/login.html?paid=1" + (accountEmail ? "&email=" + encodeURIComponent(accountEmail) : "");
 }
 
 let accountEmail = "";
@@ -45,7 +45,7 @@ async function waitForAccount() {
     const res = await fetch("/auth/checkout-status?id=" + encodeURIComponent(pendingId)).catch(() => null);
     const body = res && res.ok ? await res.json() : null;
     if (body && body.ready) {
-      location.href = loginUrl(body.emailed);
+      location.href = loginUrl();
       return;
     }
   }
@@ -56,10 +56,14 @@ async function start() {
   if (!pendingId) return fail("This checkout link is missing its sign-up. Please start again.");
   const res = await fetch("/auth/checkout-config?id=" + encodeURIComponent(pendingId));
   if (res.status === 404) return fail("This sign-up has expired. Please start again.");
+  if (res.status === 403) {
+    location.href = "/verify-email.html?id=" + encodeURIComponent(pendingId);
+    return;
+  }
   if (!res.ok) return fail("Checkout isn't available right now. Please try again later.");
   const cfg = await res.json();
   if (cfg.ready) {
-    location.href = loginUrl(false);
+    location.href = loginUrl();
     return;
   }
   accountEmail = (cfg.checkout && cfg.checkout.email) || "";

@@ -2564,3 +2564,11 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .checkout-done-check { display: flex; align-items: center; justify-content: center; width: 4rem; height: 4rem; border-radius: 50%; background: var(--accent); color: #fff; }
 .checkout-done-title { margin: 0; font-size: 1.5rem; }
 .checkout-done-text { margin: 0; max-width: 28rem; line-height: 1.5; color: var(--muted); }
+
+/* Email code step */
+.verify-card { width: min(420px, calc(100vw - 2rem)); }
+.code-input { text-align: center; font-size: 1.5rem; letter-spacing: 0.4em; font-variant-numeric: tabular-nums; }
+.link-button { background: none; border: none; padding: 0; color: var(--accent-text); text-decoration: underline; cursor: pointer; font: inherit; }
+.link-button:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+.login-card button.link-button { width: auto; background: none; border: none; box-shadow: none; padding: 0; color: var(--accent-text); text-decoration: underline; font: inherit; cursor: pointer; }
+.login-card button.link-button:disabled { color: var(--muted); text-decoration: none; cursor: default; opacity: 1; }

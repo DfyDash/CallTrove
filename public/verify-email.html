@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CallTrove — Log in</title>
+  <title>CallTrove — Verify your email</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="favicon-32.png" type="image/png" />
@@ -13,7 +13,7 @@
 <body>
   <div class="login-page">
     <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
-    <form class="login-card" method="POST" action="/auth/login">
+    <form class="login-card verify-card" id="verify-form">
       <div class="login-brand">
         <div class="brand-mark">
           <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
@@ -25,24 +25,22 @@
         </div>
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
       </div>
-      <div id="login-error" class="login-error" hidden>Incorrect email or password.</div>
-      <div id="login-pending" class="login-error" hidden>Check your email for a link to set your password before logging in.</div>
-      <div id="login-activated" class="login-notice" hidden>Password set — you can log in now.</div>
-      <div id="login-reset" class="login-notice" hidden>Password reset — you can log in now.</div>
-      <div id="login-paid" class="login-notice" hidden>Payment received — your account is ready. Log in with your email and password.</div>
+
+      <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
+      <h1 class="signup-step-title">Check your email</h1>
+      <p class="settings-note" id="verify-intro">We sent a 6-digit code to your email address. Enter it below to continue.</p>
+      <div id="verify-error" class="login-error" hidden></div>
+      <div id="verify-info" class="login-notice" hidden></div>
       <label>
-        Email
-        <input type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
+        Verification code
+        <input type="text" id="verify-code" class="code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus />
       </label>
-      <label>
-        Password
-        <input type="password" name="password" autocomplete="current-password" required />
-      </label>
-      <button type="submit">Log in</button>
-      <p class="forgot-password"><a href="/forgot-password.html">Forgot your password?</a></p>
+      <button type="submit" id="verify-submit">Verify and continue</button>
+      <p class="forgot-password"><button type="button" id="verify-resend" class="link-button">Send a new code</button></p>
+      <p class="forgot-password"><a href="/signup.html">Use a different email</a></p>
     </form>
   </div>
-  <script src="login.js"></script>
-<script src="password-toggle.js"></script>
+  <script src="wizard-steps.js"></script>
+  <script src="verify-email.js"></script>
 </body>
 </html>

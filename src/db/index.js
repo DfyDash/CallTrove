@@ -2404,20 +2404,62 @@ async function createPendingSignup(p) {
   await pool.query(`DELETE FROM pending_signups WHERE consumed_tenant_id IS NULL AND created_at < now() - interval '7 days'`);
   await pool.query(
     `INSERT INTO pending_signups (id, first_name, last_name, business_name, email, password_hash, password_salt, hipaa_requested,
-                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent, baa_title)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent, baa_title, email_check_skipped)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
     [p.id, p.firstName, p.lastName, p.businessName, p.email, p.passwordHash, p.passwordSalt, !!p.hipaaRequested,
-     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null, p.baaTitle || null]
+     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null, p.baaTitle || null, !!p.emailCheckSkipped]
   );
 }
 
 async function getPendingSignup(id) {
   const { rows } = await pool.query(
-    `SELECT id, email, business_name AS "businessName", hipaa_requested AS "hipaaRequested", consumed_tenant_id AS "consumedTenantId"
+    `SELECT id, email, business_name AS "businessName", hipaa_requested AS "hipaaRequested", consumed_tenant_id AS "consumedTenantId",
+            (email_verified_at IS NOT NULL OR email_check_skipped) AS "emailOk",
+            email_code_last_sent AS "emailCodeLastSent"
      FROM pending_signups WHERE id = $1`,
     [id]
   );
   return rows[0] || null;
+}
+
+// Stores a freshly generated code (hashed) for a waiting sign-up, unless one
+// was sent under 30 seconds ago or the sign-up has used its 6 sends.
+async function issuePendingEmailCode(id, codeHash, expiresAt) {
+  const { rows } = await pool.query(
+    `UPDATE pending_signups
+     SET email_code_hash = $2, email_code_expires = $3, email_code_attempts = 0,
+         email_code_sends = email_code_sends + 1, email_code_last_sent = now()
+     WHERE id = $1 AND consumed_tenant_id IS NULL AND email_verified_at IS NULL
+       AND (email_code_last_sent IS NULL OR email_code_last_sent < now() - interval '30 seconds')
+       AND email_code_sends < 6
+     RETURNING email`,
+    [id, codeHash, expiresAt]
+  );
+  if (rows[0]) return { ok: true, email: rows[0].email };
+  const { rows: why } = await pool.query(
+    `SELECT email_code_sends AS sends, email_verified_at IS NOT NULL AS verified FROM pending_signups WHERE id = $1 AND consumed_tenant_id IS NULL`,
+    [id]
+  );
+  if (!why[0] || why[0].verified) return { ok: false, reason: "missing" };
+  return { ok: false, reason: why[0].sends >= 6 ? "limit" : "cooldown" };
+}
+
+// Checks a code. Every check counts as an attempt; 5 wrong ones burn the code.
+async function checkPendingEmailCode(id, codeHash) {
+  const { rows } = await pool.query(
+    `UPDATE pending_signups SET email_code_attempts = email_code_attempts + 1
+     WHERE id = $1 AND consumed_tenant_id IS NULL AND email_verified_at IS NULL
+     RETURNING email_code_hash AS hash, email_code_expires AS expires, email_code_attempts AS attempts`,
+    [id]
+  );
+  const r = rows[0];
+  if (!r) return "missing";
+  if (r.attempts > 5) return "toomany";
+  if (!r.hash || !r.expires || new Date(r.expires) < new Date()) return "expired";
+  const a = Buffer.from(r.hash), b = Buffer.from(codeHash);
+  if (a.length !== b.length || !require("crypto").timingSafeEqual(a, b)) return "incorrect";
+  await pool.query(`UPDATE pending_signups SET email_verified_at = now(), email_code_hash = NULL WHERE id = $1`, [id]);
+  return "ok";
 }
 
 // Runs when Paddle confirms the first payment. All-or-nothing, and safe to
@@ -2436,6 +2478,10 @@ async function createAccountFromPendingSignup(id) {
       await client.query("COMMIT");
       return { status: "exists", tenantId: p.consumed_tenant_id };
     }
+    if (!p.email_verified_at && !p.email_check_skipped) {
+      await client.query("ROLLBACK");
+      return { status: "unverified" };
+    }
     const taken = await client.query(`SELECT 1 FROM users WHERE lower(username) = lower($1)`, [p.email]);
     if (taken.rowCount) {
       await client.query("ROLLBACK");
@@ -2445,9 +2491,9 @@ async function createAccountFromPendingSignup(id) {
     const userId = randomUUID();
     await client.query(`INSERT INTO tenants (id, name, hipaa_requested, billing_required) VALUES ($1, $2, $3, true)`, [tenantId, p.business_name, p.hipaa_requested]);
     await client.query(
-      `INSERT INTO users (id, username, password_hash, password_salt, role, tenant_id, first_name, last_name, email)
-       VALUES ($1, $2, $3, $4, 'admin', $5, $6, $7, $8)`,
-      [userId, p.email, p.password_hash, p.password_salt, tenantId, p.first_name, p.last_name, p.email]
+      `INSERT INTO users (id, username, password_hash, password_salt, role, tenant_id, first_name, last_name, email, email_verified_at)
+       VALUES ($1, $2, $3, $4, 'admin', $5, $6, $7, $8, $9)`,
+      [userId, p.email, p.password_hash, p.password_salt, tenantId, p.first_name, p.last_name, p.email, p.email_verified_at]
     );
     await client.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [userId, tenantId]);
     await client.query(
@@ -2606,6 +2652,8 @@ module.exports = {
   getStorageStatsByTierForTenantPeriod,
   createPendingSignup,
   getPendingSignup,
+  issuePendingEmailCode,
+  checkPendingEmailCode,
   createAccountFromPendingSignup,
   usageAllowed,
   listTenantsWithUnbilledUsage,

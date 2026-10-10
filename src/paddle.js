@@ -61,6 +61,12 @@ async function accountForPendingSignup(pendingId, status, req) {
   if (pending.consumedTenantId) return pending.consumedTenantId;
   if (status !== "active" && status !== "trialing") return null;
   const result = await db.createAccountFromPendingSignup(pendingId);
+  if (result.status === "unverified") {
+    const message = `PAID BUT EMAIL NOT CONFIRMED: sign-up ${pendingId} paid for ${pending.email} without confirming that address, so no account was created. Needs a manual look (refund).`;
+    console.error(`[paddle] ${message}`);
+    await db.logAudit({ actorId: null, actorUsername: "paddle-webhook", action: "signup_paid_unverified", message, tenantId: null }).catch(() => {});
+    return null;
+  }
   if (result.status === "email_taken") {
     const message = `PAID BUT NO ACCOUNT: sign-up ${pendingId} paid, but ${pending.email} already has a login. Needs a manual look (refund or merge).`;
     console.error(`[paddle] ${message}`);
@@ -72,12 +78,11 @@ async function accountForPendingSignup(pendingId, status, req) {
     try {
       const email = require("./email");
       const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const verifyUrl = `${baseUrl}/auth/verify-email?token=${encodeURIComponent(require("./emailVerifyToken").createEmailVerifyToken(result.userId, result.email))}`;
       await email.sendEmail({
         to: result.email,
         subject: `Welcome to CallTrove, ${result.firstName}`,
-        text: `Your CallTrove account is ready.\n\nFirst, confirm your email address (it lets you reset your password if you forget it): ${verifyUrl}\n\nSign in at ${baseUrl}/login.html with your email address (${result.email}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-        html: email.welcomeEmailHtml(result.email, { baseUrl, firstName: result.firstName, verifyUrl }),
+        text: `Your CallTrove account is ready. Sign in at ${baseUrl}/login.html with your email address (${result.email}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
+        html: email.welcomeEmailHtml(result.email, { baseUrl, firstName: result.firstName }),
       });
     } catch (err) {
       console.error("[paddle] account created but welcome email failed:", err.message);

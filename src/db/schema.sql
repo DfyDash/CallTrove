@@ -909,6 +909,17 @@ CREATE TABLE IF NOT EXISTS pending_signups (
   consumed_tenant_id UUID REFERENCES tenants(id)
 );
 ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS baa_title TEXT;
+-- The email is confirmed with a 6-digit code BEFORE payment, so nobody can
+-- pay for (and take over) an address they don't control. email_check_skipped
+-- is only ever set when the server runs with SIGNUP_SKIP_EMAIL_VERIFICATION
+-- (a test-site switch for when email sending isn't configured).
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_check_skipped BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_hash TEXT;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_expires TIMESTAMPTZ;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_sends INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_last_sent TIMESTAMPTZ;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

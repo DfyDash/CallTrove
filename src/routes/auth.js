@@ -431,6 +431,15 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
     return res.redirect("/signup.html?error=unavailable");
   }
 
+  // The email is confirmed with a code BEFORE payment (see schema.sql's
+  // pending_signups comment). Without working email we can't confirm anything,
+  // so sign-up is closed -- unless the operator has explicitly switched the
+  // check off for a test site.
+  const skipEmailCheck = process.env.SIGNUP_SKIP_EMAIL_VERIFICATION === "true";
+  if (!skipEmailCheck && !email.isEnabled()) {
+    return res.redirect("/signup.html?error=unavailable");
+  }
+
   const pendingId = randomUUID();
   const { hash, salt } = hashPassword(password);
   await db.createPendingSignup({
@@ -448,9 +457,37 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
     baaVersion: hipaaAnswer === "yes" ? BAA_VERSION : null,
     baaIp: req.ip,
     baaUserAgent: req.get("user-agent"),
+    emailCheckSkipped: skipEmailCheck,
   });
-  res.redirect(`/checkout.html?id=${pendingId}`);
+  if (skipEmailCheck) return res.redirect(`/checkout.html?id=${pendingId}`);
+  const sent = await sendSignupCode(pendingId, address, req);
+  if (!sent || !sent.ok) return res.redirect("/signup.html?error=emailsend");
+  res.redirect(`/verify-email.html?id=${pendingId}`);
 });
+
+async function sendSignupCode(pendingId, address, req) {
+  const code = emailOtp.generateCode();
+  const issued = await db.issuePendingEmailCode(pendingId, emailOtp.hashCode(code), emailOtp.expiresAt());
+  if (!issued.ok) return issued;
+  try {
+    await email.sendEmail({
+      to: address,
+      subject: "Your CallTrove verification code",
+      text: `Your CallTrove verification code is: ${code}\n\nEnter it to continue signing up. It expires in 10 minutes. If you didn't try to sign up, you can ignore this email.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Verify your email",
+        explain: "Enter this code to continue signing up for CallTrove.",
+        securityNote: "Didn't try to sign up? You can ignore this email -- nothing happens unless the code is used.",
+        requestIp: req.ip,
+        baseUrl: `${req.protocol}://${req.get("host")}`,
+      }),
+    });
+  } catch (err) {
+    console.error("[signup] failed to send verification code:", err);
+    return false;
+  }
+  return { ok: true };
+}
 
 // Prices shown on the sign-up pages before anyone commits to anything.
 router.get("/plans", (req, res) => {
@@ -478,6 +515,7 @@ router.get("/checkout-config", checkoutLimiter, async (req, res) => {
   const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
   if (!pending) return res.status(404).json({ error: "not found" });
   if (pending.consumedTenantId) return res.json({ ready: true });
+  if (!pending.emailOk) return res.status(403).json({ needsVerification: true });
   const paddleModule = require("../paddle");
   const billingRates = require("../billingRates");
   const checkout = paddleModule.checkoutConfig(pending.hipaaRequested);
@@ -492,22 +530,56 @@ router.get("/checkout-config", checkoutLimiter, async (req, res) => {
   });
 });
 
-// The link in the welcome email. Only marks the address verified -- it
-// deliberately does not turn on email sign-in codes, so clicking it can't
-// change how anyone logs in.
-router.get("/verify-email", checkoutLimiter, async (req, res) => {
-  const t = require("../emailVerifyToken").readEmailVerifyToken(String(req.query.token || ""));
-  const user = t ? await db.getUserById(t.userId) : null;
-  if (!user || !user.email || user.email.toLowerCase() !== t.email) return res.redirect("/login.html?verifyerror=1");
-  if (!user.emailVerifiedAt && !(await db.verifyUserEmail(user.id))) return res.redirect("/login.html?verifyerror=1");
-  res.redirect("/login.html?verified=1");
+// --- confirming the email before payment ---
+
+function maskEmail(address) {
+  const [name, domain] = String(address).split("@");
+  return `${name.slice(0, 1)}***@${domain}`;
+}
+const secondsUntilResend = (last) => (last ? Math.max(0, 30 - Math.floor((Date.now() - new Date(last).getTime()) / 1000)) : 0);
+
+router.get("/verify-status", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  res.json({
+    verified: pending.emailOk || !!pending.consumedTenantId,
+    email: maskEmail(pending.email),
+    hipaaRequested: pending.hipaaRequested,
+    resendIn: secondsUntilResend(pending.emailCodeLastSent),
+  });
+});
+
+const verifyCodeLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 60, standardHeaders: true, legacyHeaders: false });
+
+router.post("/verify-code", verifyCodeLimiter, express.json(), async (req, res) => {
+  const id = String((req.body || {}).id || "");
+  const code = String((req.body || {}).code || "").trim();
+  if (!UUID_RE.test(id)) return res.status(404).json({ error: "not found" });
+  // A wrong code is ordinary user input, not a failed request: answer 200 so
+  // it doesn't show up as a network error in the browser console.
+  if (!/^\d{6}$/.test(code)) return res.json({ ok: false, error: "incorrect" });
+  const result = await db.checkPendingEmailCode(id, emailOtp.hashCode(code));
+  if (result === "ok") return res.json({ ok: true });
+  res.status(result === "missing" ? 404 : 200).json({ ok: false, error: result });
+});
+
+router.post("/resend-code", verifyCodeLimiter, express.json(), async (req, res) => {
+  const id = String((req.body || {}).id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending || pending.consumedTenantId || pending.emailOk) return res.status(404).json({ error: "not found" });
+  const sent = await sendSignupCode(id, pending.email, req);
+  if (sent && sent.ok) return res.json({ ok: true, resendIn: 30 });
+  if (sent && sent.reason === "cooldown") return res.json({ ok: false, error: "cooldown" });
+  if (sent && sent.reason === "limit") return res.json({ ok: false, error: "limit" });
+  res.status(502).json({ error: "send_failed" });
 });
 
 router.get("/checkout-status", checkoutLimiter, async (req, res) => {
   const id = String(req.query.id || "");
   const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
   if (!pending) return res.status(404).json({ error: "not found" });
-  res.json({ ready: !!pending.consumedTenantId, emailed: email.isEnabled() });
+  res.json({ ready: !!pending.consumedTenantId });
 });
 
 // Same brute-force shape as mfaLimiter above -- keyed by the token itself

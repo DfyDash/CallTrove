@@ -7,9 +7,10 @@ const ERROR_MESSAGES = {
   hipaa: "Choose a plan to continue.",
   baa: "Please accept the agreement to continue.",
   unavailable: "Sign-up is temporarily unavailable. Please try again later.",
+  emailsend: "We couldn't send your verification email. Check the address and try again.",
 };
 // Which step to land on when the server rejects the form.
-const ERROR_STEP = { email: "login", mismatch: "login", tooshort: "login", taken: "login", hipaa: "health", baa: "agreement" };
+const ERROR_STEP = { email: "login", mismatch: "login", tooshort: "login", taken: "login", emailsend: "login", hipaa: "health", baa: "agreement" };
 const SAVED_KEY = "calltroveSignup";
 
 const form = document.getElementById("signup-form");
