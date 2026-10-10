@@ -746,6 +746,11 @@ const digestSectionEl = document.getElementById("digest-section");
 // snapshot -- a freshly connected account has neither, and that's not an
 // error state worth a message, just nothing to show yet.
 async function loadDigest() {
+  // No connected GoHighLevel account yet means no digest and nothing to ask for.
+  if (!currentAccountId) {
+    digestSectionEl.hidden = true;
+    return;
+  }
   try {
     const [digestRes, settingsRes] = await Promise.all([
       fetch(`/api/admin/call-digest?accountId=${encodeURIComponent(currentAccountId)}`),

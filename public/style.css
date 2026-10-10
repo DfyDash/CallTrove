@@ -2572,3 +2572,8 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .link-button:disabled { color: var(--muted); text-decoration: none; cursor: default; }
 .login-card button.link-button { width: auto; background: none; border: none; box-shadow: none; padding: 0; color: var(--accent-text); text-decoration: underline; font: inherit; cursor: pointer; }
 .login-card button.link-button:disabled { color: var(--muted); text-decoration: none; cursor: default; opacity: 1; }
+
+/* Logo lockup: the wordmark sits level with the phone, the padlock hangs below. */
+.login-brand, .sidebar-brand { align-items: flex-start; }
+.login-brand .brand-name { margin-top: 2px; }
+.sidebar-brand .brand-name { margin-top: 1px; }

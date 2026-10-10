@@ -86,6 +86,12 @@ async function loadAgreement() {
   if (!nameInput.value) nameInput.value = `${form.elements.firstName.value.trim()} ${form.elements.lastName.value.trim()}`.trim();
 }
 
+// A "doesn't match" message set earlier must go away as soon as either password
+// is edited, or the browser keeps blocking the form with a stale complaint.
+form.addEventListener("input", (e) => {
+  if (e.target.name === "password" || e.target.name === "confirmPassword") form.elements.confirmPassword.setCustomValidity("");
+});
+
 nextBtn.addEventListener("click", async () => {
   errorEl.hidden = true;
   if (!stepIsValid()) return;
