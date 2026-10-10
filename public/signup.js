@@ -4,7 +4,7 @@ const ERROR_MESSAGES = {
   mismatch: "Password and confirmation don't match.",
   tooshort: "Password must be at least 8 characters.",
   taken: "An account with that email already exists.",
-  hipaa: "Choose Yes or No for the health-information question.",
+  hipaa: "Choose a plan to continue.",
   baa: "Please accept the agreement to continue.",
   unavailable: "Sign-up is temporarily unavailable. Please try again later.",
 };
@@ -162,7 +162,7 @@ fetch("/auth/plans")
       if (!p || !p.priceLabel) continue;
       document.querySelector(`[data-plan="${key}"]`).textContent = p.priceLabel;
       document.querySelector(`[data-plan-detail="${key}"]`).textContent =
-        `${key === "hipaa" ? "CallTrove for HIPAA, includes a Business Associate Agreement. " : "CallTrove. "}${p.freeGB} GB of storage included, then ${fmtRate(p.overagePerGbMonth)} per GB per month.`;
+        `${p.freeGB} GB of storage included, then ${fmtRate(p.overagePerGbMonth)} per GB per month${key === "hipaa" ? ". Includes a Business Associate Agreement" : ""}.`;
     }
     if (plans.standard && plans.standard.priceLabel) {
       const note = document.getElementById("signup-price-note");

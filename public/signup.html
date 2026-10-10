@@ -46,22 +46,24 @@
       </div>
 
       <div class="signup-step" data-step="health">
-        <h1 class="signup-step-title">Health information</h1>
-        <p class="signup-question">Will any of the call recordings you store with CallTrove include health information, such as medical conditions, medications, treatment, or health insurance details?</p>
-        <fieldset class="signup-hipaa signup-plans">
-          <label class="signup-plan">
-            <input type="radio" name="hipaa" value="no" required />
-            <span class="signup-plan-body">
-              <span class="signup-plan-head"><strong>No</strong><span class="signup-plan-price" data-plan="standard"></span></span>
-              <span class="signup-plan-detail" data-plan-detail="standard"></span>
-            </span>
+        <h1 class="signup-step-title">Choose your plan</h1>
+        <fieldset class="plan-grid">
+          <legend class="visually-hidden">Choose your plan</legend>
+          <label class="plan-card">
+            <input type="radio" name="hipaa" value="no" class="plan-radio" required />
+            <span class="plan-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.6 4.6L19 7.4"/></svg></span>
+            <span class="plan-name">Secure Storage</span>
+            <span class="plan-price" data-plan="standard"></span>
+            <span class="plan-desc">Get this if the call recordings you store with CallTrove don't include health information. Your GoHighLevel recordings are saved automatically, encrypted, and every view or download is logged.</span>
+            <span class="plan-detail" data-plan-detail="standard"></span>
           </label>
-          <label class="signup-plan">
-            <input type="radio" name="hipaa" value="yes" />
-            <span class="signup-plan-body">
-              <span class="signup-plan-head"><strong>Yes</strong><span class="signup-plan-price" data-plan="hipaa"></span></span>
-              <span class="signup-plan-detail" data-plan-detail="hipaa"></span>
-            </span>
+          <label class="plan-card">
+            <input type="radio" name="hipaa" value="yes" class="plan-radio" />
+            <span class="plan-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.6 4.6L19 7.4"/></svg></span>
+            <span class="plan-name">HIPAA Secure Storage</span>
+            <span class="plan-price" data-plan="hipaa"></span>
+            <span class="plan-desc">Get this if call recordings you store with CallTrove include health information, such as medical conditions, medications, treatment, or health insurance details.</span>
+            <span class="plan-detail" data-plan-detail="hipaa"></span>
           </label>
         </fieldset>
         <p class="settings-note" id="signup-usage-note" hidden></p>

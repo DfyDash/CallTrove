@@ -20,5 +20,5 @@ function renderWizardSteps(el, labels, current) {
 }
 
 function wizardLabels(hipaa) {
-  return hipaa ? ["About you", "Health data", "Agreement", "Login", "Payment"] : ["About you", "Health data", "Login", "Payment"];
+  return hipaa ? ["About you", "Plan", "Agreement", "Login", "Payment"] : ["About you", "Plan", "Login", "Payment"];
 }

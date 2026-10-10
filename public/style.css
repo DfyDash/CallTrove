@@ -2509,18 +2509,29 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .login-card label.onboarding-agree { flex-direction: row; align-items: flex-start; gap: 0.6rem; }
 .login-card label.onboarding-agree input { flex: 0 0 auto; width: auto; margin-top: 0.2rem; }
 
-/* Plan choice on the health question */
-.signup-plans { flex-direction: column; gap: 0.6rem; }
-.login-card label.signup-plan { flex-direction: row; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
-.login-card label.signup-plan input { flex: 0 0 auto; width: auto; margin-top: 0.25rem; }
-.login-card label.signup-plan:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
-.signup-plan-body { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; flex: 1 1 auto; }
-.signup-plan-head { display: flex; justify-content: space-between; gap: 0.75rem; }
-.signup-plan-price { font-weight: 600; color: var(--accent-text); white-space: nowrap; }
-.signup-plan-detail { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
-.login-card.signup-health-wide { width: min(560px, calc(100vw - 2rem)); }
-
-/* Logo lockup: the wordmark sits level with the phone, the padlock hangs below. */
-.login-brand, .sidebar-brand { align-items: flex-start; }
-.login-brand .brand-name { margin-top: 2px; }
-.sidebar-brand .brand-name { margin-top: 1px; }
+/* Plan chooser: two columns, terracotta check on the selected plan */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.login-card.signup-health-wide { width: min(760px, calc(100vw - 2rem)); }
+.plan-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; border: none; margin: 0; padding: 0; min-width: 0; }
+.login-card label.plan-card {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem;
+  padding: 1.25rem 1.25rem 1.1rem; border: 2px solid var(--border); border-radius: 12px;
+  background: var(--surface); cursor: pointer; text-align: left; transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.login-card label.plan-card:hover { border-color: var(--accent); }
+.plan-radio { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.plan-check {
+  position: absolute; top: 0.9rem; right: 0.9rem; width: 2rem; height: 2rem; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid var(--border); color: transparent; background: transparent;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+}
+.login-card label.plan-card:has(.plan-radio:checked) { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.login-card label.plan-card:has(.plan-radio:checked) .plan-check { background: var(--accent); border-color: var(--accent); color: #fff; transform: scale(1.08); }
+.login-card label.plan-card:has(.plan-radio:focus-visible) { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+.plan-name { font-size: 1.1rem; font-weight: 700; padding-right: 2.6rem; }
+.plan-price { font-size: 1.75rem; font-weight: 700; color: var(--accent-text); line-height: 1.1; }
+.plan-desc { font-size: 0.9rem; line-height: 1.5; }
+.plan-detail { margin-top: auto; padding-top: 0.5rem; font-size: 0.8rem; line-height: 1.4; color: var(--muted); }
+@media (max-width: 620px) { .plan-grid { grid-template-columns: 1fr; } }
+.plan-grid + .settings-note { margin-top: 1rem; }
