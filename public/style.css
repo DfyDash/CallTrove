@@ -2429,7 +2429,9 @@ form .password-wrap .password-toggle,
 .signup-hipaa-option { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 1.25rem; }
 .signup-hipaa-option input { width: auto; }
 .onboarding-card { max-width: 640px; }
+.onboarding-price { font-size: 1.5rem; font-weight: 600; margin: 0.25rem 0; }
 .onboarding-title { font-size: 1.25rem; margin: 0.5rem 0; }
 .onboarding-agree { display: flex; align-items: flex-start; gap: 0.5rem; }
 .onboarding-agree input { width: auto; margin-top: 0.2rem; }
 .hipaa-requested-note { font-size: 0.8rem; opacity: 0.75; margin-top: 0.25rem; }
+#onboarding-billing #subscribe-btn { margin-top: 0.75rem; }

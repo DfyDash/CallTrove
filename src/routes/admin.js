@@ -90,7 +90,7 @@ function logForOperator(req, action, message) {
 // carries the tenant id so the webhook can match the subscription back.
 router.get("/subscription", async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
-  const checkout = require("../paddle").checkoutConfig();
+  const checkout = require("../paddle").checkoutConfig(!!tenant.hipaaRequested);
   res.json({
     status: tenant.subscriptionStatus || null,
     hipaaRequested: !!tenant.hipaaRequested,

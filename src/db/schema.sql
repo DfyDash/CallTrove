@@ -856,6 +856,10 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
 -- the storage tier stays 'standard' until an operator confirms the BAA and
 -- HIPAA bucket per docs/hipaa-activation-checklist.md.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hipaa_requested BOOLEAN NOT NULL DEFAULT false;
+-- True for accounts created through self-serve signup: the app stays closed
+-- until the BAA (if HIPAA was requested) is accepted and a subscription is
+-- live. Existing accounts keep the default (false) and are never gated.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS billing_required BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

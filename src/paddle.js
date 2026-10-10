@@ -4,7 +4,8 @@
 //
 // Env: PADDLE_API_KEY (server secret), PADDLE_WEBHOOK_SECRET (endpoint
 // secret key), PADDLE_CLIENT_TOKEN (public, used by Paddle.js in the
-// browser), PADDLE_PRICE_ID (the subscription price), PADDLE_ENV
+// browser), PADDLE_PRICE_ID (standard plan, $25/mo), PADDLE_PRICE_ID_HIPAA
+// (HIPAA plan, $30/mo), PADDLE_ENV
 // ("sandbox" | "production", default sandbox).
 const { Paddle, Environment } = require("@paddle/paddle-node-sdk");
 const db = require("./db");
@@ -20,11 +21,17 @@ function paddle() {
 }
 
 // Public values the browser needs to open Paddle's hosted checkout.
-function checkoutConfig() {
-  const token = process.env.PADDLE_CLIENT_TOKEN;
-  const priceId = process.env.PADDLE_PRICE_ID;
-  if (!token || !priceId) return null;
-  return { environment: ENV, clientToken: token, priceId };
+// Billing is on once the client token and the standard price are set. A
+// HIPAA tenant with no HIPAA price configured gets priceId null (the
+// onboarding page says pricing is unavailable) rather than the wrong plan.
+function billingEnabled() {
+  return !!(process.env.PADDLE_CLIENT_TOKEN && process.env.PADDLE_PRICE_ID);
+}
+function checkoutConfig(hipaa = false) {
+  if (!billingEnabled()) return null;
+  const priceId = hipaa ? process.env.PADDLE_PRICE_ID_HIPAA : process.env.PADDLE_PRICE_ID;
+  const priceLabel = hipaa ? process.env.PADDLE_PRICE_LABEL_HIPAA || "$30/month" : process.env.PADDLE_PRICE_LABEL || "$25/month";
+  return { environment: ENV, clientToken: process.env.PADDLE_CLIENT_TOKEN, priceId: priceId || null, priceLabel };
 }
 
 // Express handler; mounted with express.raw() because the signature is
@@ -75,4 +82,4 @@ async function webhookHandler(req, res) {
   }
 }
 
-module.exports = { webhookHandler, checkoutConfig, ENV };
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, ENV };

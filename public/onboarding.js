@@ -59,7 +59,12 @@ function showBilling(sub) {
   billingSection.hidden = false;
   const statusEl = document.getElementById("subscription-status");
   const btn = document.getElementById("subscribe-btn");
-  statusEl.textContent = "Subscribe now, or skip and do it later from Settings \u2192 Billing.";
+  if (!sub.checkout.priceId) {
+    statusEl.textContent = "Pricing for your plan isn't available yet. Please contact support.";
+    return;
+  }
+  document.getElementById("onboarding-price").textContent = sub.checkout.priceLabel || "";
+  statusEl.textContent = "Subscribe to start using CallTrove.";
   btn.hidden = false;
   btn.addEventListener("click", async () => {
     btn.disabled = true;
@@ -78,9 +83,9 @@ function showBilling(sub) {
         token: sub.checkout.clientToken,
         eventCallback: (ev) => {
           if (ev.name === "checkout.completed") {
-            statusEl.textContent = "Thanks! Your subscription is being activated.";
+            statusEl.textContent = "Thanks! Activating your subscription...";
             btn.hidden = true;
-            document.getElementById("skip-link").textContent = "Continue to CallTrove";
+            waitForActivation(statusEl);
           }
         },
       });
@@ -95,6 +100,20 @@ function showBilling(sub) {
       btn.disabled = false;
     }
   });
+}
+
+// Paddle tells us about the payment through a webhook, a few seconds after
+// checkout -- poll until the server has recorded it, then open the app.
+async function waitForActivation(statusEl) {
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const sub = await (await fetch("/api/admin/subscription")).json().catch(() => null);
+    if (sub && (sub.status === "active" || sub.status === "trialing")) {
+      location.href = "/";
+      return;
+    }
+  }
+  statusEl.textContent = "Payment received. Activation is taking longer than usual -- refresh this page in a minute.";
 }
 
 start().catch(() => {

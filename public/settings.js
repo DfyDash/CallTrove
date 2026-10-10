@@ -1659,7 +1659,7 @@ async function loadSubscription() {
   statusEl.textContent = sub.status
     ? `Status: ${labels[sub.status] || sub.status}` + (sub.periodEnd && live ? ` -- current period ends ${new Date(sub.periodEnd).toLocaleDateString()}` : "")
     : "No subscription yet.";
-  if (!sub.checkout || live) return;
+  if (!sub.checkout || !sub.checkout.priceId || live) return;
   btn.hidden = false;
   btn.addEventListener("click", async () => {
     btn.disabled = true;

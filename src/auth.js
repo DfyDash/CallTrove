@@ -9,6 +9,13 @@ const SCRYPT_KEYLEN = 64;
 // blocked outright once a tenant leaves 'active', which is what makes
 // cancellation "immediately locks out logins" actually true rather than
 // just a UI suggestion.
+// Self-serve signups stay on the onboarding page until the BAA (if they
+// asked for HIPAA) is accepted and a subscription is live. Only what that
+// page itself needs is reachable meanwhile.
+const REACHABLE_WHILE_ONBOARDING_API = ["/api/me", "/api/admin/subscription", "/api/admin/baa", "/api/admin/baa/accept"];
+const REACHABLE_WHILE_ONBOARDING_PAGES = ["/onboarding.html", "/onboarding.js"];
+const LIVE_SUBSCRIPTION = ["active", "trialing", "past_due"];
+
 const REACHABLE_WHILE_CANCELED = ["/api/me", "/api/tenant/status", "/api/admin/tenant/restore"];
 
 function hashPassword(password) {
@@ -95,6 +102,20 @@ async function requireAuth(req, res, next) {
       }
     } else if (req.path !== "/account-canceled.html") {
       return res.redirect("/account-canceled.html");
+    }
+  }
+
+  if (tenant && tenant.billingRequired && !lockedOut && !req.session.user.isOperator && require("./paddle").billingEnabled()) {
+    const subscribed = LIVE_SUBSCRIPTION.includes(tenant.subscriptionStatus);
+    const needsBaa = tenant.hipaaRequested && !(await db.getLatestBaaAcceptance(tenant.id));
+    if (!subscribed || needsBaa) {
+      if (req.path.startsWith("/api/")) {
+        if (!REACHABLE_WHILE_ONBOARDING_API.includes(req.path)) {
+          return res.status(402).json({ error: "onboarding_required" });
+        }
+      } else if (!REACHABLE_WHILE_ONBOARDING_PAGES.includes(req.path)) {
+        return res.redirect("/onboarding.html");
+      }
     }
   }
 

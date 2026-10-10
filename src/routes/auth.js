@@ -404,7 +404,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const userId = randomUUID();
   const { hash, salt } = hashPassword(password);
 
-  await db.createTenant({ id: tenantId, name: businessName, hipaaRequested: hipaaAnswer === "yes" });
+  await db.createTenant({ id: tenantId, name: businessName, hipaaRequested: hipaaAnswer === "yes", billingRequired: true });
   await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
   await db.updateTenantOwner(tenantId, userId);
   // Stored as-provided, unverified -- same shape as the self-service
