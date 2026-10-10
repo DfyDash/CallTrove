@@ -4,6 +4,7 @@ const ERROR_MESSAGES = {
   mismatch: "Password and confirmation don't match.",
   tooshort: "Password must be at least 8 characters.",
   taken: "That username is already taken.",
+  hipaa: "Choose Yes or No for the health-information question.",
 };
 
 const error = new URLSearchParams(location.search).get("error");

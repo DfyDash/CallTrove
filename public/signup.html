@@ -46,6 +46,11 @@
         Email address
         <input type="email" name="email" autocomplete="email" required />
       </label>
+      <fieldset class="signup-hipaa">
+        <legend>Will you store health information (HIPAA)?</legend>
+        <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
+        <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
+      </fieldset>
       <label>
         Password
         <input type="password" name="password" autocomplete="new-password" minlength="8" required />

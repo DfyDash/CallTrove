@@ -1386,8 +1386,8 @@ async function countRecentEmailOtpCodes(userId, purpose, sinceMinutes) {
 
 // --- tenants / ghl_accounts / user_account_access (multi-tenant) ---
 
-async function createTenant({ id, name, ownerUserId }) {
-  await pool.query(`INSERT INTO tenants (id, name, owner_user_id) VALUES ($1, $2, $3)`, [id, name, ownerUserId || null]);
+async function createTenant({ id, name, ownerUserId, hipaaRequested = false }) {
+  await pool.query(`INSERT INTO tenants (id, name, owner_user_id, hipaa_requested) VALUES ($1, $2, $3, $4)`, [id, name, ownerUserId || null, !!hipaaRequested]);
 }
 
 // Fills in owner_user_id after the fact -- needed because the owner's user
@@ -1465,6 +1465,7 @@ async function getTotalStoredBytesForTenant(tenantId) {
 async function getTenantById(id) {
   const { rows } = await pool.query(
     `SELECT id, name, owner_user_id AS "ownerUserId", status, storage_tier AS "storageTier",
+            hipaa_requested AS "hipaaRequested",
             cancellation_requested_at AS "cancellationRequestedAt",
             purge_at AS "purgeAt", canceled_at AS "canceledAt",
             paddle_customer_id AS "paddleCustomerId",
@@ -1598,7 +1599,7 @@ async function listStorageKeysForTenant(tenantId) {
 async function listTenantsForOperator() {
   const { rows } = await pool.query(`
     SELECT
-      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
+      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.hipaa_requested AS "hipaaRequested", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
       u.username AS "ownerUsername",
       (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id

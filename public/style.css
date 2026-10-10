@@ -2422,3 +2422,14 @@ form .password-wrap .password-toggle,
   background: transparent;
   opacity: 1;
 }
+
+/* Signup HIPAA question + onboarding page */
+.signup-hipaa { border: none; margin: 0 0 1rem; padding: 0; }
+.signup-hipaa legend { padding: 0; margin-bottom: 0.4rem; }
+.signup-hipaa-option { display: inline-flex; align-items: center; gap: 0.4rem; margin-right: 1.25rem; }
+.signup-hipaa-option input { width: auto; }
+.onboarding-card { max-width: 640px; }
+.onboarding-title { font-size: 1.25rem; margin: 0.5rem 0; }
+.onboarding-agree { display: flex; align-items: flex-start; gap: 0.5rem; }
+.onboarding-agree input { width: auto; margin-top: 0.2rem; }
+.hipaa-requested-note { font-size: 0.8rem; opacity: 0.75; margin-top: 0.25rem; }

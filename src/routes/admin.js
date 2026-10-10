@@ -93,6 +93,7 @@ router.get("/subscription", async (req, res) => {
   const checkout = require("../paddle").checkoutConfig();
   res.json({
     status: tenant.subscriptionStatus || null,
+    hipaaRequested: !!tenant.hipaaRequested,
     periodEnd: tenant.subscriptionPeriodEnd || null,
     checkout: checkout ? { ...checkout, tenantId: tenant.id, email: req.session.user.email || null } : null,
   });

@@ -852,6 +852,10 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
 -- signed webhooks (src/paddle.js) -- nothing here gates access to the app
 -- yet; it just records what Paddle says. paddle_events makes webhook
 -- delivery idempotent (Paddle retries and may deliver out of order).
+-- Answered at signup ("will you store health information?"). A request only:
+-- the storage tier stays 'standard' until an operator confirms the BAA and
+-- HIPAA bucket per docs/hipaa-activation-checklist.md.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hipaa_requested BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

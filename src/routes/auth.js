@@ -377,7 +377,11 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const username = ((req.body || {}).username || "").trim();
   const address = ((req.body || {}).email || "").trim().toLowerCase();
   const { password, confirmPassword } = req.body || {};
+  const hipaaAnswer = (req.body || {}).hipaa;
 
+  if (hipaaAnswer !== "yes" && hipaaAnswer !== "no") {
+    return res.redirect("/signup.html?error=hipaa");
+  }
   if (!firstName || !lastName || !businessName || !username || !address || !password) {
     return res.redirect("/signup.html?error=missing");
   }
@@ -400,7 +404,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   const userId = randomUUID();
   const { hash, salt } = hashPassword(password);
 
-  await db.createTenant({ id: tenantId, name: businessName });
+  await db.createTenant({ id: tenantId, name: businessName, hipaaRequested: hipaaAnswer === "yes" });
   await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
   await db.updateTenantOwner(tenantId, userId);
   // Stored as-provided, unverified -- same shape as the self-service
@@ -430,7 +434,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
 
   const user = await db.getUserById(userId);
   await completeLogin(req, user);
-  res.redirect("/");
+  res.redirect("/onboarding.html");
 });
 
 // Same brute-force shape as mfaLimiter above -- keyed by the token itself

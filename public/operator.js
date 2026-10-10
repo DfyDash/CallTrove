@@ -428,7 +428,7 @@ function renderAccounts() {
       <td data-label="Account"><a href="#account/${encodeURIComponent(t.id)}" class="account-detail-link">${escapeHtml(t.name)}</a></td>
       <td data-label="Status">${escapeHtml(t.status)}</td>
       <td data-label="Owner">${escapeHtml(t.ownerUsername || "-")}</td>
-      <td data-label="Storage tier">${storageTierSelect(t)}</td>
+      <td data-label="Storage tier">${storageTierSelect(t)}${t.hipaaRequested && (t.storageTier || "standard") !== "hipaa" ? '<div class="hipaa-requested-note">HIPAA requested at signup</div>' : ""}</td>
       <td data-label="Actions">${actionsForTenant(t)}</td>
     `
   );

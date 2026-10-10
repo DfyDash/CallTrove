@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CallTrove — Finish setting up</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="alternate icon" href="favicon-32.png" type="image/png" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <script src="theme.js"></script>
+</head>
+<body>
+  <div class="login-page">
+    <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
+    <div class="login-card onboarding-card">
+      <div class="login-brand">
+        <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
+      </div>
+
+      <section id="onboarding-baa" hidden>
+        <h1 class="onboarding-title">Business Associate Agreement</h1>
+        <p class="settings-note">You said you'll store health information. Read and accept the agreement below to continue.</p>
+        <pre id="baa-text" class="baa-text-box"></pre>
+        <form id="baa-accept-form" class="admin-form">
+          <label>Full legal name <input type="text" id="baa-full-name" required autocomplete="name" /></label>
+          <label>Title <input type="text" id="baa-title" required autocomplete="organization-title" /></label>
+          <label class="onboarding-agree"><input type="checkbox" id="baa-agree-checkbox" required /> I have read and agree to this agreement on behalf of my company.</label>
+          <button type="submit" id="baa-accept-btn">I Agree &amp; Accept</button>
+          <span id="baa-accept-error" class="login-error" hidden></span>
+        </form>
+      </section>
+
+      <section id="onboarding-billing" hidden>
+        <h1 class="onboarding-title">Start your subscription</h1>
+        <p id="subscription-status" class="settings-note"></p>
+        <button type="button" id="subscribe-btn" hidden>Subscribe</button>
+        <p><a href="/" id="skip-link">Skip for now</a></p>
+      </section>
+    </div>
+  </div>
+  <script src="onboarding.js"></script>
+  <script src="password-toggle.js"></script>
+</body>
+</html>
