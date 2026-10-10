@@ -164,11 +164,6 @@ fetch("/auth/plans")
       document.querySelector(`[data-plan-detail="${key}"]`).textContent =
         `${p.freeGB} GB of storage included, then ${fmtRate(p.overagePerGbMonth)} per GB per month${key === "hipaa" ? ". Includes a Business Associate Agreement" : ""}.`;
     }
-    if (plans.standard && plans.standard.priceLabel) {
-      const note = document.getElementById("signup-price-note");
-      note.textContent = `Plans start at ${plans.standard.priceLabel}${plans.hipaa && plans.hipaa.priceLabel ? ` (${plans.hipaa.priceLabel} with HIPAA)` : ""}. You'll see everything before you pay.`;
-      note.hidden = false;
-    }
     if (plans.rates) {
       const usage = document.getElementById("signup-usage-note");
       usage.textContent = `Transcripts and AI summaries are billed as you use them: ${fmtRate(plans.rates.transcriptionPerMinute)} per minute of transcription and ${fmtRate(plans.rates.aiSummaryPerCall)} per AI summary.`;
