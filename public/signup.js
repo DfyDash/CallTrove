@@ -193,7 +193,7 @@ if (error) {
   } else {
     goTo(target);
   }
-  errorEl.textContent = ERROR_MESSAGES[error] || "Could not create your account.";
+  errorEl.textContent = ERROR_MESSAGES[error] || "Could not complete sign-up. Please try again.";
   errorEl.hidden = false;
 } else {
   render();
