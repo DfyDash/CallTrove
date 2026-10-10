@@ -29,8 +29,17 @@ function loginUrl(emailed) {
 
 let accountEmail = "";
 
+// Our own confirmation replaces Paddle's, so the buyer isn't left looking at
+// Paddle's generic success screen while the account is being created.
+function showPaymentReceived() {
+  document.getElementById("checkout-frame").hidden = true;
+  fallback.hidden = true;
+  document.getElementById("checkout-done").hidden = false;
+}
+
 async function waitForAccount() {
-  statusEl.textContent = "Thanks! Setting up your account...";
+  showPaymentReceived();
+  statusEl.textContent = "";
   for (let i = 0; i < 60; i++) {
     await new Promise((r) => setTimeout(r, 2000));
     const res = await fetch("/auth/checkout-status?id=" + encodeURIComponent(pendingId)).catch(() => null);
@@ -40,7 +49,7 @@ async function waitForAccount() {
       return;
     }
   }
-  statusEl.textContent = "Payment received. Your account is taking longer than usual to set up -- try logging in with your email in a minute.";
+  document.getElementById("checkout-done-text").textContent = "Your account is taking longer than usual to set up. Try logging in with your email in a minute.";
 }
 
 async function start() {
