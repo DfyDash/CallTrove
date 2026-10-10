@@ -136,7 +136,7 @@ async function openCheckout(sub, statusEl, fallback) {
       frameStyle: "width: 100%; min-width: 312px; background-color: transparent; border: none;",
     },
     items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
-    customData: { tenantId: sub.checkout.tenantId },
+    customData: { tenantRef: sub.checkout.tenantRef },
     ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
   });
 }

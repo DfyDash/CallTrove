@@ -499,7 +499,7 @@ router.get("/verify-email", checkoutLimiter, async (req, res) => {
   const t = require("../emailVerifyToken").readEmailVerifyToken(String(req.query.token || ""));
   const user = t ? await db.getUserById(t.userId) : null;
   if (!user || !user.email || user.email.toLowerCase() !== t.email) return res.redirect("/login.html?verifyerror=1");
-  if (!user.emailVerifiedAt) await db.verifyUserEmail(user.id);
+  if (!user.emailVerifiedAt && !(await db.verifyUserEmail(user.id))) return res.redirect("/login.html?verifyerror=1");
   res.redirect("/login.html?verified=1");
 });
 

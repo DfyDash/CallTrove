@@ -1,6 +1,7 @@
 // Paddle billing: signed-webhook receiver + checkout config. Webhooks (not
-// polling) so a subscription change lands within seconds. Nothing here
-// gates the app -- it only records subscription state on the tenant.
+// polling) so a subscription change lands within seconds. They record
+// subscription state on the tenant, which src/auth.js's gate and
+// db.usageAllowed then use to open or pause the app and the paid features.
 //
 // Env: PADDLE_API_KEY (server secret), PADDLE_WEBHOOK_SECRET (endpoint
 // secret key), PADDLE_CLIENT_TOKEN (public, used by Paddle.js in the
@@ -8,7 +9,27 @@
 // (HIPAA plan, $30/mo), PADDLE_ENV
 // ("sandbox" | "production", default sandbox).
 const { Paddle, Environment } = require("@paddle/paddle-node-sdk");
+const crypto = require("crypto");
 const db = require("./db");
+
+// The browser puts custom_data on the checkout it opens, so a bare tenant id
+// there proves nothing -- anyone could name someone else's. This reference
+// is minted by the server for the logged-in tenant and signed, so a webhook
+// can trust it.
+function tenantRefMac(tenantId) {
+  return crypto.createHmac("sha256", process.env.SESSION_SECRET || "").update(`tenant:${tenantId}`).digest("base64url");
+}
+function signTenantRef(tenantId) {
+  return `${tenantId}.${tenantRefMac(tenantId)}`;
+}
+function readTenantRef(ref) {
+  if (typeof ref !== "string" || !process.env.SESSION_SECRET) return null;
+  const [tenantId, mac] = ref.split(".");
+  if (!tenantId || !mac || !/^[0-9a-f-]{36}$/i.test(tenantId)) return null;
+  const expected = Buffer.from(tenantRefMac(tenantId));
+  const given = Buffer.from(mac);
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given) ? tenantId : null;
+}
 
 const ENV = process.env.PADDLE_ENV === "production" ? "production" : "sandbox";
 const HANDLED = new Set(["subscription.created", "subscription.updated", "subscription.activated", "subscription.canceled", "subscription.paused", "subscription.resumed", "subscription.past_due", "subscription.trialing"]);
@@ -41,7 +62,9 @@ async function accountForPendingSignup(pendingId, status, req) {
   if (status !== "active" && status !== "trialing") return null;
   const result = await db.createAccountFromPendingSignup(pendingId);
   if (result.status === "email_taken") {
-    console.error(`[paddle] PAID BUT NO ACCOUNT: sign-up ${pendingId} paid, but ${pending.email} already has a login. Needs a manual look (refund or merge).`);
+    const message = `PAID BUT NO ACCOUNT: sign-up ${pendingId} paid, but ${pending.email} already has a login. Needs a manual look (refund or merge).`;
+    console.error(`[paddle] ${message}`);
+    await db.logAudit({ actorId: null, actorUsername: "paddle-webhook", action: "signup_paid_no_account", message, tenantId: null }).catch(() => {});
     return null;
   }
   if (result.status !== "created" && result.status !== "exists") return null;
@@ -90,7 +113,7 @@ async function webhookHandler(req, res) {
     if (event && HANDLED.has(event.event_type)) {
       const d = event.data || {};
       const cd = d.custom_data || {};
-      let tenantId = cd.tenantId;
+      let tenantId = readTenantRef(cd.tenantRef);
       // A brand-new sign-up: the first confirmed payment is what creates
       // the account. Later events carry the same id and map to it.
       if (!tenantId && cd.pendingSignupId && /^[0-9a-f-]{36}$/i.test(cd.pendingSignupId)) {
@@ -109,11 +132,11 @@ async function webhookHandler(req, res) {
         });
       }
     }
-      return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true });
   } catch (err) {
     console.error("Paddle webhook failed:", err.message);
     return res.status(500).json({ error: "retry" });
   }
 }
 
-module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, ENV };
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, ENV };

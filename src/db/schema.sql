@@ -849,8 +849,8 @@ CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
 
 -- Paddle billing (one subscription per tenant). Populated only by Paddle's
--- signed webhooks (src/paddle.js) -- nothing here gates access to the app
--- yet; it just records what Paddle says. paddle_events makes webhook
+-- signed webhooks (src/paddle.js). For self-serve sign-ups (billing_required)
+-- it gates the app (src/auth.js) and the paid features (db.usageAllowed). paddle_events makes webhook
 -- delivery idempotent (Paddle retries and may deliver out of order).
 -- Answered at signup ("will you store health information?"). A request only:
 -- the storage tier stays 'standard' until an operator confirms the BAA and
@@ -880,6 +880,16 @@ ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS usage_invoice_id UUID REFERENCE
 -- tenant and login created (src/db/index.js createAccountFromPendingSignup).
 -- No account exists for someone who hasn't paid. The password is stored as a
 -- hash, never in plain text. Unpaid rows are deleted after 7 days.
+-- Logins are matched case-insensitively (db.getUserByUsername), so the
+-- uniqueness has to be too. Skipped, with a notice, if usernames that differ
+-- only by case already exist -- those need resolving by hand first.
+DO $$
+BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
+EXCEPTION WHEN unique_violation THEN
+  RAISE NOTICE 'users_username_lower_idx not created: usernames that differ only by case already exist';
+END $$;
+
 CREATE TABLE IF NOT EXISTS pending_signups (
   id                 UUID PRIMARY KEY,
   first_name         TEXT NOT NULL,

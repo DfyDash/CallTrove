@@ -2378,6 +2378,11 @@ async function claimUsageForInvoice({ invoiceId, tenantId, cutoff, periodLabel, 
   }
 }
 
+async function countStaleUsageInvoices() {
+  const { rows } = await pool.query(`SELECT count(*)::int AS n FROM usage_invoices WHERE status = 'pending' AND created_at < now() - interval '1 hour'`);
+  return rows[0].n;
+}
+
 async function markUsageInvoiceCharged(invoiceId) {
   await pool.query(`UPDATE usage_invoices SET status = 'charged', charged_at = now() WHERE id = $1`, [invoiceId]);
 }
@@ -2392,12 +2397,11 @@ async function releaseUsageInvoice(invoiceId) {
 // --- pending sign-ups (see schema.sql's comment on pending_signups) ---
 
 async function createPendingSignup(p) {
-  // Same email starting over replaces its earlier unpaid attempt; stale
-  // unpaid rows are cleared as we go.
-  await pool.query(
-    `DELETE FROM pending_signups WHERE consumed_tenant_id IS NULL AND (lower(email) = lower($1) OR created_at < now() - interval '7 days')`,
-    [p.email]
-  );
+  // Stale unpaid rows are cleared as we go. A new sign-up never removes
+  // another waiting one for the same email: nothing proves who owns the
+  // address yet, so one person could otherwise wipe out another's checkout.
+  // Whoever pays first gets the account.
+  await pool.query(`DELETE FROM pending_signups WHERE consumed_tenant_id IS NULL AND created_at < now() - interval '7 days'`);
   await pool.query(
     `INSERT INTO pending_signups (id, first_name, last_name, business_name, email, password_hash, password_salt, hipaa_requested,
                                   baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent, baa_title)
@@ -2466,6 +2470,9 @@ async function createAccountFromPendingSignup(id) {
     return { status: "created", tenantId, userId, email: p.email, firstName: p.first_name };
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
+    // Two payments for the same email landing together: the unique index
+    // lets one win; the other is the paid-but-no-account case.
+    if (err && err.code === "23505") return { status: "email_taken" };
     throw err;
   } finally {
     client.release();
@@ -2603,6 +2610,7 @@ module.exports = {
   usageAllowed,
   listTenantsWithUnbilledUsage,
   claimUsageForInvoice,
+  countStaleUsageInvoices,
   markUsageInvoiceCharged,
   releaseUsageInvoice,
   logAudit,

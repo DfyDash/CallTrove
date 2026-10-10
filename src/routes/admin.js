@@ -105,7 +105,7 @@ router.get("/subscription", async (req, res) => {
       aiSummaryPerCall: require("../billingRates").CLIENT_AI_SUMMARY_PER_CALL,
     },
     periodEnd: tenant.subscriptionPeriodEnd || null,
-    checkout: checkout ? { ...checkout, tenantId: tenant.id, email: req.session.user.email || null } : null,
+    checkout: checkout ? { ...checkout, tenantRef: require("../paddle").signTenantRef(tenant.id), email: req.session.user.email || null } : null,
   });
 });
 

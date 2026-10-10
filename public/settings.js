@@ -1691,7 +1691,7 @@ async function loadSubscription() {
       window.Paddle.Checkout.open({
         settings: { showAddDiscounts: false },
         items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
-        customData: { tenantId: sub.checkout.tenantId },
+        customData: { tenantRef: sub.checkout.tenantRef },
         ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
       });
     } catch (err) {

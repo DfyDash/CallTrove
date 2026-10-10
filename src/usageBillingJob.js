@@ -49,6 +49,8 @@ async function runOnce(now = new Date(), client = paddleModule.paddle()) {
   if (!client || !paddleModule.billingEnabled()) return [];
   const monthStart = currentMonthStart(now);
   const results = [];
+  const stale = await db.countStaleUsageInvoices().catch(() => 0);
+  if (stale > 0) console.error(`[usageBilling] ${stale} usage invoice(s) have been 'pending' for over an hour -- the charge outcome is unknown; check them against Paddle.`);
   // Finished months first, then anything over the threshold right now.
   const passes = [
     { cutoff: monthStart, label: periodLabel(monthStart), minCents: minCents() },
@@ -76,6 +78,10 @@ async function chargeTenant(client, t, { cutoff, label, minCents: min }) {
   try {
     await client.subscriptions.createOneTimeCharge(t.subscriptionId, {
       effectiveFrom: "immediately",
+      // apply_change: if the card declines, Paddle still records the charge as
+      // an unpaid transaction, puts the subscription past_due, and keeps
+      // retrying it, so the usage is collected once the card is fixed. That is
+      // why a declined charge still counts as sent here.
       onPaymentFailure: "apply_change",
       items: [
         {
@@ -90,8 +96,18 @@ async function chargeTenant(client, t, { cutoff, label, minCents: min }) {
       ],
     });
   } catch (err) {
-    console.error(`[usageBilling] Paddle charge failed for tenant ${t.tenantId}, will retry next cycle:`, err);
-    await db.releaseUsageInvoice(invoiceId).catch((e) => console.error("[usageBilling] could not release claim:", e));
+    // Paddle's own structured rejection (a request_error ApiError) means it
+    // refused the request and nothing was charged, so the usage can safely be
+    // retried. Anything else -- a timeout, a dropped connection, a 5xx -- may
+    // have happened after Paddle created the charge, so the invoice stays
+    // 'pending' (rows stay claimed) and a person checks Paddle. Never re-bill.
+    const rejected = !!err && typeof err.code === "string" && err.type === "request_error";
+    if (rejected) {
+      console.error(`[usageBilling] Paddle rejected the charge for tenant ${t.tenantId}, will retry next cycle:`, err);
+      await db.releaseUsageInvoice(invoiceId).catch((e) => console.error("[usageBilling] could not release claim:", e));
+    } else {
+      console.error(`[usageBilling] Paddle charge for tenant ${t.tenantId} (invoice ${invoiceId}) has an UNKNOWN outcome -- left pending. Check Paddle by hand; do NOT re-bill:`, err);
+    }
     return null;
   }
   await db.markUsageInvoiceCharged(invoiceId).catch((e) =>
