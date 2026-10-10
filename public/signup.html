@@ -30,6 +30,7 @@
 
       <div class="signup-step" data-step="about">
         <h1 class="signup-step-title">Tell us about you</h1>
+        <p class="settings-note" id="signup-price-note" hidden></p>
         <label>
           First name
           <input type="text" name="firstName" autocomplete="given-name" required autofocus />
@@ -47,10 +48,23 @@
       <div class="signup-step" data-step="health">
         <h1 class="signup-step-title">Health information</h1>
         <p class="signup-question">Will any of the call recordings you store with CallTrove include health information, such as medical conditions, medications, treatment, or health insurance details?</p>
-        <fieldset class="signup-hipaa">
-          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="yes" required /> Yes</label>
-          <label class="signup-hipaa-option"><input type="radio" name="hipaa" value="no" /> No</label>
+        <fieldset class="signup-hipaa signup-plans">
+          <label class="signup-plan">
+            <input type="radio" name="hipaa" value="no" required />
+            <span class="signup-plan-body">
+              <span class="signup-plan-head"><strong>No</strong><span class="signup-plan-price" data-plan="standard"></span></span>
+              <span class="signup-plan-detail" data-plan-detail="standard"></span>
+            </span>
+          </label>
+          <label class="signup-plan">
+            <input type="radio" name="hipaa" value="yes" />
+            <span class="signup-plan-body">
+              <span class="signup-plan-head"><strong>Yes</strong><span class="signup-plan-price" data-plan="hipaa"></span></span>
+              <span class="signup-plan-detail" data-plan-detail="hipaa"></span>
+            </span>
+          </label>
         </fieldset>
+        <p class="settings-note" id="signup-usage-note" hidden></p>
       </div>
 
       <div class="signup-step" data-step="agreement">

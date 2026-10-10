@@ -2389,6 +2389,89 @@ async function releaseUsageInvoice(invoiceId) {
   await pool.query(`DELETE FROM usage_invoices WHERE id = $1`, [invoiceId]);
 }
 
+// --- pending sign-ups (see schema.sql's comment on pending_signups) ---
+
+async function createPendingSignup(p) {
+  // Same email starting over replaces its earlier unpaid attempt; stale
+  // unpaid rows are cleared as we go.
+  await pool.query(
+    `DELETE FROM pending_signups WHERE consumed_tenant_id IS NULL AND (lower(email) = lower($1) OR created_at < now() - interval '7 days')`,
+    [p.email]
+  );
+  await pool.query(
+    `INSERT INTO pending_signups (id, first_name, last_name, business_name, email, password_hash, password_salt, hipaa_requested,
+                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [p.id, p.firstName, p.lastName, p.businessName, p.email, p.passwordHash, p.passwordSalt, !!p.hipaaRequested,
+     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null]
+  );
+}
+
+async function getPendingSignup(id) {
+  const { rows } = await pool.query(
+    `SELECT id, email, business_name AS "businessName", hipaa_requested AS "hipaaRequested", consumed_tenant_id AS "consumedTenantId"
+     FROM pending_signups WHERE id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+// Runs when Paddle confirms the first payment. All-or-nothing, and safe to
+// call again for the same id (Paddle retries and sends several events).
+async function createAccountFromPendingSignup(id) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM pending_signups WHERE id = $1 FOR UPDATE`, [id]);
+    const p = rows[0];
+    if (!p) {
+      await client.query("ROLLBACK");
+      return { status: "missing" };
+    }
+    if (p.consumed_tenant_id) {
+      await client.query("COMMIT");
+      return { status: "exists", tenantId: p.consumed_tenant_id };
+    }
+    const taken = await client.query(`SELECT 1 FROM users WHERE lower(username) = lower($1)`, [p.email]);
+    if (taken.rowCount) {
+      await client.query("ROLLBACK");
+      return { status: "email_taken" };
+    }
+    const tenantId = randomUUID();
+    const userId = randomUUID();
+    await client.query(`INSERT INTO tenants (id, name, hipaa_requested, billing_required) VALUES ($1, $2, $3, true)`, [tenantId, p.business_name, p.hipaa_requested]);
+    await client.query(
+      `INSERT INTO users (id, username, password_hash, password_salt, role, tenant_id, first_name, last_name, email)
+       VALUES ($1, $2, $3, $4, 'admin', $5, $6, $7, $8)`,
+      [userId, p.email, p.password_hash, p.password_salt, tenantId, p.first_name, p.last_name, p.email]
+    );
+    await client.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [userId, tenantId]);
+    await client.query(
+      `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, 'tenant_signup', $4, $5)`,
+      [randomUUID(), userId, p.email, `Signed up "${p.business_name}" (payment confirmed)`, tenantId]
+    );
+    if (p.hipaa_requested && p.baa_full_name) {
+      await client.query(
+        `INSERT INTO baa_acceptances (id, tenant_id, user_id, full_name, title, baa_version, baa_text_hash, ip_address, user_agent, accepted_at)
+         VALUES ($1, $2, $3, $4, '', $5, $6, $7, $8, $9)`,
+        [randomUUID(), tenantId, userId, p.baa_full_name, p.baa_version, p.baa_text_hash, p.baa_ip, p.baa_user_agent, p.baa_accepted_at]
+      );
+      await client.query(
+        `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, 'baa_accepted', $4, $5)`,
+        [randomUUID(), userId, p.email, `BAA accepted for "${p.business_name}" by ${p.baa_full_name} at signup`, tenantId]
+      );
+    }
+    await client.query(`UPDATE pending_signups SET consumed_tenant_id = $2 WHERE id = $1`, [id, tenantId]);
+    await client.query("COMMIT");
+    return { status: "created", tenantId, userId, email: p.email, firstName: p.first_name };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   applyPaddleSubscriptionEvent,
   pool,
@@ -2514,6 +2597,9 @@ module.exports = {
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,
   getStorageStatsByTierForTenantPeriod,
+  createPendingSignup,
+  getPendingSignup,
+  createAccountFromPendingSignup,
   usageAllowed,
   listTenantsWithUnbilledUsage,
   claimUsageForInvoice,

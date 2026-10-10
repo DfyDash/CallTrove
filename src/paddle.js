@@ -34,6 +34,33 @@ function checkoutConfig(hipaa = false) {
   return { environment: ENV, clientToken: process.env.PADDLE_CLIENT_TOKEN, priceId: priceId || null, priceLabel };
 }
 
+async function accountForPendingSignup(pendingId, status, req) {
+  const pending = await db.getPendingSignup(pendingId);
+  if (!pending) return null;
+  if (pending.consumedTenantId) return pending.consumedTenantId;
+  if (status !== "active" && status !== "trialing") return null;
+  const result = await db.createAccountFromPendingSignup(pendingId);
+  if (result.status === "email_taken") {
+    console.error(`[paddle] PAID BUT NO ACCOUNT: sign-up ${pendingId} paid, but ${pending.email} already has a login. Needs a manual look (refund or merge).`);
+    return null;
+  }
+  if (result.status !== "created" && result.status !== "exists") return null;
+  if (result.status === "created") {
+    try {
+      const email = require("./email");
+      await email.sendEmail({
+        to: result.email,
+        subject: `Welcome to CallTrove, ${result.firstName}`,
+        text: `Your CallTrove account is ready. Sign in at ${req.protocol}://${req.get("host")}/login.html with your email address (${result.email}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
+        html: email.welcomeEmailHtml(result.email, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName: result.firstName }),
+      });
+    } catch (err) {
+      console.error("[paddle] account created but welcome email failed:", err.message);
+    }
+  }
+  return result.tenantId;
+}
+
 // Express handler; mounted with express.raw() because the signature is
 // computed over the exact bytes Paddle sent.
 async function webhookHandler(req, res) {
@@ -61,7 +88,12 @@ async function webhookHandler(req, res) {
     if (event && HANDLED.has(event.event_type)) {
       const d = event.data || {};
       const cd = d.custom_data || {};
-      const tenantId = cd.tenantId;
+      let tenantId = cd.tenantId;
+      // A brand-new sign-up: the first confirmed payment is what creates
+      // the account. Later events carry the same id and map to it.
+      if (!tenantId && cd.pendingSignupId && /^[0-9a-f-]{36}$/i.test(cd.pendingSignupId)) {
+        tenantId = await accountForPendingSignup(cd.pendingSignupId, d.status, req);
+      }
       if (tenantId && /^[0-9a-f-]{36}$/i.test(tenantId)) {
         await db.applyPaddleSubscriptionEvent({
           eventId: event.event_id,

@@ -2508,3 +2508,14 @@ html:not(.js-steps) #signup-next, html:not(.js-steps) #signup-back { display: no
 .onboarding-card-wide { width: min(980px, calc(100vw - 2rem)); }
 .login-card label.onboarding-agree { flex-direction: row; align-items: flex-start; gap: 0.6rem; }
 .login-card label.onboarding-agree input { flex: 0 0 auto; width: auto; margin-top: 0.2rem; }
+
+/* Plan choice on the health question */
+.signup-plans { flex-direction: column; gap: 0.6rem; }
+.login-card label.signup-plan { flex-direction: row; align-items: flex-start; gap: 0.75rem; padding: 0.75rem 0.85rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.login-card label.signup-plan input { flex: 0 0 auto; width: auto; margin-top: 0.25rem; }
+.login-card label.signup-plan:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.signup-plan-body { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; flex: 1 1 auto; }
+.signup-plan-head { display: flex; justify-content: space-between; gap: 0.75rem; }
+.signup-plan-price { font-weight: 600; color: var(--accent-text); white-space: nowrap; }
+.signup-plan-detail { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+.login-card.signup-health-wide { width: min(560px, calc(100vw - 2rem)); }

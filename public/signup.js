@@ -6,6 +6,7 @@ const ERROR_MESSAGES = {
   taken: "An account with that email already exists.",
   hipaa: "Choose Yes or No for the health-information question.",
   baa: "Please accept the agreement to continue.",
+  unavailable: "Sign-up is temporarily unavailable. Please try again later.",
 };
 // Which step to land on when the server rejects the form.
 const ERROR_STEP = { email: "login", mismatch: "login", tooshort: "login", taken: "login", hipaa: "health", baa: "agreement" };
@@ -37,6 +38,7 @@ function render() {
   const name = order[index];
   Object.entries(panels).forEach(([key, el]) => el.classList.toggle("is-current", key === name));
   card.classList.toggle("signup-wide", name === "agreement");
+  card.classList.toggle("signup-health-wide", name === "health");
   // The agreement's fields only exist for a "yes" answer; disabled inputs
   // are neither validated nor submitted.
   panels.agreement.querySelectorAll("input").forEach((el) => (el.disabled = !hipaaChoice()));
@@ -146,6 +148,34 @@ form.addEventListener("submit", (e) => {
   }
   document.querySelectorAll('form button[type="submit"]').forEach((b) => (b.disabled = true));
 });
+
+// Prices come from the server, so what's shown here is what checkout charges.
+function fmtRate(n) {
+  return "$" + String(Number(n));
+}
+fetch("/auth/plans")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((plans) => {
+    if (!plans) return;
+    for (const key of ["standard", "hipaa"]) {
+      const p = plans[key];
+      if (!p || !p.priceLabel) continue;
+      document.querySelector(`[data-plan="${key}"]`).textContent = p.priceLabel;
+      document.querySelector(`[data-plan-detail="${key}"]`).textContent =
+        `${key === "hipaa" ? "CallTrove for HIPAA, includes a Business Associate Agreement. " : "CallTrove. "}${p.freeGB} GB of storage included, then ${fmtRate(p.overagePerGbMonth)} per GB per month.`;
+    }
+    if (plans.standard && plans.standard.priceLabel) {
+      const note = document.getElementById("signup-price-note");
+      note.textContent = `Plans start at ${plans.standard.priceLabel}${plans.hipaa && plans.hipaa.priceLabel ? ` (${plans.hipaa.priceLabel} with HIPAA)` : ""}. You'll see everything before you pay.`;
+      note.hidden = false;
+    }
+    if (plans.rates) {
+      const usage = document.getElementById("signup-usage-note");
+      usage.textContent = `Transcripts and AI summaries are billed as you use them: ${fmtRate(plans.rates.transcriptionPerMinute)} per minute of transcription and ${fmtRate(plans.rates.aiSummaryPerCall)} per AI summary.`;
+      usage.hidden = false;
+    }
+  })
+  .catch(() => {});
 
 document.documentElement.classList.add("js-steps");
 const error = new URLSearchParams(location.search).get("error");

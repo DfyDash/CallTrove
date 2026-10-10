@@ -876,6 +876,28 @@ CREATE TABLE IF NOT EXISTS usage_invoices (
   charged_at   TIMESTAMPTZ
 );
 ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS usage_invoice_id UUID REFERENCES usage_invoices(id);
+-- Sign-ups wait here until Paddle confirms the first payment; only then is a
+-- tenant and login created (src/db/index.js createAccountFromPendingSignup).
+-- No account exists for someone who hasn't paid. The password is stored as a
+-- hash, never in plain text. Unpaid rows are deleted after 7 days.
+CREATE TABLE IF NOT EXISTS pending_signups (
+  id                 UUID PRIMARY KEY,
+  first_name         TEXT NOT NULL,
+  last_name          TEXT NOT NULL,
+  business_name      TEXT NOT NULL,
+  email              TEXT NOT NULL,
+  password_hash      TEXT NOT NULL,
+  password_salt      TEXT NOT NULL,
+  hipaa_requested    BOOLEAN NOT NULL DEFAULT false,
+  baa_full_name      TEXT,
+  baa_text_hash      TEXT,
+  baa_version        TEXT,
+  baa_accepted_at    TIMESTAMPTZ,
+  baa_ip             TEXT,
+  baa_user_agent     TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  consumed_tenant_id UUID REFERENCES tenants(id)
+);
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;

@@ -424,61 +424,77 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   if (existing) {
     return res.redirect("/signup.html?error=taken");
   }
+  // Signing up needs somewhere to take payment: no account is ever created
+  // for someone who hasn't paid.
+  if (!require("../paddle").billingEnabled()) {
+    return res.redirect("/signup.html?error=unavailable");
+  }
 
-  const tenantId = randomUUID();
-  const userId = randomUUID();
+  const pendingId = randomUUID();
   const { hash, salt } = hashPassword(password);
-
-  await db.createTenant({ id: tenantId, name: businessName, hipaaRequested: hipaaAnswer === "yes", billingRequired: true });
-  await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
-  await db.updateTenantOwner(tenantId, userId);
-  if (hipaaAnswer === "yes") {
-    await db.recordBaaAcceptance({
-      tenantId,
-      userId,
-      fullName: baaFullName,
-      title: "",
-      baaVersion: BAA_VERSION,
-      baaTextHash: baaHash,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent"),
-    });
-    await db.logAudit({
-      actorId: userId,
-      actorUsername: username,
-      action: "baa_accepted",
-      message: `BAA accepted for "${businessName}" by ${baaFullName} at signup`,
-      tenantId,
-    });
-  }
-  // Stored as-provided, unverified -- same shape as the self-service
-  // "start email verification" flow (db.setUserPendingEmail). Proving it
-  // (and optionally turning it into an MFA method) happens later, in
-  // Account settings, the same way for every user regardless of how their
-  // account was created.
-  await db.setUserPendingEmail(userId, address);
-  await db.logAudit({
-    actorId: userId,
-    actorUsername: username,
-    action: "tenant_signup",
-    message: `Signed up "${businessName}"`,
-    tenantId,
+  await db.createPendingSignup({
+    id: pendingId,
+    firstName,
+    lastName,
+    businessName,
+    email: address,
+    passwordHash: hash,
+    passwordSalt: salt,
+    hipaaRequested: hipaaAnswer === "yes",
+    baaFullName: hipaaAnswer === "yes" ? baaFullName : null,
+    baaTextHash: hipaaAnswer === "yes" ? baaHash : null,
+    baaVersion: hipaaAnswer === "yes" ? BAA_VERSION : null,
+    baaIp: req.ip,
+    baaUserAgent: req.get("user-agent"),
   });
+  res.redirect(`/checkout.html?id=${pendingId}`);
+});
 
-  try {
-    await email.sendEmail({
-      to: address,
-      subject: `Welcome to CallTrove, ${firstName}`,
-      text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with your email address (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName }),
-    });
-  } catch (err) {
-    console.error("[signup] failed to send welcome email:", err);
-  }
+// Prices shown on the sign-up pages before anyone commits to anything.
+router.get("/plans", (req, res) => {
+  const paddleModule = require("../paddle");
+  const billingRates = require("../billingRates");
+  const plan = (hipaa) => {
+    const tier = billingRates.storageTier(hipaa ? "hipaa" : "standard");
+    const checkout = paddleModule.checkoutConfig(hipaa);
+    return { priceLabel: checkout ? checkout.priceLabel : null, freeGB: tier.freeGB, overagePerGbMonth: tier.overagePerGbMonth };
+  };
+  res.json({
+    standard: plan(false),
+    hipaa: plan(true),
+    rates: { transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE, aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL },
+  });
+});
 
-  const user = await db.getUserById(userId);
-  await completeLogin(req, user);
-  res.redirect("/onboarding.html");
+// Public checkout details for a waiting sign-up (the id is an unguessable
+// UUID the browser was just redirected with). Says nothing about the
+// password or anything else they entered beyond what the page displays.
+const checkoutLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false });
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.get("/checkout-config", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  if (pending.consumedTenantId) return res.json({ ready: true });
+  const paddleModule = require("../paddle");
+  const billingRates = require("../billingRates");
+  const checkout = paddleModule.checkoutConfig(pending.hipaaRequested);
+  if (!checkout) return res.status(503).json({ error: "billing not configured" });
+  const tier = billingRates.storageTier(pending.hipaaRequested ? "hipaa" : "standard");
+  res.json({
+    ready: false,
+    hipaaRequested: pending.hipaaRequested,
+    checkout: { ...checkout, pendingSignupId: pending.id, email: pending.email },
+    storage: { freeGB: tier.freeGB, overagePerGbMonth: tier.overagePerGbMonth },
+    rates: { transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE, aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL },
+  });
+});
+
+router.get("/checkout-status", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  res.json({ ready: !!pending.consumedTenantId });
 });
 
 // Same brute-force shape as mfaLimiter above -- keyed by the token itself

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CallTrove — Log in</title>
+  <title>CallTrove — Start your subscription</title>
   <link rel="stylesheet" href="style.css" />
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="alternate icon" href="favicon-32.png" type="image/png" />
@@ -13,7 +13,7 @@
 <body>
   <div class="login-page">
     <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
-    <form class="login-card" method="POST" action="/auth/login">
+    <div class="login-card onboarding-card onboarding-card-wide">
       <div class="login-brand">
         <div class="brand-mark">
           <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
@@ -25,24 +25,25 @@
         </div>
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
       </div>
-      <div id="login-error" class="login-error" hidden>Incorrect email or password.</div>
-      <div id="login-pending" class="login-error" hidden>Check your email for a link to set your password before logging in.</div>
-      <div id="login-activated" class="login-notice" hidden>Password set — you can log in now.</div>
-      <div id="login-reset" class="login-notice" hidden>Password reset — you can log in now.</div>
-      <div id="login-paid" class="login-notice" hidden>Payment received — your account is ready. Log in with your email and password.</div>
-      <label>
-        Email
-        <input type="text" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus />
-      </label>
-      <label>
-        Password
-        <input type="password" name="password" autocomplete="current-password" required />
-      </label>
-      <button type="submit">Log in</button>
-      <p class="forgot-password"><a href="/forgot-password.html">Forgot your password?</a></p>
-    </form>
+
+      <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
+      <div class="checkout-layout">
+        <aside class="checkout-summary">
+          <p class="checkout-eyebrow">Your plan</p>
+          <h1 class="onboarding-title" id="plan-name"></h1>
+          <p class="checkout-price"><span id="onboarding-price"></span></p>
+          <ul class="checkout-points" id="plan-points"></ul>
+          <p id="subscription-status" class="settings-note"></p>
+          <p class="settings-note">Your account is created as soon as your payment goes through.</p>
+        </aside>
+        <div class="checkout-pane">
+          <div id="checkout-frame" class="checkout-frame"></div>
+          <p id="checkout-fallback" class="settings-note" hidden></p>
+        </div>
+      </div>
+    </div>
   </div>
-  <script src="login.js"></script>
-<script src="password-toggle.js"></script>
+  <script src="wizard-steps.js"></script>
+  <script src="checkout.js"></script>
 </body>
 </html>
