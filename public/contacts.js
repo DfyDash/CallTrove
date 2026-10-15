@@ -13,13 +13,9 @@ const sidebarEl = document.querySelector(".sidebar");
 mobileNavToggle.addEventListener("click", () => sidebarEl.classList.toggle("nav-open"));
 
 let viewAs = "";
+let csrfToken = "";
 // See app.js for why this is a plain page-navigation, not a live re-fetch.
 let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
-
-// Resolves once /api/me has been read, so the first data requests can wait
-// for it (a customer with no connected account gets a prompt instead).
-let resolveMe;
-const meReady = new Promise((r) => (resolveMe = r));
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
@@ -64,11 +60,14 @@ function initials(name) {
     .toUpperCase();
 }
 
+let resolveMe;
+const meReady = new Promise((r) => (resolveMe = r));
+
 async function loadSession() {
   const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
   resolveMe(me);
-  const csrfToken = me.csrfToken || "";
+  csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
   renderCancellationBanner(me);
@@ -89,6 +88,7 @@ async function loadSession() {
   if (me.role === "admin") {
     adminNav.hidden = false;
     await loadViewAsOptions();
+    if (!hasNoAccounts(me)) loadDuplicates();
   }
 }
 
@@ -204,6 +204,145 @@ async function loadContacts() {
   }
 }
 
+// --- Possible duplicates (admins only) ---
+// Contacts sharing a phone number. Merging is done in GHL itself (each
+// contact links straight to its GHL record) -- this view only finds them.
+
+const duplicatesBar = document.getElementById("duplicates-bar");
+const duplicatesToggle = document.getElementById("duplicates-toggle");
+const duplicatesCount = document.getElementById("duplicates-count");
+const duplicatesPanel = document.getElementById("duplicates-panel");
+
+duplicatesToggle.addEventListener("click", () => {
+  const open = duplicatesPanel.hidden;
+  duplicatesPanel.hidden = !open;
+  duplicatesToggle.setAttribute("aria-expanded", String(open));
+});
+
+const duplicatesNotice = document.getElementById("duplicates-notice");
+let duplicatesNoticeTimer;
+
+// A message that outlives the panel re-rendering -- after a successful
+// catch-up the group usually disappears, taking anything inside it along.
+function showDuplicatesNotice(text, isError = false) {
+  clearTimeout(duplicatesNoticeTimer);
+  duplicatesNotice.textContent = text;
+  duplicatesNotice.classList.toggle("duplicates-notice-error", isError);
+  duplicatesNotice.hidden = false;
+  duplicatesNoticeTimer = setTimeout(() => { duplicatesNotice.hidden = true; }, 12000);
+}
+
+function renderDuplicateGroups(groups, suggestSettingAddress) {
+  duplicatesCount.textContent = String(groups.length);
+  duplicatesBar.hidden = groups.length === 0;
+  if (groups.length === 0) {
+    duplicatesPanel.hidden = true;
+    duplicatesPanel.innerHTML = "";
+    return;
+  }
+
+  duplicatesPanel.innerHTML = `<p class="duplicates-intro">These contacts share a phone number. To merge them, open each one in GoHighLevel and use its merge tool, CallTrove notices the merge on its own within a couple of minutes and moves the calls over. To update right away, click <strong>I merged these</strong>.</p>`;
+  if (suggestSettingAddress) {
+    duplicatesPanel.innerHTML += `<p class="duplicates-intro duplicates-hint">These links open the standard GHL site. Your account looks white-labeled, so set your GHL web address in <a href="/settings.html#accounts">Settings &rarr; GHL accounts</a> to open your own branded site instead.</p>`;
+  }
+  for (const group of groups) {
+    const card = document.createElement("div");
+    card.className = "duplicate-group";
+
+    const members = group.contacts
+      .map((c) => {
+        const name = isNameJustThePhone(c.name, c.phone) ? "(no name)" : c.name || "(no name)";
+        const calls = `${c.callCount} call${c.callCount === 1 ? "" : "s"}`;
+        const ghlLink = c.ghlUrl
+          ? `<a class="duplicate-link" href="${escapeHtml(c.ghlUrl)}" target="_blank" rel="noopener noreferrer">Open in GHL &#8599;</a>`
+          : "";
+        return `<div class="duplicate-member">
+          <div class="duplicate-member-main">
+            <span class="duplicate-member-name">${escapeHtml(name)}</span>
+            <span class="duplicate-member-meta">${escapeHtml(c.phone || "")} &middot; ${escapeHtml(calls)} &middot; ${escapeHtml(formatLastCall(c.lastCallAt))}</span>
+          </div>
+          <div class="duplicate-member-actions">
+            <a class="duplicate-link" href="/?contactId=${encodeURIComponent(c.id)}">View calls</a>
+            ${ghlLink}
+          </div>
+        </div>`;
+      })
+      .join("");
+
+    card.innerHTML = `${members}
+      <div class="duplicate-group-footer">
+        <button type="button" class="duplicate-merged">I merged these</button>
+        <button type="button" class="duplicate-dismiss">Not duplicates</button>
+      </div>`;
+
+    const mergedBtn = card.querySelector(".duplicate-merged");
+    mergedBtn.addEventListener("click", async () => {
+      mergedBtn.disabled = true;
+      mergedBtn.textContent = "Checking GHL...";
+      let res;
+      try {
+        res = await fetch(`/api/admin/duplicates/reconcile${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
+        });
+      } catch {
+        res = null; // network error: fall through to the same "couldn't check" message
+      }
+      const body = res ? await res.json().catch(() => ({})) : {};
+      mergedBtn.disabled = false;
+      mergedBtn.textContent = "I merged these";
+      if (!res || !res.ok) {
+        showDuplicatesNotice(body.error || "Couldn't check GHL -- try again.", true);
+        return;
+      }
+      if (body.callsMoved > 0) {
+        const calls = `${body.callsMoved} call${body.callsMoved === 1 ? "" : "s"}`;
+        const removed = body.contactsRemoved > 0 ? ` and removed ${body.contactsRemoved} leftover contact${body.contactsRemoved === 1 ? "" : "s"}` : "";
+        showDuplicatesNotice(`Done: moved ${calls} to the merged contact${removed}.`);
+        loadContacts();
+        loadDuplicates();
+      } else if (body.contactsGone > 0) {
+        showDuplicatesNotice("GHL says some of these contacts no longer exist, but CallTrove couldn't find where their calls went. Run \"Import past calls\" in Settings to re-sync them.", true);
+      } else if (body.errors > 0) {
+        showDuplicatesNotice("Couldn't reach GHL for some of these contacts -- try again in a moment.", true);
+      } else {
+        showDuplicatesNotice("No change yet: GHL still lists these as separate contacts. If you just merged them, wait a minute and try again.");
+      }
+    });
+
+    const dismissBtn = card.querySelector(".duplicate-dismiss");
+    dismissBtn.addEventListener("click", async () => {
+      dismissBtn.disabled = true;
+      let res;
+      try {
+        res = await fetch(`/api/admin/duplicates/dismiss${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify({ contactIds: group.contacts.map((c) => c.id) }),
+        });
+      } catch {
+        res = null;
+      }
+      if (!res || !res.ok) {
+        dismissBtn.disabled = false;
+        dismissBtn.textContent = "Couldn't save — try again";
+        return;
+      }
+      loadDuplicates();
+    });
+
+    duplicatesPanel.appendChild(card);
+  }
+}
+
+async function loadDuplicates() {
+  const res = await fetch(`/api/admin/duplicates${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
+  if (!res.ok) return;
+  const { groups, suggestSettingAddress } = await res.json();
+  renderDuplicateGroups(groups, suggestSettingAddress);
+}
+
 let searchTimer;
 searchInput.addEventListener("input", () => {
   clearTimeout(searchTimer);
@@ -218,9 +357,6 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".search-wrap")) searchResults.hidden = true;
 });
 
-// loadSession() resolves the real currentAccountId (see app.js's identical
-// fix) -- firing loadContacts() before it finishes races it against a
-// stale/empty currentAccountId with nothing to re-fetch once it resolves.
 loadSession().catch(() => resolveMe(null));
 meReady.then((me) => {
   if (hasNoAccounts(me)) {
