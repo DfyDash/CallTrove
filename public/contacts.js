@@ -212,5 +212,9 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".search-wrap")) searchResults.hidden = true;
 });
 
-loadSession();
-loadContacts();
+// loadSession() resolves the real currentAccountId (see app.js's identical
+// fix) -- firing loadContacts() before it finishes races it against a
+// stale/empty currentAccountId with nothing to re-fetch once it resolves.
+loadSession().then(() => {
+  loadContacts();
+});

@@ -822,8 +822,15 @@ dateToInput.value = state.dateTo;
 updatePresetButtonsUi();
 updateContactContextUi();
 
-loadSession();
-loadDispositions().then(() => {
-  dispositionSelect.value = state.disposition || "";
+// loadSession() is what resolves the real currentAccountId (from the
+// session, see loadSession's own comment) -- firing the account-scoped
+// loaders before it finishes races them against a stale/empty
+// currentAccountId with nothing to re-fetch once it resolves, which is
+// exactly how a bare page load could silently show the wrong account's
+// calls while the switcher itself displays the right one.
+loadSession().then(() => {
+  loadDispositions().then(() => {
+    dispositionSelect.value = state.disposition || "";
+  });
+  loadCalls();
 });
-loadCalls();
