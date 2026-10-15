@@ -823,3 +823,111 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS transcript_cleanup_enabled BOO
 ALTER TABLE cost_ledger DROP CONSTRAINT IF EXISTS cost_ledger_category_check;
 ALTER TABLE cost_ledger ADD CONSTRAINT cost_ledger_category_check
   CHECK (category IN ('transcription', 'ai_summary', 'storage', 'transcript_cleanup'));
+
+-- "Not duplicates" answers from the Contacts page's Possible duplicates
+-- view (src/routes/admin.js, GET /duplicates). Recorded per pair, with
+-- contact_a always the lesser ID, so a group where an admin dismissed
+-- A+B still resurfaces if a third contact C later shows up on the same
+-- phone number: A+C and B+C are new, undismissed pairs. ON DELETE CASCADE
+-- so a contact that disappears (e.g. merged away in GHL) takes its
+-- dismissals with it instead of blocking the delete.
+CREATE TABLE IF NOT EXISTS dismissed_duplicate_pairs (
+  contact_a     TEXT NOT NULL REFERENCES contacts(ghl_contact_id) ON DELETE CASCADE,
+  contact_b     TEXT NOT NULL REFERENCES contacts(ghl_contact_id) ON DELETE CASCADE,
+  dismissed_by  TEXT,
+  dismissed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (contact_a, contact_b),
+  CHECK (contact_a < contact_b)
+);
+
+-- The web address this account's admins log into GHL at, for the "Open in
+-- GHL" links (Contacts page's Possible duplicates view). NULL means the
+-- standard app.gohighlevel.com; a white-labeled agency sets its own branded
+-- domain here from Settings > GHL accounts. GHL's API exposes a brand ID
+-- for white-labeled locations but not the brand's web address, so this has
+-- to be entered once rather than detected.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS ghl_app_url TEXT;
+
+-- Paddle billing (one subscription per tenant). Populated only by Paddle's
+-- signed webhooks (src/paddle.js). For self-serve sign-ups (billing_required)
+-- it gates the app (src/auth.js) and the paid features (db.usageAllowed). paddle_events makes webhook
+-- delivery idempotent (Paddle retries and may deliver out of order).
+-- Answered at signup ("will you store health information?"). A request only:
+-- the storage tier stays 'standard' until an operator confirms the BAA and
+-- HIPAA bucket per docs/hipaa-activation-checklist.md.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hipaa_requested BOOLEAN NOT NULL DEFAULT false;
+-- True for accounts created through self-serve signup: the app stays closed
+-- until the BAA (if HIPAA was requested) is accepted and a subscription is
+-- live. Existing accounts keep the default (false) and are never gated.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS billing_required BOOLEAN NOT NULL DEFAULT false;
+-- Monthly usage billing (src/usageBillingJob.js): cost_ledger rows with a
+-- client_revenue are summed per tenant after each calendar month ends and
+-- sent to Paddle as ONE one-time charge on the tenant's subscription. A
+-- ledger row is claimed (usage_invoice_id set) before the Paddle call so a
+-- crash can never bill it twice; a still-'pending' invoice means the
+-- outcome is unknown and needs a human look, not an automatic retry.
+CREATE TABLE IF NOT EXISTS usage_invoices (
+  id           UUID PRIMARY KEY,
+  tenant_id    UUID NOT NULL REFERENCES tenants(id),
+  period_label TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'charged')),
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  charged_at   TIMESTAMPTZ
+);
+ALTER TABLE cost_ledger ADD COLUMN IF NOT EXISTS usage_invoice_id UUID REFERENCES usage_invoices(id);
+-- Sign-ups wait here until Paddle confirms the first payment; only then is a
+-- tenant and login created (src/db/index.js createAccountFromPendingSignup).
+-- No account exists for someone who hasn't paid. The password is stored as a
+-- hash, never in plain text. Unpaid rows are deleted after 7 days.
+-- Logins are matched case-insensitively (db.getUserByUsername), so the
+-- uniqueness has to be too. Skipped, with a notice, if usernames that differ
+-- only by case already exist -- those need resolving by hand first.
+DO $$
+BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
+EXCEPTION WHEN unique_violation THEN
+  RAISE NOTICE 'users_username_lower_idx not created: usernames that differ only by case already exist';
+END $$;
+
+CREATE TABLE IF NOT EXISTS pending_signups (
+  id                 UUID PRIMARY KEY,
+  first_name         TEXT NOT NULL,
+  last_name          TEXT NOT NULL,
+  business_name      TEXT NOT NULL,
+  email              TEXT NOT NULL,
+  password_hash      TEXT NOT NULL,
+  password_salt      TEXT NOT NULL,
+  hipaa_requested    BOOLEAN NOT NULL DEFAULT false,
+  baa_full_name      TEXT,
+  baa_text_hash      TEXT,
+  baa_version        TEXT,
+  baa_accepted_at    TIMESTAMPTZ,
+  baa_ip             TEXT,
+  baa_user_agent     TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  consumed_tenant_id UUID REFERENCES tenants(id)
+);
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS baa_title TEXT;
+-- The email is confirmed with a 6-digit code BEFORE payment, so nobody can
+-- pay for (and take over) an address they don't control. email_check_skipped
+-- is only ever set when the server runs with SIGNUP_SKIP_EMAIL_VERIFICATION
+-- (a test-site switch for when email sending isn't configured).
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_check_skipped BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_hash TEXT;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_expires TIMESTAMPTZ;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_sends INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pending_signups ADD COLUMN IF NOT EXISTS email_code_last_sent TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_customer_id TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS paddle_subscription_id TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_status TEXT;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ;
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS subscription_event_at TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS paddle_events (
+  event_id     TEXT PRIMARY KEY,
+  event_type   TEXT NOT NULL,
+  received_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);

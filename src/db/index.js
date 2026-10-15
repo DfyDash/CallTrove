@@ -213,7 +213,9 @@ async function listPendingCallSummaries() {
             c.ai_summary_attempts AS "attempts", g.tenant_id AS "tenantId"
      FROM calls c
      LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
-     WHERE c.ai_summary_status = 'pending'`
+     LEFT JOIN tenants t ON t.id = g.tenant_id
+     WHERE c.ai_summary_status = 'pending'
+       AND (t.id IS NULL OR NOT t.billing_required OR t.subscription_status IN ('active', 'trialing'))`
   );
   return rows;
 }
@@ -250,7 +252,9 @@ async function listPendingTranscriptCleanups() {
             c.ghl_account_id AS "ghlAccountId", c.transcript_cleanup_attempts AS "attempts", g.tenant_id AS "tenantId"
      FROM calls c
      LEFT JOIN ghl_accounts g ON g.id = c.ghl_account_id
-     WHERE c.transcript_cleanup_status = 'pending'`
+     LEFT JOIN tenants t ON t.id = g.tenant_id
+     WHERE c.transcript_cleanup_status = 'pending'
+       AND (t.id IS NULL OR NOT t.billing_required OR t.subscription_status IN ('active', 'trialing'))`
   );
   return rows;
 }
@@ -348,6 +352,180 @@ async function listAllContacts(ghlUserId, ghlAccountId) {
     params
   );
   return rows;
+}
+
+// Contacts in one GHL account that share a phone number, for the Contacts
+// page's "Possible duplicates" view. GHL itself is where duplicates get
+// merged (it has no merge API, only its own Manage Duplicates tool), so
+// this only finds and presents them. Phones are compared on their last 10
+// digits, ignoring punctuation and a leading country code, so "(555)
+// 123-4567" and "+1 555-123-4567" match; anything under 10 digits is
+// skipped -- a 7-digit local number would collide across unrelated people.
+// Name is deliberately not a match key: two different people named "John
+// Smith" are far more common than a duplicate with a typo'd phone.
+//
+// A group is hidden only once EVERY pair inside it has been dismissed (see
+// dismissDuplicateGroup), so a newly arrived third contact on the same
+// number brings the group back.
+async function listDuplicateContactGroups(ghlAccountId) {
+  const { rows } = await pool.query(
+    `WITH keyed AS (
+       SELECT c.ghl_contact_id AS id, c.name, c.phone,
+              RIGHT(REGEXP_REPLACE(c.phone, '\\D', '', 'g'), 10) AS phone_key
+       FROM contacts c
+       WHERE c.ghl_account_id = $1
+         AND LENGTH(REGEXP_REPLACE(COALESCE(c.phone, ''), '\\D', '', 'g')) >= 10
+     ), dupes AS (
+       SELECT phone_key FROM keyed GROUP BY phone_key HAVING COUNT(*) > 1
+     )
+     SELECT k.id, k.name, k.phone, k.phone_key AS "phoneKey",
+            (SELECT COUNT(*) FROM calls cl WHERE cl.ghl_contact_id = k.id)::int AS "callCount",
+            (SELECT MAX(occurred_at) FROM calls cl WHERE cl.ghl_contact_id = k.id) AS "lastCallAt"
+     FROM keyed k
+     JOIN dupes d ON d.phone_key = k.phone_key
+     ORDER BY k.phone_key, k.name NULLS LAST, k.id`,
+    [ghlAccountId]
+  );
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const { rows: dismissed } = await pool.query(
+    `SELECT contact_a AS a, contact_b AS b FROM dismissed_duplicate_pairs
+     WHERE contact_a = ANY($1) AND contact_b = ANY($1)`,
+    [ids]
+  );
+  const dismissedPairs = new Set(dismissed.map((d) => `${d.a}|${d.b}`));
+  const isDismissed = (x, y) => dismissedPairs.has(`${x}|${y}`) || dismissedPairs.has(`${y}|${x}`);
+
+  const byKey = new Map();
+  for (const r of rows) {
+    if (!byKey.has(r.phoneKey)) byKey.set(r.phoneKey, []);
+    byKey.get(r.phoneKey).push(r);
+  }
+
+  const groups = [];
+  for (const [phoneKey, members] of byKey) {
+    let hasLivePair = false;
+    for (let i = 0; i < members.length && !hasLivePair; i++) {
+      for (let j = i + 1; j < members.length; j++) {
+        if (!isDismissed(members[i].id, members[j].id)) {
+          hasLivePair = true;
+          break;
+        }
+      }
+    }
+    if (!hasLivePair) continue;
+    const lastCallAt = members.reduce((latest, m) => (m.lastCallAt && (!latest || m.lastCallAt > latest) ? m.lastCallAt : latest), null);
+    groups.push({
+      phoneKey,
+      lastCallAt,
+      contacts: members.map(({ phoneKey: _omit, ...m }) => m),
+    });
+  }
+  groups.sort((a, b) => (b.lastCallAt ? b.lastCallAt.getTime() : 0) - (a.lastCallAt ? a.lastCallAt.getTime() : 0));
+  return groups;
+}
+
+// GHL is the source of truth for which contact a call belongs to, and it
+// changes when two contacts are merged there (the merged-away contact is
+// deleted and its conversations move to the survivor). When a call we
+// already have is reported under a different contact, move it. Returns the
+// contact it came from, or null if nothing moved. If that leaves the old
+// contact with no calls, it's removed too: contact rows are only ever
+// created alongside a call, so an emptied one is the leftover of a merge,
+// and keeping it would show a ghost contact with "No calls yet". Nothing
+// here ever deletes a contact because GHL no longer has it -- only after a
+// call was positively re-filed under a different contact.
+//
+// No row lock is taken: the common case (call already under the right
+// contact) is one indexed SELECT that matches nothing, and the UPDATE
+// re-checks the old contact so a concurrent change can't be overwritten.
+async function reassignCallToContact({ ghlCallId, contactId, ghlAccountId }) {
+  const params = [ghlCallId, contactId];
+  let accountCondition = "";
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    accountCondition = `AND ghl_account_id = $3`;
+  }
+  const { rows } = await pool.query(
+    `WITH old AS (
+       SELECT id, ghl_contact_id FROM calls
+       WHERE ghl_call_id = $1 AND ghl_contact_id <> $2 ${accountCondition}
+     )
+     UPDATE calls c SET ghl_contact_id = $2
+     FROM old
+     WHERE c.id = old.id AND c.ghl_contact_id = old.ghl_contact_id
+     RETURNING old.ghl_contact_id AS "fromContactId"`,
+    params
+  );
+  if (rows.length === 0) return null;
+  const fromContactId = rows[0].fromContactId;
+  await pool.query(
+    `DELETE FROM contacts WHERE ghl_contact_id = $1 AND NOT EXISTS (SELECT 1 FROM calls WHERE ghl_contact_id = $1)`,
+    [fromContactId]
+  );
+  return fromContactId;
+}
+
+// Which contact each of these calls is filed under here (ghl_call_id ->
+// contact id; calls we don't have are absent). Lets the merge catch-up
+// decide what actually needs moving before it creates or touches anything.
+async function getCallContactIds(ghlCallIds, ghlAccountId) {
+  if (ghlCallIds.length === 0) return new Map();
+  const params = [ghlCallIds];
+  let accountCondition = "";
+  if (ghlAccountId) {
+    params.push(ghlAccountId);
+    accountCondition = `AND ghl_account_id = $2`;
+  }
+  const { rows } = await pool.query(
+    `SELECT ghl_call_id AS "ghlCallId", ghl_contact_id AS "contactId" FROM calls WHERE ghl_call_id = ANY($1) ${accountCondition}`,
+    params
+  );
+  return new Map(rows.map((r) => [r.ghlCallId, r.contactId]));
+}
+
+async function contactExists(contactId) {
+  const { rows } = await pool.query(`SELECT 1 FROM contacts WHERE ghl_contact_id = $1`, [contactId]);
+  return rows.length > 0;
+}
+
+// True only if every ID is a contact in this account -- the check that
+// keeps one tenant from acting on another's contacts.
+async function contactsBelongToAccount(contactIds, ghlAccountId) {
+  const unique = [...new Set(contactIds)];
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id FROM contacts WHERE ghl_contact_id = ANY($1) AND ghl_account_id = $2`,
+    [unique, ghlAccountId]
+  );
+  return rows.length === unique.length;
+}
+
+// "These aren't duplicates": records every pair among the given contacts
+// as dismissed. Every ID must belong to ghlAccountId -- the caller's
+// already-authorized account -- so one tenant can't write dismissals
+// against another's contacts. Returns false (writing nothing) if any ID
+// isn't in that account.
+async function dismissDuplicateGroup(contactIds, dismissedBy, ghlAccountId) {
+  const unique = [...new Set(contactIds)];
+  const { rows } = await pool.query(
+    `SELECT ghl_contact_id FROM contacts WHERE ghl_contact_id = ANY($1) AND ghl_account_id = $2`,
+    [unique, ghlAccountId]
+  );
+  if (rows.length !== unique.length) return false;
+  await pool.query(
+    `INSERT INTO dismissed_duplicate_pairs (contact_a, contact_b, dismissed_by)
+     SELECT a.id, b.id, $2
+     FROM UNNEST($1::text[]) AS a(id)
+     JOIN UNNEST($1::text[]) AS b(id) ON a.id < b.id
+     ON CONFLICT DO NOTHING`,
+    [unique, dismissedBy || null]
+  );
+  return true;
+}
+
+async function setGhlAppUrl(ghlAccountId, appUrl) {
+  await pool.query(`UPDATE ghl_accounts SET ghl_app_url = $2 WHERE id = $1`, [ghlAccountId, appUrl || null]);
 }
 
 const PAGE_SIZES = [20, 50, 100];
@@ -1034,7 +1212,9 @@ async function getUserByUsername(username) {
             is_operator AS "isOperator", totp_enabled AS "totpEnabled",
             email_otp_enabled AS "emailOtpEnabled", email, email_verified_at AS "emailVerifiedAt",
             first_name AS "firstName", last_name AS "lastName"
-     FROM users WHERE username = $1`,
+     FROM users WHERE lower(username) = lower($1)
+     ORDER BY (username = $1) DESC
+     LIMIT 1`,
     [username]
   );
   return rows[0] || null;
@@ -1212,8 +1392,8 @@ async function countRecentEmailOtpCodes(userId, purpose, sinceMinutes) {
 
 // --- tenants / ghl_accounts / user_account_access (multi-tenant) ---
 
-async function createTenant({ id, name, ownerUserId }) {
-  await pool.query(`INSERT INTO tenants (id, name, owner_user_id) VALUES ($1, $2, $3)`, [id, name, ownerUserId || null]);
+async function createTenant({ id, name, ownerUserId, hipaaRequested = false, billingRequired = false }) {
+  await pool.query(`INSERT INTO tenants (id, name, owner_user_id, hipaa_requested, billing_required) VALUES ($1, $2, $3, $4, $5)`, [id, name, ownerUserId || null, !!hipaaRequested, !!billingRequired]);
 }
 
 // Fills in owner_user_id after the fact -- needed because the owner's user
@@ -1291,8 +1471,14 @@ async function getTotalStoredBytesForTenant(tenantId) {
 async function getTenantById(id) {
   const { rows } = await pool.query(
     `SELECT id, name, owner_user_id AS "ownerUserId", status, storage_tier AS "storageTier",
+            hipaa_requested AS "hipaaRequested",
+            billing_required AS "billingRequired",
             cancellation_requested_at AS "cancellationRequestedAt",
-            purge_at AS "purgeAt", canceled_at AS "canceledAt"
+            purge_at AS "purgeAt", canceled_at AS "canceledAt",
+            paddle_customer_id AS "paddleCustomerId",
+            paddle_subscription_id AS "paddleSubscriptionId",
+            subscription_status AS "subscriptionStatus",
+            subscription_period_end AS "subscriptionPeriodEnd"
      FROM tenants WHERE id = $1`,
     [id]
   );
@@ -1420,7 +1606,7 @@ async function listStorageKeysForTenant(tenantId) {
 async function listTenantsForOperator() {
   const { rows } = await pool.query(`
     SELECT
-      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
+      t.id, t.name, t.status, t.storage_tier AS "storageTier", t.hipaa_requested AS "hipaaRequested", t.created_at AS "createdAt", t.purge_at AS "purgeAt",
       u.username AS "ownerUsername",
       (SELECT count(*)::int FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlAccountCount",
       (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
@@ -1546,7 +1732,7 @@ async function listGhlAccountsWithStatusForTenant(tenantId) {
   const { rows } = await pool.query(
     `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name,
             g.installed_at AS "installedAt", g.uninstalled_at AS "uninstalledAt",
-            s.last_synced_at AS "lastSyncedAt"
+            s.last_synced_at AS "lastSyncedAt", g.ghl_app_url AS "ghlAppUrl"
      FROM ghl_accounts g
      LEFT JOIN account_sync_state s ON s.ghl_account_id = g.id
      WHERE g.tenant_id = $1
@@ -1659,7 +1845,8 @@ async function listActiveGhlAccountsForTenant(tenantId) {
 async function getGhlAccountById(id) {
   const { rows } = await pool.query(
     `SELECT id, tenant_id AS "tenantId", ghl_location_id AS "ghlLocationId", name,
-            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt"
+            access_token AS "accessToken", refresh_token AS "refreshToken", token_expires_at AS "tokenExpiresAt",
+            ghl_app_url AS "ghlAppUrl"
      FROM ghl_accounts WHERE id = $1`,
     [id]
   );
@@ -2092,7 +2279,268 @@ async function listPhiAccessLog(tenantId, { page = 1, pageSize = 50 } = {}) {
   return { entries: rows, total, page: pageNum, pageSize: size };
 }
 
+// Applies one Paddle subscription event to its tenant. Idempotent and
+// order-safe: a repeated event_id is ignored, and an event older than the
+// last one applied (Paddle can deliver out of order) is recorded but does
+// not overwrite newer state. Returns "applied" | "duplicate" | "stale" |
+// "unknown_tenant".
+async function applyPaddleSubscriptionEvent({ eventId, eventType, occurredAt, tenantId, customerId, subscriptionId, status, periodEnd }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const ins = await client.query(
+      `INSERT INTO paddle_events (event_id, event_type) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [eventId, eventType]
+    );
+    if (ins.rowCount === 0) {
+      await client.query("COMMIT");
+      return "duplicate";
+    }
+    const upd = await client.query(
+      `UPDATE tenants SET paddle_customer_id = COALESCE($2, paddle_customer_id),
+              paddle_subscription_id = $3, subscription_status = $4,
+              subscription_period_end = $5, subscription_event_at = $6
+       WHERE id = $1 AND (subscription_event_at IS NULL OR subscription_event_at <= $6)`,
+      [tenantId, customerId, subscriptionId, status, periodEnd, occurredAt]
+    );
+    if (upd.rowCount === 0) {
+      const exists = await client.query(`SELECT 1 FROM tenants WHERE id = $1`, [tenantId]);
+      await client.query("COMMIT");
+      return exists.rowCount ? "stale" : "unknown_tenant";
+    }
+    await client.query("COMMIT");
+    return "applied";
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// --- usage billing (see src/usageBillingJob.js and schema.sql's comment on
+// usage_invoices) ---
+
+// Paid features (transcription, AI summary, transcript cleanup) only run
+// for self-serve signups while their subscription is in good standing, so
+// a client whose card fails stops costing money. Accounts that don't go
+// through Paddle (billing_required false) are never affected.
+async function usageAllowed(tenantId) {
+  if (!tenantId) return true;
+  const { rows } = await pool.query(
+    `SELECT (NOT billing_required OR subscription_status IN ('active', 'trialing')) AS allowed FROM tenants WHERE id = $1`,
+    [tenantId]
+  );
+  return rows[0] ? rows[0].allowed : true;
+}
+
+// Tenants with a live Paddle subscription and ledger usage from before
+// `cutoff` that no invoice has claimed yet.
+async function listTenantsWithUnbilledUsage(cutoff) {
+  const { rows } = await pool.query(
+    `SELECT l.tenant_id AS "tenantId", t.paddle_subscription_id AS "subscriptionId", sum(l.client_revenue)::numeric AS "total"
+     FROM cost_ledger l JOIN tenants t ON t.id = l.tenant_id
+     WHERE l.usage_invoice_id IS NULL AND l.client_revenue > 0 AND l.created_at < $1
+       AND t.paddle_subscription_id IS NOT NULL AND t.subscription_status IN ('active', 'trialing')
+     GROUP BY l.tenant_id, t.paddle_subscription_id`,
+    [cutoff]
+  );
+  return rows.map((r) => ({ ...r, total: Number(r.total) }));
+}
+
+// Claims the tenant's unbilled rows for a new invoice, in one transaction.
+// Returns null (and claims nothing) if the total is under minCents -- those
+// rows simply roll into next month's invoice.
+async function claimUsageForInvoice({ invoiceId, tenantId, cutoff, periodLabel, minCents }) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO usage_invoices (id, tenant_id, period_label, amount_cents) VALUES ($1, $2, $3, 0)`, [invoiceId, tenantId, periodLabel]);
+    const { rows } = await client.query(
+      `UPDATE cost_ledger SET usage_invoice_id = $1
+       WHERE tenant_id = $2 AND usage_invoice_id IS NULL AND client_revenue > 0 AND created_at < $3
+       RETURNING client_revenue`,
+      [invoiceId, tenantId, cutoff]
+    );
+    const cents = Math.round(rows.reduce((sum, r) => sum + Number(r.client_revenue), 0) * 100);
+    if (cents < minCents) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(`UPDATE usage_invoices SET amount_cents = $2 WHERE id = $1`, [invoiceId, cents]);
+    await client.query("COMMIT");
+    return { amountCents: cents };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function countStaleUsageInvoices() {
+  const { rows } = await pool.query(`SELECT count(*)::int AS n FROM usage_invoices WHERE status = 'pending' AND created_at < now() - interval '1 hour'`);
+  return rows[0].n;
+}
+
+async function markUsageInvoiceCharged(invoiceId) {
+  await pool.query(`UPDATE usage_invoices SET status = 'charged', charged_at = now() WHERE id = $1`, [invoiceId]);
+}
+
+// Only for a Paddle call that definitely failed -- frees the rows so the
+// next cycle tries again.
+async function releaseUsageInvoice(invoiceId) {
+  await pool.query(`UPDATE cost_ledger SET usage_invoice_id = NULL WHERE usage_invoice_id = $1`, [invoiceId]);
+  await pool.query(`DELETE FROM usage_invoices WHERE id = $1`, [invoiceId]);
+}
+
+// --- pending sign-ups (see schema.sql's comment on pending_signups) ---
+
+async function createPendingSignup(p) {
+  // Stale unpaid rows are cleared as we go. A new sign-up never removes
+  // another waiting one for the same email: nothing proves who owns the
+  // address yet, so one person could otherwise wipe out another's checkout.
+  // Whoever pays first gets the account.
+  await pool.query(`DELETE FROM pending_signups WHERE consumed_tenant_id IS NULL AND created_at < now() - interval '7 days'`);
+  await pool.query(
+    `INSERT INTO pending_signups (id, first_name, last_name, business_name, email, password_hash, password_salt, hipaa_requested,
+                                  baa_full_name, baa_text_hash, baa_version, baa_accepted_at, baa_ip, baa_user_agent, baa_title, email_check_skipped)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+    [p.id, p.firstName, p.lastName, p.businessName, p.email, p.passwordHash, p.passwordSalt, !!p.hipaaRequested,
+     p.baaFullName || null, p.baaTextHash || null, p.baaVersion || null, p.baaFullName ? new Date() : null, p.baaIp || null, p.baaUserAgent || null, p.baaTitle || null, !!p.emailCheckSkipped]
+  );
+}
+
+async function getPendingSignup(id) {
+  const { rows } = await pool.query(
+    `SELECT id, email, business_name AS "businessName", hipaa_requested AS "hipaaRequested", consumed_tenant_id AS "consumedTenantId",
+            (email_verified_at IS NOT NULL OR email_check_skipped) AS "emailOk",
+            email_code_last_sent AS "emailCodeLastSent"
+     FROM pending_signups WHERE id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+// Stores a freshly generated code (hashed) for a waiting sign-up, unless one
+// was sent under 30 seconds ago or the sign-up has used its 6 sends.
+async function issuePendingEmailCode(id, codeHash, expiresAt) {
+  const { rows } = await pool.query(
+    `UPDATE pending_signups
+     SET email_code_hash = $2, email_code_expires = $3, email_code_attempts = 0,
+         email_code_sends = email_code_sends + 1, email_code_last_sent = now()
+     WHERE id = $1 AND consumed_tenant_id IS NULL AND email_verified_at IS NULL
+       AND (email_code_last_sent IS NULL OR email_code_last_sent < now() - interval '30 seconds')
+       AND email_code_sends < 6
+     RETURNING email`,
+    [id, codeHash, expiresAt]
+  );
+  if (rows[0]) return { ok: true, email: rows[0].email };
+  const { rows: why } = await pool.query(
+    `SELECT email_code_sends AS sends, email_verified_at IS NOT NULL AS verified FROM pending_signups WHERE id = $1 AND consumed_tenant_id IS NULL`,
+    [id]
+  );
+  if (!why[0] || why[0].verified) return { ok: false, reason: "missing" };
+  return { ok: false, reason: why[0].sends >= 6 ? "limit" : "cooldown" };
+}
+
+// Undoes issuePendingEmailCode when the email could not actually be sent, so a
+// provider hiccup doesn't use up one of the 6 sends or start the 30s wait.
+async function revertPendingEmailCode(id) {
+  await pool.query(
+    `UPDATE pending_signups SET email_code_sends = GREATEST(email_code_sends - 1, 0), email_code_last_sent = NULL, email_code_hash = NULL
+     WHERE id = $1 AND email_verified_at IS NULL`,
+    [id]
+  );
+}
+
+// Checks a code. Every check counts as an attempt; 5 wrong ones burn the code.
+async function checkPendingEmailCode(id, codeHash) {
+  const { rows } = await pool.query(
+    `UPDATE pending_signups SET email_code_attempts = email_code_attempts + 1
+     WHERE id = $1 AND consumed_tenant_id IS NULL AND email_verified_at IS NULL
+     RETURNING email_code_hash AS hash, email_code_expires AS expires, email_code_attempts AS attempts`,
+    [id]
+  );
+  const r = rows[0];
+  if (!r) {
+    // Already confirmed (a double submit, or the page open in two tabs) is a success, not an error.
+    const { rows: done } = await pool.query(`SELECT email_verified_at IS NOT NULL AS v FROM pending_signups WHERE id = $1 AND consumed_tenant_id IS NULL`, [id]);
+    return done[0] && done[0].v ? "ok" : "missing";
+  }
+  if (r.attempts > 5) return "toomany";
+  if (!r.hash || !r.expires || new Date(r.expires) < new Date()) return "expired";
+  const a = Buffer.from(r.hash), b = Buffer.from(codeHash);
+  if (a.length !== b.length || !require("crypto").timingSafeEqual(a, b)) return "incorrect";
+  await pool.query(`UPDATE pending_signups SET email_verified_at = now(), email_code_hash = NULL WHERE id = $1`, [id]);
+  return "ok";
+}
+
+// Runs when Paddle confirms the first payment. All-or-nothing, and safe to
+// call again for the same id (Paddle retries and sends several events).
+async function createAccountFromPendingSignup(id) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(`SELECT * FROM pending_signups WHERE id = $1 FOR UPDATE`, [id]);
+    const p = rows[0];
+    if (!p) {
+      await client.query("ROLLBACK");
+      return { status: "missing" };
+    }
+    if (p.consumed_tenant_id) {
+      await client.query("COMMIT");
+      return { status: "exists", tenantId: p.consumed_tenant_id };
+    }
+    if (!p.email_verified_at && !p.email_check_skipped) {
+      await client.query("ROLLBACK");
+      return { status: "unverified" };
+    }
+    const taken = await client.query(`SELECT 1 FROM users WHERE lower(username) = lower($1)`, [p.email]);
+    if (taken.rowCount) {
+      await client.query("ROLLBACK");
+      return { status: "email_taken" };
+    }
+    const tenantId = randomUUID();
+    const userId = randomUUID();
+    await client.query(`INSERT INTO tenants (id, name, hipaa_requested, billing_required) VALUES ($1, $2, $3, true)`, [tenantId, p.business_name, p.hipaa_requested]);
+    await client.query(
+      `INSERT INTO users (id, username, password_hash, password_salt, role, tenant_id, first_name, last_name, email, email_verified_at)
+       VALUES ($1, $2, $3, $4, 'admin', $5, $6, $7, $8, $9)`,
+      [userId, p.email, p.password_hash, p.password_salt, tenantId, p.first_name, p.last_name, p.email, p.email_verified_at]
+    );
+    await client.query(`UPDATE tenants SET owner_user_id = $1 WHERE id = $2`, [userId, tenantId]);
+    await client.query(
+      `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, 'tenant_signup', $4, $5)`,
+      [randomUUID(), userId, p.email, `Signed up "${p.business_name}" (payment confirmed)`, tenantId]
+    );
+    if (p.hipaa_requested && p.baa_full_name) {
+      await client.query(
+        `INSERT INTO baa_acceptances (id, tenant_id, user_id, full_name, title, baa_version, baa_text_hash, ip_address, user_agent, accepted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [randomUUID(), tenantId, userId, p.baa_full_name, p.baa_title || '', p.baa_version, p.baa_text_hash, p.baa_ip, p.baa_user_agent, p.baa_accepted_at]
+      );
+      await client.query(
+        `INSERT INTO audit_log (id, actor_id, actor_username, action, message, tenant_id) VALUES ($1, $2, $3, 'baa_accepted', $4, $5)`,
+        [randomUUID(), userId, p.email, `BAA accepted for "${p.business_name}" by ${p.baa_full_name}${p.baa_title ? ` (${p.baa_title})` : ""} at signup`, tenantId]
+      );
+    }
+    await client.query(`UPDATE pending_signups SET consumed_tenant_id = $2 WHERE id = $1`, [id, tenantId]);
+    await client.query("COMMIT");
+    return { status: "created", tenantId, userId, email: p.email, firstName: p.first_name };
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    // Two payments for the same email landing together: the unique index
+    // lets one win; the other is the paid-but-no-account case.
+    if (err && err.code === "23505") return { status: "email_taken" };
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
+  applyPaddleSubscriptionEvent,
   pool,
   DEFAULT_TENANT_ID,
   DEFAULT_GHL_ACCOUNT_ID,
@@ -2148,6 +2596,13 @@ module.exports = {
   getGhlAccountById,
   updateCallHandler,
   listContacts,
+  listDuplicateContactGroups,
+  dismissDuplicateGroup,
+  reassignCallToContact,
+  getCallContactIds,
+  contactsBelongToAccount,
+  contactExists,
+  setGhlAppUrl,
   listAllContacts,
   listCalls,
   getCallStats,
@@ -2209,6 +2664,18 @@ module.exports = {
   upsertDailyStorageSnapshot,
   getAverageStoredBytesForTenantPeriod,
   getStorageStatsByTierForTenantPeriod,
+  createPendingSignup,
+  getPendingSignup,
+  issuePendingEmailCode,
+  revertPendingEmailCode,
+  checkPendingEmailCode,
+  createAccountFromPendingSignup,
+  usageAllowed,
+  listTenantsWithUnbilledUsage,
+  claimUsageForInvoice,
+  countStaleUsageInvoices,
+  markUsageInvoiceCharged,
+  releaseUsageInvoice,
   logAudit,
   listAuditLog,
   listAuditLogForOperator,

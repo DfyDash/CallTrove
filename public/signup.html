@@ -13,7 +13,7 @@
 <body>
   <div class="login-page">
     <button type="button" id="theme-toggle" class="theme-toggle theme-toggle-corner">Dark mode</button>
-    <form class="login-card" method="POST" action="/auth/signup">
+    <form class="login-card" id="signup-form" method="POST" action="/auth/signup">
       <div class="login-brand">
         <div class="brand-mark">
           <svg viewBox="19 3 64 123" width="23" height="44" aria-hidden="true">
@@ -25,39 +25,94 @@
         </div>
         <div class="brand-name">Call<span class="brand-name-accent">Trove</span></div>
       </div>
+      <div id="wizard-steps" class="wizard-steps" aria-label="Sign-up progress"></div>
       <div id="signup-error" class="login-error" hidden></div>
-      <label>
-        First name
-        <input type="text" name="firstName" autocomplete="given-name" required autofocus />
-      </label>
-      <label>
-        Last name
-        <input type="text" name="lastName" autocomplete="family-name" required />
-      </label>
-      <label>
-        Business or agency name
-        <input type="text" name="businessName" autocomplete="organization" required />
-      </label>
-      <label>
-        Username
-        <input type="text" name="username" autocomplete="username" required />
-      </label>
-      <label>
-        Email address
-        <input type="email" name="email" autocomplete="email" required />
-      </label>
-      <label>
-        Password
-        <input type="password" name="password" autocomplete="new-password" minlength="8" required />
-      </label>
-      <label>
-        Confirm password
-        <input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required />
-      </label>
-      <button type="submit">Create account</button>
+
+      <div class="signup-step" data-step="about">
+        <h1 class="signup-step-title">Tell us about you</h1>
+        <label>
+          First name
+          <input type="text" name="firstName" autocomplete="given-name" required autofocus />
+        </label>
+        <label>
+          Last name
+          <input type="text" name="lastName" autocomplete="family-name" required />
+        </label>
+        <label>
+          Business name
+          <input type="text" name="businessName" autocomplete="organization" required />
+        </label>
+      </div>
+
+      <div class="signup-step" data-step="health">
+        <h1 class="signup-step-title">Choose your plan</h1>
+        <fieldset class="plan-grid">
+          <legend class="visually-hidden">Choose your plan</legend>
+          <label class="plan-card">
+            <input type="radio" name="hipaa" value="no" class="plan-radio" required />
+            <span class="plan-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.6 4.6L19 7.4"/></svg></span>
+            <span class="plan-name">Secure Storage</span>
+            <span class="plan-price" data-plan="standard"></span>
+            <span class="plan-desc">Get this if the call recordings you store with CallTrove don't include health information. Your GoHighLevel recordings are saved automatically, encrypted, and every view or download is logged.</span>
+            <span class="plan-detail" data-plan-detail="standard"></span>
+          </label>
+          <label class="plan-card">
+            <input type="radio" name="hipaa" value="yes" class="plan-radio" />
+            <span class="plan-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.6 4.6L19 7.4"/></svg></span>
+            <span class="plan-name">HIPAA Secure Storage</span>
+            <span class="plan-price" data-plan="hipaa"></span>
+            <span class="plan-desc">Get this if call recordings you store with CallTrove include health information, such as medical conditions, medications, treatment, or health insurance details.</span>
+            <span class="plan-detail" data-plan-detail="hipaa"></span>
+          </label>
+        </fieldset>
+        <p class="settings-note" id="signup-usage-note" hidden></p>
+      </div>
+
+      <div class="signup-step" data-step="agreement">
+        <h1 class="signup-step-title">Business Associate Agreement</h1>
+        <p class="settings-note">Because your recordings may include health information, please read and accept this agreement.</p>
+        <pre id="signup-baa-text" class="baa-text-box signup-baa-box"></pre>
+        <input type="hidden" name="baaHash" id="signup-baa-hash" />
+        <label>
+          Your full legal name
+          <input type="text" name="baaFullName" id="signup-baa-name" autocomplete="name" required />
+        </label>
+        <label>
+          Your job title
+          <input type="text" name="baaTitle" id="signup-baa-title" autocomplete="organization-title" required />
+        </label>
+        <label class="onboarding-agree">
+          <input type="checkbox" name="baaAgree" id="signup-baa-agree" required />
+          I have read and agree to this agreement on behalf of my company.
+        </label>
+      </div>
+
+      <div class="signup-step" data-step="login">
+        <h1 class="signup-step-title">Create your login</h1>
+        <label>
+          Email address (this is your login)
+          <input type="email" name="email" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input type="password" name="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>
+          Confirm password
+          <input type="password" name="confirmPassword" autocomplete="new-password" minlength="8" required />
+        </label>
+      </div>
+
+      <div class="signup-nav">
+        <button type="button" id="signup-back" class="secondary-btn" hidden>Back</button>
+        <button type="button" id="signup-next">Continue</button>
+        <button type="submit" id="signup-submit">Continue</button>
+      </div>
       <p class="forgot-password">Already have an account? <a href="/login.html">Log in</a></p>
     </form>
   </div>
+  <script src="wizard-steps.js"></script>
   <script src="signup.js"></script>
+<script src="password-toggle.js"></script>
 </body>
 </html>

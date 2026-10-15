@@ -102,9 +102,15 @@ function applyDateRange(from, to, preset = null) {
   loadCalls();
 }
 
+// Resolves once /api/me has been read, so the first data requests can wait
+// for it (a customer with no connected account gets a prompt instead).
+let resolveMe;
+const meReady = new Promise((r) => (resolveMe = r));
+
 async function loadSession() {
   const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
+  resolveMe(me);
   transcriptionEnabled = !!me.transcriptionEnabled;
   csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
@@ -822,13 +828,12 @@ dateToInput.value = state.dateTo;
 updatePresetButtonsUi();
 updateContactContextUi();
 
-// loadSession() is what resolves the real currentAccountId (from the
-// session, see loadSession's own comment) -- firing the account-scoped
-// loaders before it finishes races them against a stale/empty
-// currentAccountId with nothing to re-fetch once it resolves, which is
-// exactly how a bare page load could silently show the wrong account's
-// calls while the switcher itself displays the right one.
-loadSession().then(() => {
+loadSession().catch(() => resolveMe(null));
+meReady.then((me) => {
+  if (hasNoAccounts(me)) {
+    showConnectPrompt(me);
+    return;
+  }
   loadDispositions().then(() => {
     dispositionSelect.value = state.disposition || "";
   });

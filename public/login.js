@@ -7,6 +7,13 @@ if (params.get("error") === "pending") {
 if (params.get("activated")) {
   document.getElementById("login-activated").hidden = false;
 }
+if (params.get("paid")) {
+  document.getElementById("login-paid").hidden = false;
+}
+if (params.get("email")) {
+  document.querySelector('input[name="username"]').value = params.get("email");
+  document.querySelector('input[name="password"]').focus();
+}
 if (params.get("reset")) {
   document.getElementById("login-reset").hidden = false;
 }

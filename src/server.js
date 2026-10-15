@@ -15,6 +15,8 @@ const callSummaryPoller = require("./callSummaryPoller");
 const transcriptCleanupPoller = require("./transcriptCleanupPoller");
 const callDigestJob = require("./callDigestJob");
 const storageCostJob = require("./storageCostJob");
+const mergeWatchJob = require("./mergeWatchJob");
+const usageBillingJob = require("./usageBillingJob");
 const alerting = require("./alerting");
 const billingRates = require("./billingRates");
 const db = require("./db");
@@ -40,15 +42,16 @@ if (process.env.STORAGE_DRIVER === "s3") {
   for (const bucket of buckets) mediaSrc.push(`https://${bucket}.s3.${region}.amazonaws.com`);
 }
 
-app.use(
-  helmet({
+function helmetWithStyles(styleSrc) {
+  return helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://cdn.paddle.com"],
+        styleSrc,
         imgSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        connectSrc: ["'self'", "https://checkout-service.paddle.com", "https://sandbox-checkout-service.paddle.com"],
+        frameSrc: ["https://buy.paddle.com", "https://sandbox-buy.paddle.com"],
         mediaSrc,
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
@@ -61,8 +64,16 @@ app.use(
     // doesn't send by default. Not worth the breakage for an app with no
     // need for the cross-origin isolation COEP exists to provide.
     crossOriginEmbedderPolicy: false,
-  })
-);
+  });
+}
+const strictHelmet = helmetWithStyles(["'self'"]);
+// Paddle.js sizes and styles its checkout frame with an inline style
+// attribute and a <style> element it injects, so the pages that open
+// Paddle's checkout (and only those) allow inline styles. Scripts stay
+// locked to this site and cdn.paddle.com everywhere.
+const paddleHelmet = helmetWithStyles(["'self'", "'unsafe-inline'"]);
+const PADDLE_PAGES = new Set(["/checkout.html", "/onboarding.html", "/settings.html"]);
+app.use((req, res, next) => (PADDLE_PAGES.has(req.path) ? paddleHelmet : strictHelmet)(req, res, next));
 
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -133,6 +144,12 @@ app.get("/reset-password.html", (req, res) => res.sendFile(path.join(__dirname, 
 app.get("/reset-password.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "reset-password.js")));
 app.get("/style.css", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "style.css")));
 app.get("/theme.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "theme.js")));
+app.get("/verify-email.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "verify-email.html")));
+app.get("/verify-email.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "verify-email.js")));
+app.get("/checkout.html", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "checkout.html")));
+app.get("/checkout.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "checkout.js")));
+app.get("/wizard-steps.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "wizard-steps.js")));
+app.get("/password-toggle.js", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "password-toggle.js")));
 app.get("/favicon.svg", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon.svg")));
 app.get("/favicon-32.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "favicon-32.png")));
 app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname, "..", "public", "apple-touch-icon.png")));
@@ -156,6 +173,9 @@ app.get("/healthz", async (req, res) => {
     res.status(503).json({ status: "error", error: err.message });
   }
 });
+
+// Paddle webhooks: public (authenticated by signature), raw body required.
+app.post("/webhooks/paddle", express.raw({ type: "application/json", limit: "1mb" }), require("./paddle").webhookHandler);
 
 app.use("/auth", authRouter);
 
@@ -201,6 +221,8 @@ callSummaryPoller.start();
 transcriptCleanupPoller.start();
 callDigestJob.start();
 storageCostJob.start();
+mergeWatchJob.start();
+usageBillingJob.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand

@@ -6,6 +6,7 @@ const totp = require("../totp");
 const emailOtp = require("../emailOtp");
 const email = require("../email");
 const { verifyPassword, hashPassword, sessionUser } = require("../auth");
+const { BAA_VERSION, buildBaaText } = require("../baaText");
 
 const router = express.Router();
 
@@ -370,14 +371,43 @@ const SIGNUP_EMAIL_FORMAT = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // tenant's owner_user_id can point at them (same FK the other direction) --
 // so the sequence is: tenant with no owner yet, then the user, then link
 // the two (db.updateTenantOwner).
+// The BAA text a HIPAA signup is shown before their account exists. Built
+// from the business name they typed, same as the in-app version, and the
+// hash is echoed back on signup so the server can confirm the exact text
+// that was displayed is what got accepted.
+const baaPreviewLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false });
+router.get("/baa-preview", baaPreviewLimiter, (req, res) => {
+  const businessName = String(req.query.businessName || "").trim().slice(0, 200);
+  if (!businessName) return res.status(400).json({ error: "business name required" });
+  const text = buildBaaText({ companyName: businessName });
+  res.json({ text, hash: createHash("sha256").update(text, "utf8").digest("hex"), version: BAA_VERSION });
+});
+
 router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, async (req, res) => {
   const firstName = ((req.body || {}).firstName || "").trim();
   const lastName = ((req.body || {}).lastName || "").trim();
   const businessName = ((req.body || {}).businessName || "").trim();
-  const username = ((req.body || {}).username || "").trim();
   const address = ((req.body || {}).email || "").trim().toLowerCase();
+  // The email IS the login: same value as the username, so there is one
+  // thing to remember and nothing to collide on but the email itself.
+  const username = address;
   const { password, confirmPassword } = req.body || {};
+  const hipaaAnswer = (req.body || {}).hipaa;
 
+  if (hipaaAnswer !== "yes" && hipaaAnswer !== "no") {
+    return res.redirect("/signup.html?error=hipaa");
+  }
+  // A HIPAA signup accepts the BAA as part of creating the account: the
+  // signer's name, the box ticked, and the hash of the exact text shown.
+  const baaFullName = (((req.body || {}).baaFullName) || "").trim();
+  const baaTitle = (((req.body || {}).baaTitle) || "").trim();
+  const baaText = buildBaaText({ companyName: businessName });
+  const baaHash = createHash("sha256").update(baaText, "utf8").digest("hex");
+  if (hipaaAnswer === "yes") {
+    if (!baaFullName || !baaTitle || (req.body || {}).baaAgree !== "on" || (req.body || {}).baaHash !== baaHash) {
+      return res.redirect("/signup.html?error=baa");
+    }
+  }
   if (!firstName || !lastName || !businessName || !username || !address || !password) {
     return res.redirect("/signup.html?error=missing");
   }
@@ -395,42 +425,168 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   if (existing) {
     return res.redirect("/signup.html?error=taken");
   }
+  // Signing up needs somewhere to take payment: no account is ever created
+  // for someone who hasn't paid.
+  if (!require("../paddle").billingEnabled()) {
+    return res.redirect("/signup.html?error=unavailable");
+  }
 
-  const tenantId = randomUUID();
-  const userId = randomUUID();
+  // The email is confirmed with a code BEFORE payment (see schema.sql's
+  // pending_signups comment). Without working email we can't confirm anything,
+  // so sign-up is closed -- unless the operator has explicitly switched the
+  // check off for a test site.
+  const skipEmailCheck = process.env.SIGNUP_SKIP_EMAIL_VERIFICATION === "true";
+  if (!skipEmailCheck && !email.isEnabled()) {
+    return res.redirect("/signup.html?error=unavailable");
+  }
+
+  const pendingId = randomUUID();
   const { hash, salt } = hashPassword(password);
-
-  await db.createTenant({ id: tenantId, name: businessName });
-  await db.createUser({ id: userId, username, passwordHash: hash, passwordSalt: salt, role: "admin", tenantId, firstName, lastName });
-  await db.updateTenantOwner(tenantId, userId);
-  // Stored as-provided, unverified -- same shape as the self-service
-  // "start email verification" flow (db.setUserPendingEmail). Proving it
-  // (and optionally turning it into an MFA method) happens later, in
-  // Account settings, the same way for every user regardless of how their
-  // account was created.
-  await db.setUserPendingEmail(userId, address);
-  await db.logAudit({
-    actorId: userId,
-    actorUsername: username,
-    action: "tenant_signup",
-    message: `Signed up "${businessName}"`,
-    tenantId,
+  await db.createPendingSignup({
+    id: pendingId,
+    firstName,
+    lastName,
+    businessName,
+    email: address,
+    passwordHash: hash,
+    passwordSalt: salt,
+    hipaaRequested: hipaaAnswer === "yes",
+    baaFullName: hipaaAnswer === "yes" ? baaFullName : null,
+    baaTitle: hipaaAnswer === "yes" ? baaTitle : null,
+    baaTextHash: hipaaAnswer === "yes" ? baaHash : null,
+    baaVersion: hipaaAnswer === "yes" ? BAA_VERSION : null,
+    baaIp: req.ip,
+    baaUserAgent: req.get("user-agent"),
+    emailCheckSkipped: skipEmailCheck,
   });
+  if (skipEmailCheck) return res.redirect(`/checkout.html?id=${pendingId}`);
+  const sent = await sendSignupCode(pendingId, address, req);
+  if (!sent || !sent.ok) return res.redirect("/signup.html?error=emailsend");
+  res.redirect(`/verify-email.html?id=${pendingId}`);
+});
 
+async function sendSignupCode(pendingId, address, req) {
+  const code = emailOtp.generateCode();
+  const issued = await db.issuePendingEmailCode(pendingId, emailOtp.hashCode(code), emailOtp.expiresAt());
+  if (!issued.ok) return issued;
   try {
     await email.sendEmail({
       to: address,
-      subject: `Welcome to CallTrove, ${firstName}`,
-      text: `Your CallTrove account is ready. Sign in at https://app.calltrove.com/login.html with the username you chose (${username}).\n\nNext step: connect your GoHighLevel account from Settings so your calls start syncing.`,
-      html: email.welcomeEmailHtml(username, { baseUrl: `${req.protocol}://${req.get("host")}`, firstName }),
+      subject: "Your CallTrove verification code",
+      text: `Your CallTrove verification code is: ${code}\n\nEnter it to continue signing up. It expires in 10 minutes. If you didn't try to sign up, you can ignore this email.`,
+      html: email.otpCodeEmailHtml(code, {
+        heading: "Verify your email",
+        explain: "Enter this code to continue signing up for CallTrove.",
+        securityNote: "Didn't try to sign up? You can ignore this email -- nothing happens unless the code is used.",
+        requestIp: req.ip,
+        baseUrl: `${req.protocol}://${req.get("host")}`,
+      }),
     });
   } catch (err) {
-    console.error("[signup] failed to send welcome email:", err);
+    console.error("[signup] failed to send verification code:", err);
+    await db.revertPendingEmailCode(pendingId).catch(() => {});
+    return { ok: false, reason: "send_failed" };
   }
+  return { ok: true };
+}
 
-  const user = await db.getUserById(userId);
-  await completeLogin(req, user);
-  res.redirect("/");
+// Prices shown on the sign-up pages before anyone commits to anything.
+router.get("/plans", (req, res) => {
+  const paddleModule = require("../paddle");
+  const billingRates = require("../billingRates");
+  const plan = (hipaa) => {
+    const tier = billingRates.storageTier(hipaa ? "hipaa" : "standard");
+    const checkout = paddleModule.checkoutConfig(hipaa);
+    return { priceLabel: checkout ? checkout.priceLabel : null, freeGB: tier.freeGB, overagePerGbMonth: tier.overagePerGbMonth };
+  };
+  res.json({
+    standard: plan(false),
+    hipaa: plan(true),
+    rates: { transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE, aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL },
+  });
+});
+
+// Public checkout details for a waiting sign-up (the id is an unguessable
+// UUID the browser was just redirected with). Says nothing about the
+// password or anything else they entered beyond what the page displays.
+const checkoutLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false });
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+router.get("/checkout-config", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  if (pending.consumedTenantId) return res.json({ ready: true });
+  if (!pending.emailOk) return res.status(403).json({ needsVerification: true });
+  const paddleModule = require("../paddle");
+  const billingRates = require("../billingRates");
+  const checkout = paddleModule.checkoutConfig(pending.hipaaRequested);
+  if (!checkout) return res.status(503).json({ error: "billing not configured" });
+  const tier = billingRates.storageTier(pending.hipaaRequested ? "hipaa" : "standard");
+  res.json({
+    ready: false,
+    hipaaRequested: pending.hipaaRequested,
+    checkout: { ...checkout, pendingSignupId: pending.id, email: pending.email },
+    storage: { freeGB: tier.freeGB, overagePerGbMonth: tier.overagePerGbMonth },
+    rates: { transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE, aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL },
+  });
+});
+
+// --- confirming the email before payment ---
+
+function maskEmail(address) {
+  const [name, domain] = String(address).split("@");
+  return `${name.slice(0, 1)}***@${domain}`;
+}
+const secondsUntilResend = (last) => (last ? Math.max(0, 30 - Math.floor((Date.now() - new Date(last).getTime()) / 1000)) : 0);
+
+router.get("/verify-status", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  res.json({
+    verified: pending.emailOk || !!pending.consumedTenantId,
+    email: maskEmail(pending.email),
+    hipaaRequested: pending.hipaaRequested,
+    resendIn: secondsUntilResend(pending.emailCodeLastSent),
+  });
+});
+
+const verifyCodeLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(429).json({ ok: false, error: "ratelimit" }),
+});
+
+router.post("/verify-code", verifyCodeLimiter, express.json(), async (req, res) => {
+  const id = String((req.body || {}).id || "");
+  const code = String((req.body || {}).code || "").trim();
+  if (!UUID_RE.test(id)) return res.status(404).json({ error: "not found" });
+  // A wrong code is ordinary user input, not a failed request: answer 200 so
+  // it doesn't show up as a network error in the browser console.
+  if (!/^\d{6}$/.test(code)) return res.json({ ok: false, error: "incorrect" });
+  const result = await db.checkPendingEmailCode(id, emailOtp.hashCode(code));
+  if (result === "ok") return res.json({ ok: true });
+  res.status(result === "missing" ? 404 : 200).json({ ok: false, error: result });
+});
+
+router.post("/resend-code", verifyCodeLimiter, express.json(), async (req, res) => {
+  const id = String((req.body || {}).id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending || pending.consumedTenantId || pending.emailOk) return res.status(404).json({ error: "not found" });
+  const sent = await sendSignupCode(id, pending.email, req);
+  if (sent && sent.ok) return res.json({ ok: true, resendIn: 30 });
+  if (sent && sent.reason === "cooldown") return res.json({ ok: false, error: "cooldown", resendIn: Math.max(1, secondsUntilResend(pending.emailCodeLastSent)) });
+  if (sent && sent.reason === "limit") return res.json({ ok: false, error: "limit" });
+  res.status(502).json({ error: "send_failed" });
+});
+
+router.get("/checkout-status", checkoutLimiter, async (req, res) => {
+  const id = String(req.query.id || "");
+  const pending = UUID_RE.test(id) ? await db.getPendingSignup(id) : null;
+  if (!pending) return res.status(404).json({ error: "not found" });
+  res.json({ ready: !!pending.consumedTenantId });
 });
 
 // Same brute-force shape as mfaLimiter above -- keyed by the token itself

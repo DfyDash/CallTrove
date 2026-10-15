@@ -550,6 +550,8 @@ async function loadTeam() {
 // --- GHL accounts (multi-tenant: connected locations) ---
 
 const ghlAccountRows = document.getElementById("ghl-account-rows");
+const ghlAppUrlSection = document.getElementById("ghl-app-url-section");
+const ghlAppUrlList = document.getElementById("ghl-app-url-list");
 const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
 const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
 
@@ -588,6 +590,30 @@ async function disconnectGhlAccount(id, name, btn) {
   alert(body.error || "Could not disconnect this account.");
 }
 
+async function saveGhlAppUrl(id, btn) {
+  const input = ghlAppUrlList.querySelector(`[data-app-url-input="${CSS.escape(id)}"]`);
+  const status = ghlAppUrlList.querySelector(`[data-app-url-status="${CSS.escape(id)}"]`);
+  btn.disabled = true;
+  status.textContent = "Saving...";
+  status.classList.remove("ghl-url-error");
+  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/app-url`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+    body: JSON.stringify({ appUrl: input.value }),
+  });
+  btn.disabled = false;
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    status.textContent = body.error || "Could not save.";
+    status.classList.add("ghl-url-error");
+    return;
+  }
+  input.value = body.appUrl || "";
+  status.textContent = body.appUrl ? "Saved." : "Cleared -- links use standard GHL.";
+  const hint = ghlAppUrlList.querySelector(`[data-app-url-hint="${CSS.escape(id)}"]`);
+  if (hint && body.appUrl) hint.remove();
+}
+
 async function loadGhlAccountsTab() {
   tabLoaded.accounts = true;
   const res = await fetch("/api/admin/ghl-accounts/status");
@@ -618,6 +644,30 @@ async function loadGhlAccountsTab() {
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
 
+  const activeAccounts = accounts.filter((a) => !a.uninstalledAt);
+  ghlAppUrlSection.hidden = activeAccounts.length === 0;
+  ghlAppUrlList.innerHTML = activeAccounts
+    .map((a) => {
+      const label = a.name || a.ghlLocationId;
+      return `<div class="ghl-url-item">
+        <label class="ghl-url-label" for="app-url-${escapeHtml(a.id)}">${escapeHtml(label)}</label>
+        <div class="ghl-url-cell">
+          <input type="text" id="app-url-${escapeHtml(a.id)}" class="ghl-url-input" data-app-url-input="${escapeHtml(a.id)}" value="${escapeHtml(a.ghlAppUrl || "")}" placeholder="app.gohighlevel.com" autocomplete="off" spellcheck="false" />
+          <button type="button" class="ghl-reconnect-btn" data-app-url-save="${escapeHtml(a.id)}">Save</button>
+        </div>
+        <span class="settings-note ghl-url-status" data-app-url-status="${escapeHtml(a.id)}" role="status"></span>
+        ${a.suggestSettingAddress ? `<span class="settings-note ghl-url-hint" data-app-url-hint="${escapeHtml(a.id)}">This account looks white-labeled. Enter the address you log into GHL at so the links open the right site.</span>` : ""}
+      </div>`;
+    })
+    .join("");
+  ghlAppUrlList.querySelectorAll("[data-app-url-save]").forEach((btn) => {
+    btn.addEventListener("click", () => saveGhlAppUrl(btn.dataset.appUrlSave, btn));
+  });
+  ghlAppUrlList.querySelectorAll("[data-app-url-input]").forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") saveGhlAppUrl(input.dataset.appUrlInput, ghlAppUrlList.querySelector(`[data-app-url-save="${CSS.escape(input.dataset.appUrlInput)}"]`));
+    });
+  });
   ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
   ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
     btn.addEventListener("click", () => disconnectGhlAccount(btn.dataset.disconnect, btn.dataset.name, btn));
@@ -696,6 +746,11 @@ const digestSectionEl = document.getElementById("digest-section");
 // snapshot -- a freshly connected account has neither, and that's not an
 // error state worth a message, just nothing to show yet.
 async function loadDigest() {
+  // No connected GoHighLevel account yet means no digest and nothing to ask for.
+  if (!currentAccountId) {
+    digestSectionEl.hidden = true;
+    return;
+  }
   try {
     const [digestRes, settingsRes] = await Promise.all([
       fetch(`/api/admin/call-digest?accountId=${encodeURIComponent(currentAccountId)}`),
@@ -1554,7 +1609,7 @@ async function loadBaa() {
 
   if (baa.acceptance) {
     const when = new Date(baa.acceptance.acceptedAt).toLocaleString();
-    baaAcceptedSummary.textContent = `${baa.acceptance.fullName} (${baa.acceptance.title}) on ${when}.`;
+    baaAcceptedSummary.textContent = `${baa.acceptance.fullName}${baa.acceptance.title ? ` (${baa.acceptance.title})` : ""} on ${when}.`;
     baaAcceptedBanner.hidden = false;
     baaAcceptFormWrap.hidden = true;
     baaNotOwnerNote.hidden = true;
@@ -1595,7 +1650,65 @@ baaAcceptForm.addEventListener("submit", async (e) => {
   loadBaa();
 });
 
+async function loadSubscription() {
+  const card = document.getElementById("subscription-card");
+  const res = await fetch("/api/admin/subscription");
+  if (!res.ok) return;
+  const sub = await res.json();
+  if (!sub.checkout && !sub.status) return;
+  card.hidden = false;
+  const labels = { active: "Active", trialing: "Free trial", past_due: "Payment overdue", paused: "Paused", canceled: "Canceled" };
+  const statusEl = document.getElementById("subscription-status");
+  const btn = document.getElementById("subscribe-btn");
+  const live = sub.status === "active" || sub.status === "trialing" || sub.status === "past_due";
+  if (sub.status) {
+    document.getElementById("billing-usage-note").textContent = sub.status === "past_due"
+      ? "Your last payment didn't go through, so transcription and AI summaries are paused. Update your payment method in Paddle's email receipt to resume."
+      : "Usage is charged to the card on your subscription whenever it reaches $20, and whatever is left (if at least $1.00) after each month ends.";
+  }
+  statusEl.textContent = sub.status
+    ? `Status: ${labels[sub.status] || sub.status}` + (sub.periodEnd && live ? ` -- current period ends ${new Date(sub.periodEnd).toLocaleDateString()}` : "")
+    : "No subscription yet.";
+  if (!sub.checkout || !sub.checkout.priceId || live) return;
+  btn.hidden = false;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      if (!window.Paddle) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdn.paddle.com/paddle/v2/paddle.js";
+          s.onload = resolve;
+          s.onerror = () => reject(new Error("Could not load checkout."));
+          document.head.appendChild(s);
+        });
+      }
+      if (sub.checkout.environment === "sandbox") window.Paddle.Environment.set("sandbox");
+      window.Paddle.Initialize({
+        token: sub.checkout.clientToken,
+        eventCallback: (ev) => {
+          if (ev.name === "checkout.completed") {
+            statusEl.textContent = "Thanks! Your subscription is being activated -- refresh in a moment.";
+            btn.hidden = true;
+          }
+        },
+      });
+      window.Paddle.Checkout.open({
+        settings: { showAddDiscounts: false },
+        items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
+        customData: { tenantRef: sub.checkout.tenantRef },
+        ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
+      });
+    } catch (err) {
+      statusEl.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
 async function loadBilling() {
+  loadSubscription().catch(() => {});
   const res = await fetch("/api/admin/billing");
   if (!res.ok) return;
   const billing = await res.json();

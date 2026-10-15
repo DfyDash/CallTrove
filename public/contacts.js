@@ -16,6 +16,11 @@ let viewAs = "";
 // See app.js for why this is a plain page-navigation, not a live re-fetch.
 let currentAccountId = new URLSearchParams(location.search).get("accountId") || "";
 
+// Resolves once /api/me has been read, so the first data requests can wait
+// for it (a customer with no connected account gets a prompt instead).
+let resolveMe;
+const meReady = new Promise((r) => (resolveMe = r));
+
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     "&": "&amp;",
@@ -62,6 +67,7 @@ function initials(name) {
 async function loadSession() {
   const res = await fetch(`/api/me${currentAccountId ? `?accountId=${encodeURIComponent(currentAccountId)}` : ""}`);
   const me = await res.json();
+  resolveMe(me);
   const csrfToken = me.csrfToken || "";
   sessionBar.innerHTML = `<span>${escapeHtml(me.username)} (${escapeHtml(me.role)})</span>
     <form method="POST" action="/auth/logout"><input type="hidden" name="csrfToken" value="${escapeHtml(csrfToken)}" /><button type="submit">Log out</button></form>`;
@@ -215,6 +221,11 @@ document.addEventListener("click", (e) => {
 // loadSession() resolves the real currentAccountId (see app.js's identical
 // fix) -- firing loadContacts() before it finishes races it against a
 // stale/empty currentAccountId with nothing to re-fetch once it resolves.
-loadSession().then(() => {
+loadSession().catch(() => resolveMe(null));
+meReady.then((me) => {
+  if (hasNoAccounts(me)) {
+    showConnectPrompt(me);
+    return;
+  }
   loadContacts();
 });

@@ -150,6 +150,12 @@
             <tbody id="ghl-account-rows"></tbody>
           </table>
 
+          <div id="ghl-app-url-section" class="ghl-app-url-section" hidden>
+            <h2 class="ghl-app-url-heading">GHL web address</h2>
+            <p class="settings-note">Where you log into GHL, used for the "Open in GHL" links. Leave it blank for standard GHL (app.gohighlevel.com); white-labeled agencies enter their own branded address.</p>
+            <div id="ghl-app-url-list"></div>
+          </div>
+
           <p><button type="button" id="connect-ghl-account-btn" class="button-link">+ Connect a GHL account</button></p>
           <p class="settings-note" id="ghl-oauth-not-configured" hidden>
             GHL OAuth isn't set up on this deployment yet -- connecting a second location requires registering CallTrove as an app in GHL's Marketplace developer portal first.
@@ -476,8 +482,13 @@
         <!-- Billing -->
         <section id="tab-billing" class="settings-tab-panel" hidden>
           <h1>Billing</h1>
+          <div id="subscription-card" class="settings-card" hidden>
+            <h2>Subscription</h2>
+            <p class="settings-note" id="subscription-status"></p>
+            <button type="button" id="subscribe-btn" hidden>Subscribe</button>
+          </div>
           <p class="settings-note" id="billing-subhead">Current charges applied to your account are shown below.</p>
-          <p class="settings-note">
+          <p class="settings-note" id="billing-usage-note">
             Billing hasn't been turned on yet -- these are what you'd owe, not an active charge.
           </p>
 
@@ -486,9 +497,9 @@
             <div class="storage-meter">
               <div class="storage-meter-top">
                 <span id="billing-storage-label">— of 100 GB free</span>
-                <span id="billing-storage-remaining" class="settings-note" style="margin:0"></span>
+                <span id="billing-storage-remaining" class="settings-note settings-note-flush"></span>
               </div>
-              <div class="storage-meter-track"><div id="billing-storage-fill" class="storage-meter-fill" style="width:0%"></div></div>
+              <div class="storage-meter-track"><div id="billing-storage-fill" class="storage-meter-fill"></div></div>
               <p id="billing-storage-note" class="settings-note"></p>
             </div>
           </div>
@@ -551,7 +562,7 @@
             <h2>Accept</h2>
             <form id="baa-accept-form" class="admin-form">
               <label>Full legal name <input type="text" name="fullName" id="baa-full-name" required autocomplete="name" /></label>
-              <label>Title <input type="text" name="title" id="baa-title" required autocomplete="organization-title" /></label>
+              <label>Job title <input type="text" name="title" id="baa-title" required autocomplete="organization-title" /></label>
               <label class="cancel-warning-box">
                 <input type="checkbox" id="baa-agree-checkbox" required />
                 <span>I have read this Business Associate Agreement and agree to it on behalf of my company.</span>
@@ -680,5 +691,6 @@
     </div>
   </div>
   <script src="settings.js"></script>
+<script src="password-toggle.js"></script>
 </body>
 </html>

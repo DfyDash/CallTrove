@@ -126,3 +126,6 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
   .doc { gap: 28px; }
   .doc h1 { font-size: 30px; }
 }
+/* Logo lockup: the wordmark sits level with the phone, the padlock hangs below. */
+.nav-brand { align-items: flex-start; }
+.nav-brand .brand-name { margin-top: 2px; }

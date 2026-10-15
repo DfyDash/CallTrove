@@ -19,6 +19,7 @@
     "@aws-sdk/client-s3": "^3.626.0",
     "@aws-sdk/client-transcribe": "^3.626.0",
     "@aws-sdk/s3-request-presigner": "^3.626.0",
+    "@paddle/paddle-node-sdk": "^3.10.0",
     "archiver": "^7.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
