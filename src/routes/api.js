@@ -73,13 +73,26 @@ router.get("/me", async (req, res) => {
   const accounts = await db.listAccessibleAccounts(req.session.user.id, role, tenantId);
   const accountIds = accounts.map((a) => a.id);
   const tenant = await db.getTenantById(tenantId);
+  // Sticky across navigation: a sidebar link (Dashboard/Contacts/Settings)
+  // is a plain href with no ?accountId=, so without this every click back
+  // to one of those would silently drop back to accountIds[0] even when
+  // the switcher had a different account selected. Remember the last
+  // explicit selection in the session and keep using it until the user
+  // picks a different one.
+  if (req.query.accountId && accountIds.includes(req.query.accountId)) {
+    req.session.currentAccountId = req.query.accountId;
+  }
+  const currentAccountId =
+    (req.session.currentAccountId && accountIds.includes(req.session.currentAccountId) && req.session.currentAccountId) ||
+    accountIds[0] ||
+    null;
   res.json({
     username,
     role,
     ghlUserId,
     isOperator,
     accounts,
-    currentAccountId: req.query.accountId && accountIds.includes(req.query.accountId) ? req.query.accountId : accountIds[0] || null,
+    currentAccountId,
     transcriptionEnabled: transcription.isEnabled(),
     // Settings > Billing names the tenant in its intro line -- already
     // fetching the tenant row above for cancellationPending below, so
