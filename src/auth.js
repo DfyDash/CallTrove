@@ -114,6 +114,19 @@ async function requireAuth(req, res, next) {
           return res.status(402).json({ error: "onboarding_required" });
         }
       } else if (!REACHABLE_WHILE_ONBOARDING_PAGES.includes(req.path)) {
+        // Only the account owner can actually finish onboarding (pay, accept
+        // the BAA) -- /onboarding.html's own APIs are admin-gated. Redirecting
+        // a non-admin teammate there would just bounce them straight back
+        // here in an infinite loop, so they get a plain explanation instead.
+        if (req.session.user.role !== "admin") {
+          return res
+            .status(200)
+            .type("html")
+            .send(
+              "<!doctype html><title>CallTrove</title><body style=\"font-family: sans-serif; max-width: 480px; margin: 80px auto; text-align: center;\">" +
+                "<p>This account's billing setup isn't finished yet. Ask your account admin to complete it from Settings before you can sign in.</p></body>"
+            );
+        }
         return res.redirect("/onboarding.html");
       }
     }

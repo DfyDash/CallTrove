@@ -71,6 +71,34 @@ function forAccount({ apiToken, locationId } = {}) {
     return data.conversations || [];
   }
 
+  // Every conversation GHL currently has under one contact. After two
+  // contacts are merged in GHL, the merged-away contact's ID no longer
+  // exists -- GHL answers that with a 400 "Contact not found"
+  // (CONVERSATIONS_CONTACT_NOT_FOUND), reported here as contactGone rather
+  // than an error -- and the surviving contact's conversations hold
+  // everything. That's how src/contactReconcile.js tells where a call
+  // really lives now. Any other failure still throws.
+  async function searchConversationsForContact(contactId) {
+    const url = new URL(`${GHL_API_BASE}/conversations/search`);
+    url.searchParams.set("locationId", location);
+    url.searchParams.set("contactId", contactId);
+    url.searchParams.set("limit", "100");
+    // Bounded: only the merge catch-up calls this, and a request that never
+    // answers must not freeze it (or hold its per-account lock) forever.
+    const res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(15000) });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 400 && (body.canonicalCode === "CONVERSATIONS_CONTACT_NOT_FOUND" || /contact not found/i.test(body.message || ""))) {
+        return { conversations: [], contactGone: true };
+      }
+      const err = new Error(`conversations/search (by contact) failed with status ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    const data = await res.json();
+    return { conversations: data.conversations || [], contactGone: false };
+  }
+
   // Every call-type message in a conversation (GHL mixes calls, SMS, emails,
   // etc. into the same message list). Paginates back through the whole
   // conversation via lastMessageId -- GHL only returns the most recent ~20
@@ -81,13 +109,18 @@ function forAccount({ apiToken, locationId } = {}) {
   // poller, which only needs messages newer than its checkpoint and would
   // otherwise re-walk a contact's entire history every cycle; backfill.js
   // omits it because it wants the full history regardless.
-  async function listCallMessages(conversationId, { since } = {}) {
+  async function listCallMessages(conversationId, { since, signal, maxPages } = {}) {
     const results = [];
     let lastMessageId;
+    let pages = 0;
     for (;;) {
+      // signal/maxPages are only passed by the merge catch-up, so a listing it
+      // gives up on actually stops instead of paging on in the background.
+      if (signal) signal.throwIfAborted();
+      if (maxPages && pages++ >= maxPages) break;
       const url = new URL(`${GHL_API_BASE}/conversations/${conversationId}/messages`);
       if (lastMessageId) url.searchParams.set("lastMessageId", lastMessageId);
-      const res = await fetch(url, { headers: headers() });
+      const res = await fetch(url, signal ? { headers: headers(), signal } : { headers: headers() });
       if (!res.ok) throw new Error(`conversations/messages failed with status ${res.status}`);
       const data = await res.json();
       const page = (data.messages && data.messages.messages) || [];
@@ -198,6 +231,24 @@ function forAccount({ apiToken, locationId } = {}) {
     return (data.location && data.location.name) || data.name || null;
   }
 
+  // The brand ID GHL attaches to a location that sits under a white-label
+  // agency (absent/empty for standard GHL). Used only as a hint that the
+  // admin should set their branded GHL web address in Settings -- the API
+  // never says what that address is (see src/ghlAppUrl.js).
+  async function getLocationBrandId() {
+    const url = `${GHL_API_BASE}/locations/${location}`;
+    const res = await fetch(url, { headers: headers() });
+    if (!res.ok) {
+      // Throws rather than returning null: null means "not white-labeled",
+      // and a 429 or 5xx must never be mistaken for that answer.
+      const err = new Error(`could not fetch location brand, status ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    const data = await res.json();
+    return (data.location && data.location.brandId) || data.brandId || null;
+  }
+
   // Fetches the sub-account's GHL user list, trimmed to just what the admin
   // UI needs to map a login account to the identity that appears on their
   // calls -- not the full response, which includes each user's entire GHL
@@ -240,12 +291,14 @@ function forAccount({ apiToken, locationId } = {}) {
     isConfigured,
     searchConversations,
     searchConversationsPage,
+    searchConversationsForContact,
     listCallMessages,
     wasContactedSince,
     downloadRecording,
     getUserName,
     getAccountTimezone,
     getLocationName,
+    getLocationBrandId,
     listUsers,
     addContactNote,
   };
