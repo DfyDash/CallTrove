@@ -22,12 +22,18 @@ COOLDOWN_SECONDS=3600
 
 # Same credentials the app itself already uses -- .env is the one place
 # they're configured, so this script reads it too rather than needing its
-# own separate copy that could drift out of sync.
+# own separate copy that could drift out of sync. Pulled out line-by-line
+# (KEY=VALUE only) instead of `source`d -- sourcing the file would run it
+# as a real bash script, so any stray non-KEY=VALUE line that ever ends
+# up in .env (this has actually happened -- a leftover shell command
+# pasted into it during manual troubleshooting once caused this very
+# script to restart the service on every single run) gets silently
+# executed as root on every timer tick instead of just being ignored.
 if [ -f /opt/app/.env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source /opt/app/.env
-  set +a
+  for var in RESEND_API_KEY ALERT_EMAIL_TO EMAIL_FROM_ADDRESS; do
+    value=$(grep -m1 "^${var}=" /opt/app/.env | cut -d= -f2-) || true
+    [ -n "$value" ] && export "$var=$value"
+  done
 fi
 
 send_alert_email() {
