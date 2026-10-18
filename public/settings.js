@@ -250,12 +250,19 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "backfill", "activity", "access"];
+const TAB_NAMES = ["team", "accounts", "report", "coverage", "transcription", "billing", "backfill", "activity", "access", "account"];
 const tabLoaded = {};
 
 function activateTab(tab) {
-  if (!isAdmin || !TAB_NAMES.includes(tab)) {
+  // Non-admins only ever have "account" to see (everything else is
+  // hidden for them below) -- but an admin landing here with no/invalid
+  // hash (e.g. clicking the plain "Settings" nav link) should land on
+  // the first tab in the menu, which is "team" now that "My account"
+  // moved to the end -- not "account" just because it used to be first.
+  if (!isAdmin) {
     tab = "account";
+  } else if (!TAB_NAMES.includes(tab)) {
+    tab = "team";
   }
   for (const name of TAB_NAMES) {
     document.getElementById(`tab-${name}`).hidden = name !== tab;
