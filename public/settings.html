@@ -473,6 +473,10 @@
         <!-- Transcription -->
         <section id="tab-transcription" class="settings-tab-panel" hidden>
           <h1>Transcription</h1>
+          <p class="settings-note">
+            Settings below apply only to the account selected above (top left) --
+            other connected GHL accounts keep their own.
+          </p>
           <div class="settings-section">
             <label class="toggle-row">
               <span class="toggle-switch">
@@ -483,13 +487,8 @@
             </label>
             <p class="settings-rate">$0.0195 per minute transcribed</p>
             <p class="settings-note">
-              Only affects calls picked up from now on -- turning this on never
-              transcribes existing recordings. Anyone can still transcribe an
-              individual past call on demand from the dashboard.
-            </p>
-            <p class="settings-note">
-              This only applies to the account selected above (top left) --
-              other connected GHL accounts keep their own setting unchanged.
+              Only new calls going forward -- existing recordings aren't
+              transcribed, though any call can still be transcribed on demand.
             </p>
           </div>
           <div class="settings-section">
@@ -503,12 +502,8 @@
             </label>
             <p class="settings-rate">$0.007 per call summarized</p>
             <p class="settings-note">
-              Billed per call analyzed, in addition to transcription itself.
-              Only runs for calls that have a transcript.
-            </p>
-            <p class="settings-note">
-              This only applies to the account selected above (top left) --
-              other connected GHL accounts keep their own setting unchanged.
+              Billed per call, on top of transcription. Only runs for calls
+              that have a transcript.
             </p>
           </div>
           <div class="settings-section">
@@ -520,18 +515,10 @@
               </span>
               Automatically double-check low-confidence words in each transcript
             </label>
-            <p class="settings-rate">Billed at exact cost, usually under a cent -- no markup, nothing charged when nothing was flagged</p>
+            <p class="settings-rate">Billed at exact cost, usually under a cent -- nothing charged when nothing was flagged</p>
             <p class="settings-note">
-              Speech-to-text occasionally mishears a word -- a name is the
-              most common case. This re-checks only the specific words it
-              flagged as unsure, using the rest of the conversation for
-              context, and never touches anything it was already confident
-              about. You're charged exactly what that check cost, not a
-              flat fee -- a call with nothing flagged costs nothing.
-            </p>
-            <p class="settings-note">
-              This only applies to the account selected above (top left) --
-              other connected GHL accounts keep their own setting unchanged.
+              Re-checks only the words it flagged as unsure, using the rest of
+              the call for context. Costs nothing when nothing's flagged.
             </p>
           </div>
           <p class="settings-note">
