@@ -113,6 +113,7 @@ async function loadSession() {
   adminNav.hidden = false;
   await loadViewAsOptions();
   await loadDangerZone();
+  await loadHipaaSection();
 
   if (me.transcriptionEnabled) await loadTranscriptionSettings();
 
@@ -241,7 +242,7 @@ document.addEventListener("click", (e) => {
 
 // --- tab switching ---
 
-const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "baa", "backfill", "activity", "access", "danger"];
+const TAB_NAMES = ["account", "team", "accounts", "report", "coverage", "transcription", "billing", "backfill", "activity", "access"];
 const tabLoaded = {};
 
 function activateTab(tab) {
@@ -261,7 +262,6 @@ function activateTab(tab) {
   if (tab === "report" && !tabLoaded.report) loadCallReport();
   if (tab === "coverage" && !tabLoaded.coverage) loadCoverage();
   if (tab === "billing" && !tabLoaded.billing) loadBilling();
-  if (tab === "baa" && !tabLoaded.baa) loadBaa();
   if (tab === "backfill" && !tabLoaded.backfill) loadBackfillStatus();
   if (tab === "activity" && !tabLoaded.activity) loadAuditLog();
   if (tab === "access" && !tabLoaded.access) loadAccessLog();
@@ -1599,67 +1599,82 @@ function billingMonthLabel(yyyyMmDd) {
   return new Date(`${yyyyMmDd}T00:00:00Z`).toLocaleDateString(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-// --- HIPAA / BAA ---
+// --- HIPAA upgrade (My account) ---
+//
+// Only ever shown to a tenant that *isn't* already on the HIPAA tier --
+// someone who signed up HIPAA from the start has nothing to toggle here
+// (see src/routes/admin.js's POST /tenant/upgrade-hipaa: it 409s if
+// hipaaRequested is already true, same guard this reflects client-side).
+// Toggling on just reveals the agreement; nothing is sent to the server
+// until the form below it is actually submitted, same deferred-save
+// instinct as the Transcription tab's save bar.
 
-const baaTextEl = document.getElementById("baa-text");
-const baaAcceptedBanner = document.getElementById("baa-accepted-banner");
-const baaAcceptedSummary = document.getElementById("baa-accepted-summary");
-const baaAcceptFormWrap = document.getElementById("baa-accept-form-wrap");
-const baaAcceptForm = document.getElementById("baa-accept-form");
-const baaAcceptError = document.getElementById("baa-accept-error");
-const baaNotOwnerNote = document.getElementById("baa-not-owner-note");
-let baaHash = "";
+const hipaaSection = document.getElementById("hipaa-section");
+const hipaaToggle = document.getElementById("hipaa-toggle");
+const hipaaNotOwnerNote = document.getElementById("hipaa-not-owner-note");
+const hipaaEnabledBanner = document.getElementById("hipaa-enabled-banner");
+const hipaaEnabledSummary = document.getElementById("hipaa-enabled-summary");
+const hipaaBaaWrap = document.getElementById("hipaa-baa-wrap");
+const hipaaBaaTextEl = document.getElementById("hipaa-baa-text");
+const hipaaBaaForm = document.getElementById("hipaa-baa-form");
+const hipaaBaaError = document.getElementById("hipaa-baa-error");
+let hipaaBaaHash = "";
 
-async function loadBaa() {
-  const res = await fetch("/api/admin/baa");
-  if (!res.ok) return;
-  const baa = await res.json();
-  tabLoaded.baa = true;
-
-  baaTextEl.textContent = baa.text;
-  baaHash = baa.hash;
-
-  if (baa.acceptance) {
-    const when = new Date(baa.acceptance.acceptedAt).toLocaleString();
-    baaAcceptedSummary.textContent = `${baa.acceptance.fullName}${baa.acceptance.title ? ` (${baa.acceptance.title})` : ""} on ${when}.`;
-    baaAcceptedBanner.hidden = false;
-    baaAcceptFormWrap.hidden = true;
-    baaNotOwnerNote.hidden = true;
-  } else if (baa.canAccept) {
-    baaAcceptedBanner.hidden = true;
-    baaAcceptFormWrap.hidden = false;
-    baaNotOwnerNote.hidden = true;
-  } else {
-    baaAcceptedBanner.hidden = true;
-    baaAcceptFormWrap.hidden = true;
-    baaNotOwnerNote.hidden = false;
+async function loadHipaaSection() {
+  const subRes = await fetch("/api/admin/subscription");
+  if (!subRes.ok) return;
+  const sub = await subRes.json();
+  if (sub.hipaaRequested) {
+    // Already HIPAA from signup -- nothing to upgrade, so the whole
+    // section (toggle included) stays out of the menu entirely.
+    hipaaSection.hidden = true;
+    return;
   }
+
+  const baaRes = await fetch("/api/admin/baa");
+  if (!baaRes.ok) return;
+  const baa = await baaRes.json();
+  hipaaSection.hidden = false;
+  hipaaBaaTextEl.textContent = baa.text;
+  hipaaBaaHash = baa.hash;
+  hipaaToggle.disabled = !baa.canAccept;
+  hipaaNotOwnerNote.hidden = baa.canAccept;
 }
 
-baaAcceptForm.addEventListener("submit", async (e) => {
+hipaaToggle.addEventListener("change", () => {
+  hipaaBaaWrap.hidden = !hipaaToggle.checked;
+  if (!hipaaToggle.checked) hipaaBaaError.hidden = true;
+});
+
+hipaaBaaForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  baaAcceptError.hidden = true;
-  const btn = document.getElementById("baa-accept-btn");
+  hipaaBaaError.hidden = true;
+  const btn = document.getElementById("hipaa-baa-accept-btn");
   btn.disabled = true;
-  const res = await fetch("/api/admin/baa/accept", {
+  const res = await fetch("/api/admin/tenant/upgrade-hipaa", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify({
-      fullName: document.getElementById("baa-full-name").value.trim(),
-      title: document.getElementById("baa-title").value.trim(),
-      agree: document.getElementById("baa-agree-checkbox").checked,
-      confirmHash: baaHash,
+      fullName: document.getElementById("hipaa-baa-full-name").value.trim(),
+      title: document.getElementById("hipaa-baa-title").value.trim(),
+      agree: document.getElementById("hipaa-baa-agree-checkbox").checked,
+      confirmHash: hipaaBaaHash,
     }),
   });
   btn.disabled = false;
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    baaAcceptError.textContent = body.error || "could not record acceptance";
-    baaAcceptError.hidden = false;
+    hipaaBaaError.textContent = body.error || "could not enable HIPAA compliance";
+    hipaaBaaError.hidden = false;
     return;
   }
-  tabLoaded.baa = false;
-  loadBaa();
+  const body = await res.json();
+  const when = new Date(body.acceptance.acceptedAt).toLocaleString();
+  hipaaEnabledSummary.textContent = `Signed by ${body.acceptance.fullName}${body.acceptance.title ? ` (${body.acceptance.title})` : ""} on ${when}. New recordings now go to HIPAA storage.`;
+  hipaaEnabledBanner.hidden = false;
+  hipaaBaaWrap.hidden = true;
+  hipaaToggle.checked = true;
+  hipaaToggle.disabled = true;
 });
 
 async function loadSubscription() {

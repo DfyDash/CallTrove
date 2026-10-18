@@ -1498,6 +1498,18 @@ async function setTenantStorageTier(tenantId, tier) {
   return rows[0] || null;
 }
 
+// One-way: a standard tenant signing the BAA from Settings (see
+// routes/admin.js's POST /tenant/upgrade-hipaa) to switch onto the HIPAA
+// tier after signup. Never flips this back to false -- same reasoning as
+// cancellation being a one-way request, a downgrade off HIPAA is a
+// deliberate, manual (not self-serve) action.
+async function setTenantHipaaRequested(tenantId) {
+  const { rows } = await pool.query(`UPDATE tenants SET hipaa_requested = true WHERE id = $1 RETURNING id, name, hipaa_requested AS "hipaaRequested"`, [
+    tenantId,
+  ]);
+  return rows[0] || null;
+}
+
 // See schema.sql's comment on baa_acceptances for why this is the real
 // electronic-signature record (typed name/title, not just a checkbox) and
 // why it's only ever written by the tenant's own owner accepting for
@@ -2548,6 +2560,7 @@ module.exports = {
   updateTenantOwner,
   getTenantById,
   setTenantStorageTier,
+  setTenantHipaaRequested,
   recordBaaAcceptance,
   getLatestBaaAcceptance,
   listActiveTenants,

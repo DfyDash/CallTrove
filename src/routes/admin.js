@@ -216,6 +216,89 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
   res.json({ status: "accepted", acceptance });
 });
 
+// Self-serve upgrade from standard to the HIPAA tier (public/settings.js's
+// "My account" toggle) -- the only place hipaa_requested can flip to true
+// after signup; signup itself sets it directly (see db.createAccountFromPendingSignup).
+// One-way: there's no corresponding "downgrade" route, same reasoning as
+// setTenantHipaaRequested's own comment -- moving back off HIPAA is a
+// deliberate, manual action, not a self-serve toggle. Owner-gated for the
+// same reason /baa/accept above is: this is a company-binding legal
+// acceptance, and here it also commits the account to the HIPAA price.
+router.post("/tenant/upgrade-hipaa", requireCsrf, async (req, res) => {
+  const tenant = await db.getTenantById(req.session.user.tenantId);
+  if (!tenant) return res.status(404).json({ error: "tenant not found" });
+  if (tenant.ownerUserId !== req.session.user.id) {
+    return res.status(403).json({ error: "only the account owner can enable HIPAA compliance" });
+  }
+  if (tenant.hipaaRequested) {
+    return res.status(409).json({ error: "this account is already on the HIPAA tier" });
+  }
+
+  const fullName = (req.body?.fullName || "").trim();
+  const title = (req.body?.title || "").trim();
+  if (!fullName || !title) {
+    return res.status(400).json({ error: "full name and job title are required" });
+  }
+  if (req.body?.agree !== true) {
+    return res.status(400).json({ error: "you must check the box to agree" });
+  }
+
+  // Same tamper/staleness check as /baa/accept above.
+  const text = buildBaaText({ companyName: tenant.name });
+  const hash = createHash("sha256").update(text, "utf8").digest("hex");
+  if (req.body?.confirmHash !== hash) {
+    return res.status(409).json({ error: "the agreement text has changed since you loaded this page -- please review it again before accepting" });
+  }
+
+  const acceptance = await db.recordBaaAcceptance({
+    tenantId: tenant.id,
+    userId: req.session.user.id,
+    fullName,
+    title,
+    baaVersion: BAA_VERSION,
+    baaTextHash: hash,
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+  });
+  await db.setTenantHipaaRequested(tenant.id);
+  // Takes effect immediately: GET /billing reads storage_tier live, and
+  // storageCostJob.js is already tier-aware per day (see its own
+  // comments), so a mid-month switch correctly prorates -- days already
+  // billed stay against the standard 100 GB threshold, days from here on
+  // count against HIPAA's 150 GB.
+  await db.setTenantStorageTier(tenant.id, "hipaa");
+
+  // Billing follows, best-effort: the legal signature and tier flip above
+  // are the part that must not fail. A Paddle hiccup here shouldn't undo
+  // either -- it just needs a human to go fix the subscription's price by
+  // hand, same "needs a manual look" pattern as accountForPendingSignup's
+  // own edge cases above.
+  let billingUpdated = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      billingUpdated = await require("../paddle").switchSubscriptionToHipaaPrice(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[hipaa-upgrade] tenant ${tenant.id} signed and tier flipped, but updating the Paddle subscription price failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "hipaa_upgrade_billing_failed",
+          message: `HIPAA upgrade for "${tenant.name}" signed, but updating the Paddle subscription to the HIPAA price failed: ${err.message}. Needs a manual fix in Paddle.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(
+    req,
+    "hipaa_upgraded",
+    `"${tenant.name}" upgraded to the HIPAA tier (BAA signed by ${fullName}${title ? ` (${title})` : ""})${billingUpdated ? "; Paddle subscription price updated" : ""}`
+  );
+  res.json({ status: "upgraded", acceptance, hipaaRequested: true, storageTier: "hipaa", billingUpdated });
+});
+
 // Auto-links any user whose login username matches a GHL user's email
 // (case-insensitively), so the common case -- login username is the
 // person's email, same as in GHL -- doesn't require manually picking

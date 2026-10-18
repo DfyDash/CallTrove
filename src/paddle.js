@@ -144,4 +144,23 @@ async function webhookHandler(req, res) {
   }
 }
 
-module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, ENV };
+// Moves an already-live subscription onto the HIPAA price (see
+// routes/admin.js's POST /tenant/upgrade-hipaa, the self-serve "enable
+// HIPAA" upgrade from an existing standard-tier account). Billed via
+// immediate proration rather than waiting for the next cycle, since the
+// tenant is asking for this mid-cycle, not choosing it at signup.
+// Returns false (not an error) when there's nothing to charge yet --
+// billing not configured, or no HIPAA price set up -- so the caller can
+// still record the legal signature and flip the tier without a live
+// subscription to update.
+async function switchSubscriptionToHipaaPrice(subscriptionId) {
+  const sdk = paddle();
+  if (!sdk || !process.env.PADDLE_PRICE_ID_HIPAA) return false;
+  await sdk.subscriptions.update(subscriptionId, {
+    items: [{ priceId: process.env.PADDLE_PRICE_ID_HIPAA, quantity: 1 }],
+    prorationBillingMode: "prorated_immediately",
+  });
+  return true;
+}
+
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, switchSubscriptionToHipaaPrice, ENV };

@@ -56,11 +56,9 @@
           <a href="#coverage" class="nav-link" data-tab="coverage">Call recording coverage</a>
           <a href="#transcription" class="nav-link" data-tab="transcription">Transcription</a>
           <a href="#billing" class="nav-link" data-tab="billing">Billing</a>
-          <a href="#baa" class="nav-link" data-tab="baa">HIPAA / BAA</a>
           <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
           <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
-          <a href="#danger" class="nav-link" data-tab="danger">Cancel account</a>
         </nav>
       </div>
 
@@ -78,6 +76,75 @@
           <h1>My account</h1>
           <p class="settings-note" id="account-summary"></p>
           <p><a href="/account.html" class="button-link">Change password &rarr;</a></p>
+
+          <div id="hipaa-section" class="settings-section" hidden>
+            <h2>HIPAA compliance</h2>
+            <label class="toggle-row">
+              <span class="toggle-switch">
+                <input type="checkbox" id="hipaa-toggle" />
+                <span class="toggle-slider"></span>
+              </span>
+              Enable HIPAA compliance for this account
+            </label>
+            <p class="settings-rate">$30/month once billing is turned on (up from $25/month) -- also raises included storage from 100 GB to 150 GB free</p>
+            <p class="settings-note">
+              Signs CallTrove's Business Associate Agreement and moves this account onto
+              the HIPAA storage tier for new recordings going forward. This can't be
+              undone from here -- contact support to move back to the standard tier.
+            </p>
+            <p id="hipaa-not-owner-note" class="settings-note" hidden>
+              Only your account's owner can enable HIPAA compliance.
+            </p>
+
+            <div id="hipaa-enabled-banner" class="baa-accepted-banner" hidden>
+              <strong>Enabled.</strong> <span id="hipaa-enabled-summary"></span>
+            </div>
+
+            <div id="hipaa-baa-wrap" hidden>
+              <h3>Agreement</h3>
+              <pre id="hipaa-baa-text" class="baa-text-box"></pre>
+              <form id="hipaa-baa-form" class="admin-form">
+                <label>Full legal name <input type="text" name="fullName" id="hipaa-baa-full-name" required autocomplete="name" /></label>
+                <label>Job title <input type="text" name="title" id="hipaa-baa-title" required autocomplete="organization-title" /></label>
+                <label class="cancel-warning-box">
+                  <input type="checkbox" id="hipaa-baa-agree-checkbox" required />
+                  <span>I have read this Business Associate Agreement and agree to it on behalf of my company.</span>
+                </label>
+                <button type="submit" id="hipaa-baa-accept-btn">I Agree &amp; Enable HIPAA</button>
+                <span id="hipaa-baa-error" class="login-error" hidden></span>
+              </form>
+            </div>
+          </div>
+
+          <div id="danger-zone" class="danger-zone" hidden>
+            <h2>Cancel account</h2>
+            <p class="settings-note">
+              Cancel this CallTrove account. Every login is locked out immediately.
+              After a <span id="grace-period-days">7</span>-day grace period (during
+              which you can undo this), recordings and data become eligible for
+              permanent deletion -- carried out by our team, not automatically.
+              <a href="/settings.html#backfill">Export everything</a> first if you
+              want an offline copy.
+            </p>
+            <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
+
+            <div id="cancel-confirm" hidden>
+              <label class="cancel-warning-box">
+                <input type="checkbox" id="cancel-confirm-checkbox" />
+                <span>
+                  I understand that once I cancel, I have <span id="grace-period-days-2">7</span> days
+                  to download all recordings before this account and its recordings are permanently deleted.
+                </span>
+              </label>
+              <p class="settings-note">
+                Type <strong>CANCEL MY ACCOUNT</strong> to confirm.
+              </p>
+              <input type="text" id="cancel-confirm-input" autocomplete="off" />
+              <button type="button" id="confirm-cancel-btn" class="delete-btn" disabled>Permanently cancel</button>
+              <button type="button" id="cancel-cancel-btn">Never mind</button>
+              <p id="cancel-error" class="login-error" hidden></p>
+            </div>
+          </div>
         </section>
 
         <!-- Team members -->
@@ -542,45 +609,6 @@
           </div>
         </section>
 
-        <!-- HIPAA / BAA -->
-        <section id="tab-baa" class="settings-tab-panel" hidden>
-          <h1>HIPAA / BAA</h1>
-          <p class="settings-note">
-            CallTrove's Business Associate Agreement. This is not negotiable --
-            you either accept it as shown, or your account stays on the
-            standard (non-HIPAA) tier. Only your account's owner can accept it,
-            and it's the same self-serve, electronic-acceptance model AWS
-            itself uses for its own BAA.
-          </p>
-
-          <div id="baa-accepted-banner" class="baa-accepted-banner" hidden>
-            <strong>Accepted.</strong> <span id="baa-accepted-summary"></span>
-          </div>
-
-          <div class="settings-section">
-            <h2>Agreement</h2>
-            <pre id="baa-text" class="baa-text-box"></pre>
-          </div>
-
-          <div id="baa-accept-form-wrap" class="settings-section" hidden>
-            <h2>Accept</h2>
-            <form id="baa-accept-form" class="admin-form">
-              <label>Full legal name <input type="text" name="fullName" id="baa-full-name" required autocomplete="name" /></label>
-              <label>Job title <input type="text" name="title" id="baa-title" required autocomplete="organization-title" /></label>
-              <label class="cancel-warning-box">
-                <input type="checkbox" id="baa-agree-checkbox" required />
-                <span>I have read this Business Associate Agreement and agree to it on behalf of my company.</span>
-              </label>
-              <button type="submit" id="baa-accept-btn">I Agree &amp; Accept</button>
-              <span id="baa-accept-error" class="login-error" hidden></span>
-            </form>
-          </div>
-
-          <p id="baa-not-owner-note" class="settings-note" hidden>
-            Only your account's owner can accept this agreement.
-          </p>
-        </section>
-
         <!-- Import past calls & export -->
         <section id="tab-backfill" class="settings-tab-panel" hidden>
           <h1>Import past calls &amp; export</h1>
@@ -657,38 +685,6 @@
             <button type="button" id="access-prev-btn">&larr; Prev</button>
             <span id="access-page-indicator"></span>
             <button type="button" id="access-next-btn">Next &rarr;</button>
-          </div>
-        </section>
-
-        <section id="tab-danger" class="settings-tab-panel" hidden>
-          <div id="danger-zone" class="danger-zone" hidden>
-            <h2>Cancel account</h2>
-            <p class="settings-note">
-              Cancel this CallTrove account. Every login is locked out immediately.
-              After a <span id="grace-period-days">7</span>-day grace period (during
-              which you can undo this), recordings and data become eligible for
-              permanent deletion -- carried out by our team, not automatically.
-              <a href="/settings.html#backfill">Export everything</a> first if you
-              want an offline copy.
-            </p>
-            <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
-
-            <div id="cancel-confirm" hidden>
-              <label class="cancel-warning-box">
-                <input type="checkbox" id="cancel-confirm-checkbox" />
-                <span>
-                  I understand that once I cancel, I have <span id="grace-period-days-2">7</span> days
-                  to download all recordings before this account and its recordings are permanently deleted.
-                </span>
-              </label>
-              <p class="settings-note">
-                Type <strong>CANCEL MY ACCOUNT</strong> to confirm.
-              </p>
-              <input type="text" id="cancel-confirm-input" autocomplete="off" />
-              <button type="button" id="confirm-cancel-btn" class="delete-btn" disabled>Permanently cancel</button>
-              <button type="button" id="cancel-cancel-btn">Never mind</button>
-              <p id="cancel-error" class="login-error" hidden></p>
-            </div>
           </div>
         </section>
       </div>
