@@ -131,6 +131,7 @@ const cancelConfirmInput = document.getElementById("cancel-confirm-input");
 const confirmCancelBtn = document.getElementById("confirm-cancel-btn");
 const cancelCancelBtn = document.getElementById("cancel-cancel-btn");
 const cancelError = document.getElementById("cancel-error");
+const cancelConfirmHint = document.getElementById("cancel-confirm-hint");
 const gracePeriodDaysEl = document.getElementById("grace-period-days");
 const gracePeriodDaysEl2 = document.getElementById("grace-period-days-2");
 let tenantName = "";
@@ -155,8 +156,13 @@ async function loadDangerZone() {
 // Both the warning checkbox and the typed phrase are required before the
 // button is even clickable -- not just validated on click -- so there's no
 // way to fat-finger past the warning by tabbing straight to the button.
+// cancelConfirmHint stays visible the whole time the button is disabled
+// (rather than only showing up after a click does nothing), so there's
+// always a visible reason the button won't respond yet.
 function updateConfirmBtnState() {
-  confirmCancelBtn.disabled = !cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE;
+  const incomplete = !cancelConfirmCheckbox.checked || cancelConfirmInput.value !== CANCEL_CONFIRM_PHRASE;
+  confirmCancelBtn.disabled = incomplete;
+  cancelConfirmHint.hidden = !incomplete;
 }
 
 openCancelBtn.addEventListener("click", () => {
