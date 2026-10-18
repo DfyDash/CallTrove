@@ -49,7 +49,6 @@
       <div class="settings-tabs-col">
         <h1>Settings</h1>
         <nav class="sidebar-nav" id="settings-tabs">
-          <a href="#account" class="nav-link active" data-tab="account">My account</a>
           <a href="#team" class="nav-link" data-tab="team">Team members</a>
           <a href="#accounts" class="nav-link" data-tab="accounts">GHL accounts</a>
           <a href="#report" class="nav-link" data-tab="report">Call report</a>
@@ -59,6 +58,7 @@
           <a href="#backfill" class="nav-link" data-tab="backfill">Import past calls &amp; export</a>
           <a href="#activity" class="nav-link" data-tab="activity">Activity log</a>
           <a href="#access" class="nav-link" data-tab="access">Recording access log</a>
+          <a href="#account" class="nav-link" data-tab="account">My account</a>
         </nav>
       </div>
 
@@ -119,12 +119,9 @@
           <div id="danger-zone" class="danger-zone" hidden>
             <h2>Cancel account</h2>
             <p class="settings-note">
-              Cancel this CallTrove account. Every login is locked out immediately.
-              After a <span id="grace-period-days">7</span>-day grace period (during
-              which you can undo this), recordings and data become eligible for
-              permanent deletion -- carried out by our team, not automatically.
-              <a href="/settings.html#backfill">Export everything</a> first if you
-              want an offline copy.
+              Locks every login out immediately. After a <span id="grace-period-days">7</span>-day
+              grace period, data becomes eligible for permanent deletion.
+              <a href="/settings.html#backfill">Export everything</a> first if you want a copy.
             </p>
             <button type="button" id="open-cancel-btn" class="delete-btn">Cancel this account</button>
 

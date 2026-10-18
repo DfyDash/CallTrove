@@ -1228,16 +1228,21 @@ tbody tr:last-child td {
   font-size: 0.88rem;
 }
 
+#hipaa-section {
+  margin-top: 36px;
+}
+
 .danger-zone {
-  margin-top: 28px;
-  padding: 16px 18px;
+  margin-top: 36px;
+  padding: 12px 14px;
   border: 1px solid rgba(208, 59, 59, 0.3);
   border-radius: 10px;
   background: rgba(208, 59, 59, 0.03);
 }
 
 .danger-zone h2 {
-  margin-top: 0;
+  margin: 0 0 10px;
+  font-size: 1rem;
   color: #d03b3b;
 }
 
