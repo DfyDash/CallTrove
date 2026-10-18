@@ -137,7 +137,14 @@ async function openCheckout(sub, statusEl, fallback) {
     },
     items: [{ priceId: sub.checkout.priceId, quantity: 1 }],
     customData: { tenantRef: sub.checkout.tenantRef },
-    ...(sub.checkout.email ? { customer: { email: sub.checkout.email } } : {}),
+    ...(sub.checkout.email
+      ? {
+          customer: {
+            email: sub.checkout.email,
+            ...(sub.checkout.businessName ? { business: { name: sub.checkout.businessName } } : {}),
+          },
+        }
+      : {}),
   });
 }
 

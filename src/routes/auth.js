@@ -525,7 +525,7 @@ router.get("/checkout-config", checkoutLimiter, async (req, res) => {
   res.json({
     ready: false,
     hipaaRequested: pending.hipaaRequested,
-    checkout: { ...checkout, pendingSignupId: pending.id, email: pending.email },
+    checkout: { ...checkout, pendingSignupId: pending.id, email: pending.email, businessName: pending.businessName },
     storage: { freeGB: tier.freeGB, overagePerGbMonth: tier.overagePerGbMonth },
     rates: { transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE, aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL },
   });

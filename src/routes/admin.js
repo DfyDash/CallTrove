@@ -105,7 +105,12 @@ router.get("/subscription", async (req, res) => {
       aiSummaryPerCall: require("../billingRates").CLIENT_AI_SUMMARY_PER_CALL,
     },
     periodEnd: tenant.subscriptionPeriodEnd || null,
-    checkout: checkout ? { ...checkout, tenantRef: require("../paddle").signTenantRef(tenant.id), email: req.session.user.email || null } : null,
+    // req.session.user has no separate .email field -- username IS the
+    // login email for every self-serve account (see auth.js's sessionUser
+    // and displayName comments) -- using .email here was always undefined,
+    // silently dropping customer info (not just the name) from this
+    // checkout entirely.
+    checkout: checkout ? { ...checkout, tenantRef: require("../paddle").signTenantRef(tenant.id), email: req.session.user.username || null, businessName: tenant.name } : null,
   });
 });
 

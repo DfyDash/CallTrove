@@ -111,7 +111,10 @@ async function start() {
     },
     items: [{ priceId: cfg.checkout.priceId, quantity: 1 }],
     customData: { pendingSignupId: cfg.checkout.pendingSignupId },
-    customer: { email: cfg.checkout.email },
+    customer: {
+      email: cfg.checkout.email,
+      ...(cfg.checkout.businessName ? { business: { name: cfg.checkout.businessName } } : {}),
+    },
   });
 }
 
