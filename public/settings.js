@@ -1535,6 +1535,7 @@ const transcriptCleanupToggle = document.getElementById("transcript-cleanup-togg
 const transcriptionSaveBar = document.getElementById("transcription-save-bar");
 const transcriptionSaveBtn = document.getElementById("transcription-save-btn");
 const transcriptionSaveError = document.getElementById("transcription-save-error");
+const transcriptionSaveSuccess = document.getElementById("transcription-save-success");
 const transcriptionToggles = [autoTranscribeToggle, aiSummaryToggle, transcriptCleanupToggle];
 
 // Toggling one of these no longer saves on its own -- the save bar only
@@ -1542,6 +1543,7 @@ const transcriptionToggles = [autoTranscribeToggle, aiSummaryToggle, transcriptC
 // is sent to the server until "Save changes" is clicked. savedTranscriptionState
 // is that saved baseline, compared against on every toggle change.
 let savedTranscriptionState = null;
+let transcriptionSaveSuccessTimer = null;
 
 async function loadTranscriptionSettings() {
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
@@ -1564,7 +1566,15 @@ function updateTranscriptionSaveBar() {
     aiSummaryToggle.checked !== savedTranscriptionState.aiSummaryEnabled ||
     transcriptCleanupToggle.checked !== savedTranscriptionState.transcriptCleanupEnabled;
   transcriptionSaveBar.hidden = !dirty;
-  if (dirty) transcriptionSaveError.hidden = true;
+  if (dirty) {
+    // Editing again after a just-shown "Saved" -- cancel its pending
+    // auto-hide (it would otherwise hide a bar that's dirty again) and
+    // put the bar back in its normal editing state.
+    clearTimeout(transcriptionSaveSuccessTimer);
+    transcriptionSaveError.hidden = true;
+    transcriptionSaveSuccess.hidden = true;
+    transcriptionSaveBtn.hidden = false;
+  }
 }
 
 transcriptionToggles.forEach((toggle) => toggle.addEventListener("change", updateTranscriptionSaveBar));
@@ -1608,7 +1618,17 @@ transcriptionSaveBtn.addEventListener("click", async () => {
     aiSummaryEnabled: aiSummaryToggle.checked,
     transcriptCleanupEnabled: transcriptCleanupToggle.checked,
   };
-  transcriptionSaveBar.hidden = true;
+  // Confirm the save actually happened instead of the bar just quietly
+  // disappearing -- shows "Saved" in place of the button for a couple
+  // seconds, then hides the whole bar.
+  transcriptionSaveBtn.hidden = true;
+  transcriptionSaveSuccess.hidden = false;
+  clearTimeout(transcriptionSaveSuccessTimer);
+  transcriptionSaveSuccessTimer = setTimeout(() => {
+    transcriptionSaveBar.hidden = true;
+    transcriptionSaveSuccess.hidden = true;
+    transcriptionSaveBtn.hidden = false;
+  }, 2000);
   tabLoaded.activity = false;
 });
 
