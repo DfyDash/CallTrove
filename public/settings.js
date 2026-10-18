@@ -160,6 +160,7 @@ function updateConfirmBtnState() {
 }
 
 openCancelBtn.addEventListener("click", () => {
+  openCancelBtn.hidden = true;
   cancelConfirm.hidden = false;
   cancelConfirmInput.value = "";
   cancelConfirmCheckbox.checked = false;
@@ -170,6 +171,7 @@ openCancelBtn.addEventListener("click", () => {
 cancelCancelBtn.addEventListener("click", () => {
   cancelConfirm.hidden = true;
   cancelError.hidden = true;
+  openCancelBtn.hidden = false;
 });
 
 cancelConfirmCheckbox.addEventListener("change", updateConfirmBtnState);

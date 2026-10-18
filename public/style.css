@@ -1267,8 +1267,6 @@ tbody tr:last-child td {
 
 #cancel-confirm {
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(208, 59, 59, 0.2);
 }
 
 #cancel-confirm-input {
