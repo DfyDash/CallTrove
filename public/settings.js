@@ -1517,6 +1517,16 @@ function hideRepTrendTooltip() {
 const autoTranscribeToggle = document.getElementById("auto-transcribe-toggle");
 const aiSummaryToggle = document.getElementById("ai-summary-toggle");
 const transcriptCleanupToggle = document.getElementById("transcript-cleanup-toggle");
+const transcriptionSaveBar = document.getElementById("transcription-save-bar");
+const transcriptionSaveBtn = document.getElementById("transcription-save-btn");
+const transcriptionSaveError = document.getElementById("transcription-save-error");
+const transcriptionToggles = [autoTranscribeToggle, aiSummaryToggle, transcriptCleanupToggle];
+
+// Toggling one of these no longer saves on its own -- the save bar only
+// appears once something actually differs from what's saved, and nothing
+// is sent to the server until "Save changes" is clicked. savedTranscriptionState
+// is that saved baseline, compared against on every toggle change.
+let savedTranscriptionState = null;
 
 async function loadTranscriptionSettings() {
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`);
@@ -1524,50 +1534,52 @@ async function loadTranscriptionSettings() {
   autoTranscribeToggle.checked = !!settings.autoTranscribeEnabled;
   aiSummaryToggle.checked = !!settings.aiSummaryEnabled;
   transcriptCleanupToggle.checked = !!settings.transcriptCleanupEnabled;
+  savedTranscriptionState = {
+    autoTranscribeEnabled: autoTranscribeToggle.checked,
+    aiSummaryEnabled: aiSummaryToggle.checked,
+    transcriptCleanupEnabled: transcriptCleanupToggle.checked,
+  };
+  updateTranscriptionSaveBar();
 }
 
-autoTranscribeToggle.addEventListener("change", async () => {
-  autoTranscribeToggle.disabled = true;
-  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ autoTranscribeEnabled: autoTranscribeToggle.checked }),
-  });
-  if (!res.ok) {
-    alert("Could not update the setting");
-    autoTranscribeToggle.checked = !autoTranscribeToggle.checked;
-  }
-  autoTranscribeToggle.disabled = false;
-  tabLoaded.activity = false;
-});
+function updateTranscriptionSaveBar() {
+  if (!savedTranscriptionState) return;
+  const dirty =
+    autoTranscribeToggle.checked !== savedTranscriptionState.autoTranscribeEnabled ||
+    aiSummaryToggle.checked !== savedTranscriptionState.aiSummaryEnabled ||
+    transcriptCleanupToggle.checked !== savedTranscriptionState.transcriptCleanupEnabled;
+  transcriptionSaveBar.hidden = !dirty;
+  if (dirty) transcriptionSaveError.hidden = true;
+}
 
-aiSummaryToggle.addEventListener("change", async () => {
-  aiSummaryToggle.disabled = true;
-  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ aiSummaryEnabled: aiSummaryToggle.checked }),
-  });
-  if (!res.ok) {
-    alert("Could not update the setting");
-    aiSummaryToggle.checked = !aiSummaryToggle.checked;
-  }
-  aiSummaryToggle.disabled = false;
-  tabLoaded.activity = false;
-});
+transcriptionToggles.forEach((toggle) => toggle.addEventListener("change", updateTranscriptionSaveBar));
 
-transcriptCleanupToggle.addEventListener("change", async () => {
-  transcriptCleanupToggle.disabled = true;
+transcriptionSaveBtn.addEventListener("click", async () => {
+  transcriptionSaveBtn.disabled = true;
+  transcriptionToggles.forEach((toggle) => (toggle.disabled = true));
+  transcriptionSaveError.hidden = true;
   const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({ transcriptCleanupEnabled: transcriptCleanupToggle.checked }),
+    body: JSON.stringify({
+      autoTranscribeEnabled: autoTranscribeToggle.checked,
+      aiSummaryEnabled: aiSummaryToggle.checked,
+      transcriptCleanupEnabled: transcriptCleanupToggle.checked,
+    }),
   });
+  transcriptionToggles.forEach((toggle) => (toggle.disabled = false));
+  transcriptionSaveBtn.disabled = false;
   if (!res.ok) {
-    alert("Could not update the setting");
-    transcriptCleanupToggle.checked = !transcriptCleanupToggle.checked;
+    transcriptionSaveError.textContent = "Could not save -- try again";
+    transcriptionSaveError.hidden = false;
+    return;
   }
-  transcriptCleanupToggle.disabled = false;
+  savedTranscriptionState = {
+    autoTranscribeEnabled: autoTranscribeToggle.checked,
+    aiSummaryEnabled: aiSummaryToggle.checked,
+    transcriptCleanupEnabled: transcriptCleanupToggle.checked,
+  };
+  transcriptionSaveBar.hidden = true;
   tabLoaded.activity = false;
 });
 

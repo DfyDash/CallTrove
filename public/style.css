@@ -1182,6 +1182,42 @@ tbody tr:last-child td {
   text-align: center;
 }
 
+.settings-save-bar {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+}
+
+.settings-save-error {
+  color: var(--critical);
+  font-size: 0.85rem;
+}
+
+.settings-save-btn {
+  padding: 9px 18px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .cancellation-banner {
   margin-bottom: 14px;
   padding: 10px 14px;
