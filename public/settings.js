@@ -1573,19 +1573,33 @@ transcriptionSaveBtn.addEventListener("click", async () => {
   transcriptionSaveBtn.disabled = true;
   transcriptionToggles.forEach((toggle) => (toggle.disabled = true));
   transcriptionSaveError.hidden = true;
-  const res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-    body: JSON.stringify({
-      autoTranscribeEnabled: autoTranscribeToggle.checked,
-      aiSummaryEnabled: aiSummaryToggle.checked,
-      transcriptCleanupEnabled: transcriptCleanupToggle.checked,
-    }),
-  });
+  let res;
+  try {
+    res = await fetch(`/api/admin/settings?accountId=${encodeURIComponent(currentAccountId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({
+        autoTranscribeEnabled: autoTranscribeToggle.checked,
+        aiSummaryEnabled: aiSummaryToggle.checked,
+        transcriptCleanupEnabled: transcriptCleanupToggle.checked,
+      }),
+    });
+  } catch (err) {
+    // fetch() itself throwing (offline, blocked, CORS) -- without this
+    // catch, the button above was disabled and never re-enabled, so a
+    // failed save looked exactly like "nothing happens" and stayed stuck
+    // that way on every retry.
+    transcriptionToggles.forEach((toggle) => (toggle.disabled = false));
+    transcriptionSaveBtn.disabled = false;
+    transcriptionSaveError.textContent = "Could not reach the server -- check your connection and try again";
+    transcriptionSaveError.hidden = false;
+    return;
+  }
   transcriptionToggles.forEach((toggle) => (toggle.disabled = false));
   transcriptionSaveBtn.disabled = false;
   if (!res.ok) {
-    transcriptionSaveError.textContent = "Could not save -- try again";
+    const body = await res.json().catch(() => ({}));
+    transcriptionSaveError.textContent = body.error || "Could not save -- try again";
     transcriptionSaveError.hidden = false;
     return;
   }
