@@ -38,6 +38,8 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
 .nav-link { font-size: 0.95rem; font-weight: 500; color: var(--muted); }
 .nav-link:hover { color: var(--ink); }
 .signin-btn { font-size: 0.9rem; font-weight: 600; padding: 9px 20px; border: 1px solid var(--ink); border-radius: 7px; color: var(--ink); }
+.signup-btn { font-size: 0.9rem; font-weight: 600; padding: 9px 20px; background: var(--accent); color: var(--page-bg); border-radius: 7px; }
+.signup-btn:hover { background: #8f3f24; color: var(--page-bg); }
 .back-link { font-size: 0.9rem; font-weight: 500; color: var(--muted); }
 
 /* Hero */
@@ -101,7 +103,7 @@ h1, h2 { font-family: "Cormorant Garamond", serif; }
   .nav-links { gap: 14px; }
   .nav-link { display: none; }
   .brand-name { font-size: 1.15rem; }
-  .signin-btn { padding: 8px 14px; font-size: 0.85rem; }
+  .signin-btn, .signup-btn { padding: 8px 14px; font-size: 0.85rem; }
 
   .hero { padding: 44px 16px 40px; }
   .hero h1 { font-size: 28px; line-height: 1.2; margin-bottom: 16px; }
