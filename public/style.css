@@ -897,6 +897,11 @@ tbody tr:last-child td {
   color: var(--muted);
 }
 
+.ghl-status-pending {
+  color: var(--critical);
+  font-weight: 600;
+}
+
 .ghl-reconnect-btn {
   padding: 5px 10px;
   border: 1px solid var(--accent);

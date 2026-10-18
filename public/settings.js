@@ -569,6 +569,20 @@ const ghlAppUrlSection = document.getElementById("ghl-app-url-section");
 const ghlAppUrlList = document.getElementById("ghl-app-url-list");
 const connectGhlAccountBtn = document.getElementById("connect-ghl-account-btn");
 const ghlOauthNotConfigured = document.getElementById("ghl-oauth-not-configured");
+const ghlAccountsSaveBar = document.getElementById("ghl-accounts-save-bar");
+const ghlAccountsSaveBtn = document.getElementById("ghl-accounts-save-btn");
+const ghlAccountsSaveError = document.getElementById("ghl-accounts-save-error");
+const ghlAccountsSaveSuccess = document.getElementById("ghl-accounts-save-success");
+
+// Disconnecting used to be immediate (a browser confirm() then straight to
+// the server) -- now it's staged, same deferred-save instinct as the
+// Transcription tab, specifically so a misclick doesn't actually
+// disconnect anything: clicking "Disconnect" just marks the row pending
+// and reveals the save bar below; nothing hits the server until "Save
+// changes" is clicked, and "Cancel" un-marks it with no request at all.
+let lastGhlAccounts = [];
+const pendingDisconnects = new Set();
+let ghlAccountsSaveSuccessTimer = null;
 
 function formatLastSynced(iso) {
   return iso ? new Date(iso).toLocaleString() : "Never";
@@ -587,23 +601,64 @@ function reconnectGhlAccount() {
   location.href = "/api/admin/oauth/connect";
 }
 
-async function disconnectGhlAccount(id, name, btn) {
-  if (!confirm(`Disconnect "${name}"? New calls will stop syncing until you reconnect. Everything already recorded -- recordings, contacts, transcripts -- stays exactly as it is and comes right back when you reconnect the same location.`)) {
-    return;
-  }
-  btn.disabled = true;
-  const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/disconnect`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
-  });
-  if (res.ok) {
-    loadGhlAccountsTab();
-    return;
-  }
-  btn.disabled = false;
-  const body = await res.json().catch(() => ({}));
-  alert(body.error || "Could not disconnect this account.");
+function markDisconnectPending(id) {
+  pendingDisconnects.add(id);
+  renderGhlAccountRows();
 }
+
+function cancelDisconnectPending(id) {
+  pendingDisconnects.delete(id);
+  renderGhlAccountRows();
+}
+
+function updateGhlAccountsSaveBar() {
+  const dirty = pendingDisconnects.size > 0;
+  ghlAccountsSaveBar.hidden = !dirty;
+  if (dirty) {
+    clearTimeout(ghlAccountsSaveSuccessTimer);
+    ghlAccountsSaveError.hidden = true;
+    ghlAccountsSaveSuccess.hidden = true;
+    ghlAccountsSaveBtn.hidden = false;
+  }
+}
+
+ghlAccountsSaveBtn.addEventListener("click", async () => {
+  ghlAccountsSaveBtn.disabled = true;
+  ghlAccountsSaveError.hidden = true;
+  const ids = [...pendingDisconnects];
+  const failed = [];
+  for (const id of ids) {
+    try {
+      const res = await fetch(`/api/admin/ghl-accounts/${encodeURIComponent(id)}/disconnect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      });
+      if (res.ok) {
+        pendingDisconnects.delete(id);
+      } else {
+        failed.push(id);
+      }
+    } catch (err) {
+      failed.push(id);
+    }
+  }
+  ghlAccountsSaveBtn.disabled = false;
+  if (failed.length) {
+    ghlAccountsSaveError.textContent = "Could not disconnect one or more accounts -- try again";
+    ghlAccountsSaveError.hidden = false;
+    renderGhlAccountRows();
+    return;
+  }
+  ghlAccountsSaveBtn.hidden = true;
+  ghlAccountsSaveSuccess.hidden = false;
+  clearTimeout(ghlAccountsSaveSuccessTimer);
+  ghlAccountsSaveSuccessTimer = setTimeout(() => {
+    ghlAccountsSaveBar.hidden = true;
+    ghlAccountsSaveSuccess.hidden = true;
+    ghlAccountsSaveBtn.hidden = false;
+  }, 2000);
+  loadGhlAccountsTab();
+});
 
 async function saveGhlAppUrl(id, btn) {
   const input = ghlAppUrlList.querySelector(`[data-app-url-input="${CSS.escape(id)}"]`);
@@ -629,22 +684,24 @@ async function saveGhlAppUrl(id, btn) {
   if (hint && body.appUrl) hint.remove();
 }
 
-async function loadGhlAccountsTab() {
-  tabLoaded.accounts = true;
-  const res = await fetch("/api/admin/ghl-accounts/status");
-  const { accounts, oauthConfigured } = await res.json();
-
+function renderGhlAccountRows() {
+  const accounts = lastGhlAccounts;
   ghlAccountRows.innerHTML = accounts.length
     ? accounts
         .map((a) => {
           const isActive = !a.uninstalledAt;
-          const statusHtml = isActive
-            ? `<span class="ghl-status-active">Connected</span>`
-            : `<span class="ghl-status-disconnected">Disconnected ${escapeHtml(new Date(a.uninstalledAt).toLocaleDateString())}</span>`;
-          const actionHtml = isActive
-            ? `<button type="button" class="delete-btn" data-disconnect="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name || a.ghlLocationId)}">Disconnect</button>
-               <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
-            : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
+          const isPending = pendingDisconnects.has(a.id);
+          const statusHtml = isPending
+            ? `<span class="ghl-status-pending">Pending disconnect</span>`
+            : isActive
+              ? `<span class="ghl-status-active">Connected</span>`
+              : `<span class="ghl-status-disconnected">Disconnected ${escapeHtml(new Date(a.uninstalledAt).toLocaleDateString())}</span>`;
+          const actionHtml = isPending
+            ? `<button type="button" data-cancel-disconnect="${escapeHtml(a.id)}">Cancel</button>`
+            : isActive
+              ? `<button type="button" class="delete-btn" data-disconnect="${escapeHtml(a.id)}">Disconnect</button>
+                 <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
+              : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
           return `<tr>
             <td data-label="Location name">${escapeHtml(a.name || a.ghlLocationId)}</td>
             <td data-label="GHL location ID">${escapeHtml(a.ghlLocationId)}</td>
@@ -655,6 +712,24 @@ async function loadGhlAccountsTab() {
         })
         .join("")
     : `<tr><td colspan="5" class="empty-state">No GHL accounts connected yet.</td></tr>`;
+
+  ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
+  ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
+    btn.addEventListener("click", () => markDisconnectPending(btn.dataset.disconnect));
+  });
+  ghlAccountRows.querySelectorAll("[data-cancel-disconnect]").forEach((btn) => {
+    btn.addEventListener("click", () => cancelDisconnectPending(btn.dataset.cancelDisconnect));
+  });
+  updateGhlAccountsSaveBar();
+}
+
+async function loadGhlAccountsTab() {
+  tabLoaded.accounts = true;
+  const res = await fetch("/api/admin/ghl-accounts/status");
+  const { accounts, oauthConfigured } = await res.json();
+  lastGhlAccounts = accounts;
+  pendingDisconnects.clear();
+  renderGhlAccountRows();
 
   connectGhlAccountBtn.hidden = !oauthConfigured;
   ghlOauthNotConfigured.hidden = oauthConfigured;
@@ -682,10 +757,6 @@ async function loadGhlAccountsTab() {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") saveGhlAppUrl(input.dataset.appUrlInput, ghlAppUrlList.querySelector(`[data-app-url-save="${CSS.escape(input.dataset.appUrlInput)}"]`));
     });
-  });
-  ghlAccountRows.querySelectorAll("[data-reconnect]").forEach((btn) => btn.addEventListener("click", reconnectGhlAccount));
-  ghlAccountRows.querySelectorAll("[data-disconnect]").forEach((btn) => {
-    btn.addEventListener("click", () => disconnectGhlAccount(btn.dataset.disconnect, btn.dataset.name, btn));
   });
 }
 
