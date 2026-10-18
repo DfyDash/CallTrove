@@ -24,6 +24,17 @@ const FAILURE_THRESHOLD = 3;
 // visible without flooding the inbox.
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
+// Every poller here hits the DB, and a deliberate EC2 start always races
+// RDS's own cold-start (a stopped RDS instance takes a few minutes to go
+// "available" again, even though EC2 itself is up almost immediately).
+// That alone is enough consecutive ETIMEDOUTs to cross FAILURE_THRESHOLD
+// on every single intentional restart -- not a real outage, just RDS not
+// being ready yet. Suppress alerting (not failure counting -- a genuinely
+// broken subsystem still alerts the moment this window ends) until the
+// process has been up longer than RDS's cold-start normally takes.
+const STARTUP_GRACE_MS = 5 * 60 * 1000;
+const STARTED_AT = Date.now();
+
 const ALERT_TO = process.env.ALERT_EMAIL_TO;
 
 function isEnabled() {
@@ -62,6 +73,7 @@ async function recordFailure(subsystem, err) {
   state.set(subsystem, s);
 
   if (s.count < FAILURE_THRESHOLD) return;
+  if (Date.now() - STARTED_AT < STARTUP_GRACE_MS) return;
   if (Date.now() - s.lastAlertAt < ALERT_COOLDOWN_MS) return;
 
   s.lastAlertAt = Date.now();
