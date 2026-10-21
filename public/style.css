@@ -1257,6 +1257,10 @@ tbody tr:last-child td {
   color: #d03b3b;
 }
 
+.danger-zone > .settings-note {
+  margin-bottom: 14px;
+}
+
 .recovery-codes {
   font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   font-size: 0.95rem;
