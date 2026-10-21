@@ -32,16 +32,26 @@ function getBedrockClient() {
   return bedrockClient;
 }
 
-const SYSTEM_PROMPT = `You summarize business phone call transcripts. Respond with ONLY a single JSON object, no other text, matching exactly this shape:
+// The "2-3 sentence" instruction alone wasn't enough -- in practice the
+// model would narrate the call turn-by-turn instead (one sentence per
+// back-and-forth, including pure pleasantries like "asks how they're
+// doing"), which reads as a wall of text once posted to GHL as a note.
+// Spelling out what NOT to do, with a concrete bad/good pair, is what
+// actually got it to stop -- an abstract length limit on its own doesn't
+// reliably stop this particular failure mode.
+const SYSTEM_PROMPT = `You summarize business phone call transcripts for a CRM note that a busy salesperson will skim in a few seconds. Respond with ONLY a single JSON object, no other text, matching exactly this shape:
 {
-  "summary": "2-3 sentence plain-English summary of the call, suitable to post as a CRM note",
+  "summary": "ONE short paragraph, 2-3 sentences, no line breaks and no bullet/numbered list. Cover only why the call happened, what was actually discussed, and how it resolved. Do NOT narrate the call turn-by-turn (one sentence per thing each person said) and skip greetings/small talk unless that was the entire call.",
   "sentiment": "positive" | "neutral" | "negative",
   "outcome": "short label for how the call resolved, e.g. \\"Appointment scheduled\\", \\"Question answered\\", \\"No resolution\\"",
   "topics": ["short topic phrase", "..."],
   "followUpNeeded": true | false,
   "followUpDetails": "what needs following up on, or null if followUpNeeded is false"
 }
-Base everything strictly on the transcript text given. Do not invent details it doesn't support.`;
+Base everything strictly on the transcript text given. Do not invent details it doesn't support.
+
+Bad summary (turn-by-turn narration -- do not do this): "Victor identifies himself. Victor asks how the caller is doing. The caller says they are doing well. The caller asks if this is about Medicare. The caller states they are already covered. No further actions are indicated."
+Good summary for that same call: "Victor called about Medicare coverage, but the contact said they're already covered and no follow-up was needed."`;
 
 // Bounds the cost of any single pathologically long call -- but a
 // *truncated* summary would be actively misleading (it could miss the
@@ -106,9 +116,15 @@ async function summarizeTranscript(transcriptText) {
   if (!parsed.summary || typeof parsed.summary !== "string") {
     throw new Error("Bedrock JSON was missing a usable summary field");
   }
+  // Belt-and-suspenders on top of the prompt's own formatting instructions:
+  // a response that still slips in line breaks (one sentence per line, the
+  // original symptom this was written to catch) gets collapsed to a single
+  // paragraph before it's ever saved or posted as a GHL note, rather than
+  // relying solely on the model to format it correctly every time.
+  const summary = parsed.summary.replace(/\s*\n+\s*/g, " ").trim();
 
   return {
-    summary: parsed.summary,
+    summary,
     analysis: {
       sentiment: parsed.sentiment || null,
       outcome: parsed.outcome || null,
