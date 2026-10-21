@@ -6,6 +6,7 @@ const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
 const { getRealDurationSeconds } = require("./audioDuration");
 const transcription = require("./transcription");
+const customVocabulary = require("./customVocabulary");
 const alerting = require("./alerting");
 
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -104,7 +105,8 @@ async function processCallMessage(conversation, message, { checkAutoTranscribe =
 
     if (checkAutoTranscribe && transcription.isEnabled() && (await db.getAutoTranscribeEnabled(ghlAccountId))) {
       try {
-        await transcription.startJob(callRowId, taggedBuffer, extension, storageTier);
+        const vocabularyName = await customVocabulary.readyVocabularyNameFor(ghlAccountId).catch(() => null);
+        await transcription.startJob(callRowId, taggedBuffer, extension, storageTier, vocabularyName);
         await db.markTranscriptionPending(callRowId);
       } catch (err) {
         console.error(`[poller] failed to start auto-transcription for call ${message.id}:`, err);

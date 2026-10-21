@@ -60,7 +60,13 @@ function inputKeyFor(callId, extension) {
 // by jobName (deterministic from callId), not by anything returned here.
 // tier defaults to 'standard' so any pre-tiering caller keeps working
 // unchanged, same convention as src/storage/index.js.
-async function startJob(callId, buffer, extension, tier = "standard") {
+//
+// vocabularyName is optional and deliberately never resolved in here --
+// callers look it up via src/customVocabulary.js's readyVocabularyNameFor()
+// first, so a null simply means "no ready vocabulary for this account yet",
+// not a failure. Passing one on an unconfigured AWS account would just
+// make Transcribe reject the whole job.
+async function startJob(callId, buffer, extension, tier = "standard", vocabularyName = null) {
   const { PutObjectCommand } = require("@aws-sdk/client-s3");
   const { StartTranscriptionJobCommand } = require("@aws-sdk/client-transcribe");
 
@@ -80,6 +86,7 @@ async function startJob(callId, buffer, extension, tier = "standard") {
       LanguageCode: LANGUAGE_CODE,
       MediaFormat: extension === "wav" ? "wav" : "mp3",
       Media: { MediaFileUri: `s3://${bucket}/${key}` },
+      ...(vocabularyName ? { Settings: { VocabularyName: vocabularyName } } : {}),
     })
   );
 }

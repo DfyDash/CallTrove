@@ -7,6 +7,7 @@ const email = require("../email");
 const { getPlayback, getBuffer } = require("../storage");
 const { sanitizeForFilename } = require("../filenames");
 const transcription = require("../transcription");
+const customVocabulary = require("../customVocabulary");
 const { requireCsrf, requireAccount, verifyPassword, getAccessibleAccountIds, displayName } = require("../auth");
 const RECOVERY_CODE_COUNT = 10;
 
@@ -511,7 +512,8 @@ router.post("/calls/:id/transcribe", requireCsrf, async (req, res) => {
   try {
     const buffer = await getBuffer(call.storageKey, call.storageTier);
     const extension = call.storageKey.split(".").pop();
-    await transcription.startJob(call.id, buffer, extension, call.storageTier);
+    const vocabularyName = await customVocabulary.readyVocabularyNameFor(call.ghlAccountId).catch(() => null);
+    await transcription.startJob(call.id, buffer, extension, call.storageTier, vocabularyName);
     await db.markTranscriptionPending(call.id);
     await logAccess(req, { action: "transcription_requested", callId: call.id, success: true });
     res.json({ status: "pending" });

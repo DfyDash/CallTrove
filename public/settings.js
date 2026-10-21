@@ -115,7 +115,10 @@ async function loadSession() {
   await loadDangerZone();
   await loadHipaaSection();
 
-  if (me.transcriptionEnabled) await loadTranscriptionSettings();
+  if (me.transcriptionEnabled) {
+    await loadTranscriptionSettings();
+    await loadVocabularyTerms();
+  }
 
   loadTeam();
   activateTab(location.hash.replace("#", ""));
@@ -1715,6 +1718,125 @@ transcriptionSaveBtn.addEventListener("click", async () => {
     transcriptionSaveBtn.hidden = false;
   }, 2000);
   tabLoaded.activity = false;
+});
+
+// --- Custom vocabulary (words/phrases that keep getting mis-transcribed) ---
+
+const vocabularyTermRows = document.getElementById("vocabulary-term-rows");
+const vocabularyStatusEl = document.getElementById("vocabulary-status");
+const vocabularyTermInput = document.getElementById("vocabulary-term-input");
+const vocabularySoundsLikeInput = document.getElementById("vocabulary-sounds-like-input");
+const vocabularyAddBtn = document.getElementById("vocabulary-add-btn");
+const vocabularyError = document.getElementById("vocabulary-error");
+const vocabularyRebuildBtn = document.getElementById("vocabulary-rebuild-btn");
+
+const VOCABULARY_STATUS_LABELS = {
+  pending: "Building -- usually ready within a few minutes",
+  ready: "Active",
+  failed: "Last build failed -- try rebuilding",
+};
+
+function renderVocabularyStatus(status, syncedAt) {
+  if (!status) {
+    vocabularyStatusEl.textContent = "Not built yet -- add anything extra below, then click \"Rebuild vocabulary now\".";
+    return;
+  }
+  const label = VOCABULARY_STATUS_LABELS[status] || status;
+  const when = syncedAt ? ` (as of ${new Date(syncedAt).toLocaleString()})` : "";
+  vocabularyStatusEl.textContent = `${label}${when}`;
+}
+
+function renderVocabularyTerms(terms) {
+  vocabularyTermRows.innerHTML = terms
+    .map(
+      (t) => `
+    <tr>
+      <td>${escapeHtml(t.term)}</td>
+      <td>${t.soundsLike ? escapeHtml(t.soundsLike) : "—"}</td>
+      <td><button type="button" class="vocabulary-remove-btn" data-id="${escapeHtml(t.id)}">Remove</button></td>
+    </tr>`
+    )
+    .join("");
+  vocabularyTermRows.querySelectorAll(".vocabulary-remove-btn").forEach((btn) => {
+    btn.addEventListener("click", () => removeVocabularyTerm(btn.dataset.id));
+  });
+}
+
+async function loadVocabularyTerms() {
+  const res = await fetch(`/api/admin/vocabulary-terms?accountId=${encodeURIComponent(currentAccountId)}`);
+  if (!res.ok) return;
+  const data = await res.json();
+  renderVocabularyTerms(data.terms || []);
+  renderVocabularyStatus(data.status, data.syncedAt);
+}
+
+async function removeVocabularyTerm(id) {
+  const res = await fetch(`/api/admin/vocabulary-terms/${encodeURIComponent(id)}?accountId=${encodeURIComponent(currentAccountId)}`, {
+    method: "DELETE",
+    headers: { "X-CSRF-Token": csrfToken },
+  }).catch(() => null);
+  if (!res || !res.ok) {
+    vocabularyError.textContent = "Could not remove that term -- try again";
+    vocabularyError.hidden = false;
+    return;
+  }
+  vocabularyError.hidden = true;
+  loadVocabularyTerms();
+}
+
+vocabularyAddBtn.addEventListener("click", async () => {
+  const term = vocabularyTermInput.value.trim();
+  if (!term) return;
+  vocabularyAddBtn.disabled = true;
+  vocabularyError.hidden = true;
+  let res;
+  try {
+    res = await fetch(`/api/admin/vocabulary-terms?accountId=${encodeURIComponent(currentAccountId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ term, soundsLike: vocabularySoundsLikeInput.value.trim() }),
+    });
+  } catch (err) {
+    vocabularyAddBtn.disabled = false;
+    vocabularyError.textContent = "Could not reach the server -- check your connection and try again";
+    vocabularyError.hidden = false;
+    return;
+  }
+  vocabularyAddBtn.disabled = false;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    vocabularyError.textContent = body.error || "Could not add that term -- try again";
+    vocabularyError.hidden = false;
+    return;
+  }
+  vocabularyTermInput.value = "";
+  vocabularySoundsLikeInput.value = "";
+  loadVocabularyTerms();
+});
+
+vocabularyRebuildBtn.addEventListener("click", async () => {
+  vocabularyRebuildBtn.disabled = true;
+  vocabularyError.hidden = true;
+  let res;
+  try {
+    res = await fetch(`/api/admin/vocabulary-terms/rebuild?accountId=${encodeURIComponent(currentAccountId)}`, {
+      method: "POST",
+      headers: { "X-CSRF-Token": csrfToken },
+    });
+  } catch (err) {
+    vocabularyRebuildBtn.disabled = false;
+    vocabularyError.textContent = "Could not reach the server -- check your connection and try again";
+    vocabularyError.hidden = false;
+    return;
+  }
+  vocabularyRebuildBtn.disabled = false;
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    vocabularyError.textContent = body.error || "Could not start a rebuild -- try again";
+    vocabularyError.hidden = false;
+    return;
+  }
+  loadVocabularyTerms();
 });
 
 // --- Billing (client-facing -- what this tenant is actually being

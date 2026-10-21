@@ -41,6 +41,7 @@ const { saveRecording } = require("./storage");
 const { embedMetadata } = require("./audioMetadata");
 const { getRealDurationSeconds } = require("./audioDuration");
 const transcription = require("./transcription");
+const customVocabulary = require("./customVocabulary");
 
 // Outcomes: "stored" (a call was saved, or already had been), "ignored"
 // (not a call-relevant event, or a channel/account issue that retrying
@@ -161,7 +162,8 @@ async function handleEvent(payload) {
 
   if (transcription.isEnabled() && (await db.getAutoTranscribeEnabled(account.id))) {
     try {
-      await transcription.startJob(callRowId, taggedBuffer, extension, account.storageTier);
+      const vocabularyName = await customVocabulary.readyVocabularyNameFor(account.id).catch(() => null);
+      await transcription.startJob(callRowId, taggedBuffer, extension, account.storageTier, vocabularyName);
       await db.markTranscriptionPending(callRowId);
     } catch (err) {
       // Not retried at this level -- the call itself is safely stored

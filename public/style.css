@@ -1462,6 +1462,17 @@ tbody tr:last-child td {
   border-radius: 8px;
 }
 
+.settings-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.settings-add-row input {
+  flex: 1 1 200px;
+}
+
 .baa-text-box {
   max-height: 420px;
   overflow-y: auto;

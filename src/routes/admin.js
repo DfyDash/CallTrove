@@ -16,6 +16,7 @@ const { loginLimiter, limiterKey } = require("./auth");
 const billingRates = require("../billingRates");
 const paddle = require("../paddle");
 const { BAA_VERSION, buildBaaText } = require("../baaText");
+const customVocabulary = require("../customVocabulary");
 
 const router = express.Router();
 
@@ -743,6 +744,49 @@ function safe(handler) {
       if (!res.headersSent) res.status(500).json({ error: "something went wrong -- please try again" });
     });
 }
+
+// --- Custom vocabulary (AWS Transcribe accuracy for proper nouns, e.g.
+// business/staff/contact names that sound like a more common word -- see
+// src/customVocabulary.js) -- one per connected GHL sub-account, never
+// shared across a tenant's other locations (see schema.sql's comment on
+// ghl_account_vocabulary_terms for why). ---
+
+router.get("/vocabulary-terms", requireAccount, safe(async (req, res) => {
+  const [terms, account] = await Promise.all([db.listVocabularyTerms(req.ghlAccountId), db.getGhlAccountForVocabulary(req.ghlAccountId)]);
+  res.json({ terms, status: account ? account.vocabularyStatus : null, syncedAt: account ? account.vocabularySyncedAt : null });
+}));
+
+router.post("/vocabulary-terms", requireAccount, requireCsrf, safe(async (req, res) => {
+  const term = ((req.body || {}).term || "").trim();
+  const soundsLike = ((req.body || {}).soundsLike || "").trim();
+  if (!term) return res.status(400).json({ error: "term is required" });
+  const id = randomUUID();
+  await db.addVocabularyTerm(id, req.ghlAccountId, term, soundsLike);
+  await log(req, "vocabulary_term_added", `Added "${term}"${soundsLike ? ` (sounds like: ${soundsLike})` : ""} to the custom vocabulary for account ${req.ghlAccountId}`);
+  res.status(201).json({ id, term, soundsLike: soundsLike || null });
+}));
+
+router.delete("/vocabulary-terms/:id", requireAccount, requireCsrf, safe(async (req, res) => {
+  const deleted = await db.deleteVocabularyTerm(req.params.id, req.ghlAccountId);
+  if (!deleted) return res.status(404).json({ error: "term not found" });
+  await log(req, "vocabulary_term_removed", `Removed a custom vocabulary term for account ${req.ghlAccountId}`);
+  res.json({ status: "deleted" });
+}));
+
+// Kicks off (or refreshes) this account's AWS vocabulary build. AWS builds
+// it asynchronously (src/vocabularyPoller.js is what notices it's actually
+// ready), so this returns 'pending' immediately rather than waiting.
+router.post("/vocabulary-terms/rebuild", requireAccount, requireCsrf, safe(async (req, res) => {
+  if (!customVocabulary.isEnabled()) {
+    return res.status(400).json({ error: "transcription isn't enabled on this deployment, so there's nothing for a vocabulary to improve yet" });
+  }
+  const result = await customVocabulary.syncVocabulary(req.ghlAccountId);
+  if (result.skipped) {
+    return res.status(409).json({ error: "no names to build a vocabulary from yet -- add a contact, connect staff, or add a word below first" });
+  }
+  await log(req, "vocabulary_rebuild_started", `Started a custom vocabulary rebuild (${result.termCount} terms) for account ${req.ghlAccountId}`);
+  res.status(202).json({ status: "pending" });
+}));
 
 // --- Possible duplicate contacts ---
 // Read-only against GHL: this only surfaces contacts that share a phone

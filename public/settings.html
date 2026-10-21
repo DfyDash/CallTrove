@@ -540,6 +540,37 @@
             <span id="transcription-save-success" class="settings-save-success" hidden>Saved</span>
             <button type="button" id="transcription-save-btn" class="settings-save-btn">Save changes</button>
           </div>
+
+          <div class="settings-section">
+            <h2>Words we keep getting wrong</h2>
+            <p class="settings-note">
+              If a name or business term in a transcript keeps coming out wrong
+              (e.g. a transcript said "Sierra" when the call actually said
+              "Fierro"), add it here. This account's contacts, staff, and
+              business name are already included automatically -- only add
+              something extra it wouldn't otherwise know, like uncommon
+              jargon. This applies only to the account selected above, not
+              your other connected locations. No extra cost either way.
+            </p>
+            <p class="settings-note" id="vocabulary-status"></p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Word or phrase</th>
+                  <th>How it's said (optional)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="vocabulary-term-rows"></tbody>
+            </table>
+            <div class="settings-add-row">
+              <input type="text" id="vocabulary-term-input" placeholder="e.g. Fierro Insurance Solutions" />
+              <input type="text" id="vocabulary-sounds-like-input" placeholder="e.g. fee-air-oh (optional)" />
+              <button type="button" id="vocabulary-add-btn">Add</button>
+            </div>
+            <span id="vocabulary-error" class="settings-save-error" hidden></span>
+            <button type="button" id="vocabulary-rebuild-btn">Rebuild vocabulary now</button>
+          </div>
         </section>
 
         <!-- Billing -->
