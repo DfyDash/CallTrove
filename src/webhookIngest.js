@@ -89,7 +89,8 @@ async function handleEvent(payload) {
   let conversationInfo = null;
   try {
     const result = await api.searchConversationsForContact(contactId);
-    conversationInfo = (result.conversations || []).find((c) => c.id === conversationId) || result.conversations[0] || null;
+    const conversations = result.conversations || [];
+    conversationInfo = conversations.find((c) => c.id === conversationId) || conversations[0] || null;
   } catch (err) {
     console.error(`[webhookIngest] could not look up conversation info for contact ${contactId}:`, err.message);
   }

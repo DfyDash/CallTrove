@@ -47,9 +47,12 @@ async function alertPermanentlyFailed(event, err) {
 }
 
 async function pollOnce() {
-  const events = await db.listRetryableWebhookEvents();
+  // maxAttempts is passed explicitly so an exhausted event is excluded in
+  // SQL, before LIMIT applies -- not just skipped here after fetching,
+  // which would let enough permanently-failed events crowd out every
+  // newer one forever (see listRetryableWebhookEvents' own comment).
+  const events = await db.listRetryableWebhookEvents(MAX_ATTEMPTS);
   for (const event of events) {
-    if (event.attempts >= MAX_ATTEMPTS) continue; // already given up on and alerted; leave it for forensics
     try {
       await webhookIngest.handleEvent(event.payload);
       await db.markWebhookEventCompleted(event.id);

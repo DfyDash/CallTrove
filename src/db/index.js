@@ -1989,16 +1989,21 @@ async function insertWebhookEvent(id, payload) {
   await webhookInsertPool.query(`INSERT INTO ghl_webhook_events (id, payload) VALUES ($1, $2)`, [id, payload]);
 }
 
-// attempts < MAX_ATTEMPTS is left to the caller (webhookEventPoller.js) to
-// check before retrying a 'failed' row, rather than filtered in SQL here --
-// the max attempt count is that module's own retry policy, not a DB concern.
-async function listRetryableWebhookEvents(limit = 20) {
+// maxAttempts is required, not defaulted -- a caller that forgets to pass
+// it would silently reintroduce the exact bug this guards against: without
+// excluding exhausted rows *before* LIMIT, once `limit` events have
+// permanently failed (reached their own MAX_ATTEMPTS), they're the oldest
+// 'failed' rows there are, so they'd fill every single page forever and no
+// event newer than them would ever be fetched again, retryable or not.
+// That's a real, confirmed bug this fixes, not a hypothetical one -- found
+// reviewing this same durable-queue code the same day it was written.
+async function listRetryableWebhookEvents(maxAttempts, limit = 20) {
   const { rows } = await pool.query(
     `SELECT id, payload, attempts FROM ghl_webhook_events
-     WHERE status IN ('pending', 'failed')
+     WHERE status IN ('pending', 'failed') AND attempts < $1
      ORDER BY received_at ASC
-     LIMIT $1`,
-    [limit]
+     LIMIT $2`,
+    [maxAttempts, limit]
   );
   return rows;
 }

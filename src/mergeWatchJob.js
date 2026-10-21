@@ -57,14 +57,16 @@ function isEnabled() {
 }
 
 // Picks up to `max` groups, continuing from where the last cycle stopped
-// and wrapping around, so every group gets its turn.
+// and wrapping around, so every group gets its turn. Doesn't advance the
+// rotation cursor itself -- the caller does that based on how many of
+// these were actually checked, not how many were merely picked, since
+// ACCOUNT_TIME_BUDGET_MS can cut the loop off partway through.
 function pickGroups(accountId, groups, max) {
   const start = (nextGroupIndex.get(accountId) || 0) % groups.length;
   const count = Math.min(max, groups.length);
   const picked = [];
   for (let i = 0; i < count; i++) picked.push(groups[(start + i) % groups.length]);
-  nextGroupIndex.set(accountId, (start + count) % groups.length);
-  return picked;
+  return { picked, start };
 }
 
 function rateLimited(account) {
@@ -86,14 +88,19 @@ async function checkAccount(account, maxGroups) {
 
   const outcome = await withAccountLock(account.id, async () => {
     const deadline = Date.now() + ACCOUNT_TIME_BUDGET_MS;
-    for (const group of pickGroups(account.id, groups, maxGroups)) {
+    const { picked, start } = pickGroups(account.id, groups, maxGroups);
+    let processed = 0;
+    let wasRateLimited = false;
+    for (const group of picked) {
       if (Date.now() > deadline) break;
+      processed++; // counts as visited from here on, even if skipped below -- only the time-budget break above should leave a group for next cycle
       const contactIds = group.contacts.map((c) => c.id);
       if (contactIds.some((id) => (unresolvedUntil.get(id) || 0) > Date.now())) continue;
       totals.groupsChecked++;
 
       // The cheap check: has any member disappeared from GHL?
       let anyGone = false;
+      let brokeForRateLimit = false;
       for (const contactId of contactIds) {
         totals.contactsChecked++;
         try {
@@ -102,9 +109,16 @@ async function checkAccount(account, maxGroups) {
         } catch (err) {
           console.warn(`[mergeWatch] could not check contact ${contactId}:`, err.message);
           totals.errors++;
-          if (statusOf(err) === 429) return rateLimited(account);
+          if (statusOf(err) === 429) {
+            brokeForRateLimit = true;
+            break;
+          }
         }
         await sleep(CALL_SPACING_MS);
+      }
+      if (brokeForRateLimit) {
+        wasRateLimited = true;
+        break;
       }
       if (!anyGone) continue;
 
@@ -112,11 +126,16 @@ async function checkAccount(account, maxGroups) {
       totals.callsMoved += result.callsMoved;
       totals.contactsRemoved += result.contactsRemoved;
       totals.errors += result.errors;
-      if (result.rateLimited) return rateLimited(account);
+      if (result.rateLimited) {
+        wasRateLimited = true;
+        break;
+      }
       if (result.callsMoved === 0 && result.contactsGone > 0 && result.errors === 0) {
         for (const id of contactIds) unresolvedUntil.set(id, Date.now() + UNRESOLVED_RETRY_MS);
       }
     }
+    nextGroupIndex.set(account.id, (start + processed) % groups.length);
+    if (wasRateLimited) return rateLimited(account);
   });
   if (outcome.busy) return totals; // a manual check is already running; next cycle covers it
 
