@@ -32,7 +32,7 @@ function getBedrockClient() {
   return bedrockClient;
 }
 
-// The "2-3 sentence" instruction alone wasn't enough -- in practice the
+// The sentence-count instruction alone wasn't enough -- in practice the
 // model would narrate the call turn-by-turn instead (one sentence per
 // back-and-forth, including pure pleasantries like "asks how they're
 // doing"), which reads as a wall of text once posted to GHL as a note.
@@ -41,7 +41,7 @@ function getBedrockClient() {
 // reliably stop this particular failure mode.
 const SYSTEM_PROMPT = `You summarize business phone call transcripts for a CRM note that a busy salesperson will skim in a few seconds. Respond with ONLY a single JSON object, no other text, matching exactly this shape:
 {
-  "summary": "ONE short paragraph, 2-3 sentences, no line breaks and no bullet/numbered list. Cover only why the call happened, what was actually discussed, and how it resolved. Do NOT narrate the call turn-by-turn (one sentence per thing each person said) and skip greetings/small talk unless that was the entire call.",
+  "summary": "ONE short paragraph, 5-6 sentences, no line breaks and no bullet/numbered list. Cover why the call happened, what was actually discussed, how it resolved, and any follow-up needed. Do NOT narrate the call turn-by-turn (one sentence per thing each person said) and skip greetings/small talk unless that was the entire call.",
   "sentiment": "positive" | "neutral" | "negative",
   "outcome": "short label for how the call resolved, e.g. \\"Appointment scheduled\\", \\"Question answered\\", \\"No resolution\\"",
   "topics": ["short topic phrase", "..."],
@@ -51,7 +51,8 @@ const SYSTEM_PROMPT = `You summarize business phone call transcripts for a CRM n
 Base everything strictly on the transcript text given. Do not invent details it doesn't support.
 
 Bad summary (turn-by-turn narration -- do not do this): "Victor identifies himself. Victor asks how the caller is doing. The caller says they are doing well. The caller asks if this is about Medicare. The caller states they are already covered. No further actions are indicated."
-Good summary for that same call: "Victor called about Medicare coverage, but the contact said they're already covered and no follow-up was needed."`;
+Good summary for that same simple call (short calls don't need to be padded out to 6 sentences): "Victor called about Medicare coverage, but the contact said they're already covered and no follow-up was needed."
+Good summary for a more involved call, showing the 5-6 sentence target actually in use: "Victor from DFY called to follow up on a furnace repair quote. The contact was interested but wanted to check with their spouse before committing to the $450 estimate. Victor offered to hold the Tuesday 10am appointment slot for 48 hours. The contact agreed to call back by Thursday to confirm, and no payment or scheduling was finalized on this call. Follow-up is needed to confirm the appointment by Thursday."`;
 
 // Bounds the cost of any single pathologically long call -- but a
 // *truncated* summary would be actively misleading (it could miss the
