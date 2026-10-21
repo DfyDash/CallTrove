@@ -504,7 +504,7 @@ router.post("/users", requireCsrf, async (req, res) => {
   const existing = await db.getUserByUsername(username);
   if (existing) return res.status(409).json({ error: "username already taken" });
 
-  const { hash, salt } = hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   await db.createUser({
     id: randomUUID(),
     username,
@@ -530,7 +530,7 @@ router.put("/users/:id", requireCsrf, async (req, res) => {
   }
   const update = { role, ghlUserId, ghlUserName };
   if (password) {
-    const { hash, salt } = hashPassword(password);
+    const { hash, salt } = await hashPassword(password);
     update.passwordHash = hash;
     update.passwordSalt = salt;
   }

@@ -5,7 +5,7 @@ const db = require("../db");
 const totp = require("../totp");
 const emailOtp = require("../emailOtp");
 const email = require("../email");
-const { verifyPassword, hashPassword, sessionUser } = require("../auth");
+const { verifyPassword, hashPassword, sessionUser, SCRYPT_KEYLEN } = require("../auth");
 const { BAA_VERSION, buildBaaText } = require("../baaText");
 
 const router = express.Router();
@@ -54,7 +54,15 @@ function csrfValid(req) {
 // always pays for the hash before failing on a wrong password -- a timing
 // difference an attacker can use to enumerate valid usernames just by
 // measuring response time, no leaked list required.
-const { hash: dummyHash, salt: dummySalt } = hashPassword(randomBytes(32).toString("hex"));
+//
+// Doesn't need to actually BE a real scrypt output of some password --
+// verifyPassword always recomputes scrypt(password, salt) and compares the
+// result, so any fixed-length random value here is equally unmatchable and
+// pays the exact same real cost to check against. That also sidesteps
+// hashPassword now being async (it uses crypto.scrypt, not scryptSync, so
+// it doesn't block this process's event loop) with no top-level await.
+const dummyHash = randomBytes(SCRYPT_KEYLEN).toString("hex");
+const dummySalt = randomBytes(16).toString("hex");
 
 // Second step of a login for a user with totp_enabled -- brute-forcing a
 // 6-digit code (1M possibilities) needs its own limit, separate from the
@@ -199,7 +207,7 @@ router.post("/login", express.urlencoded({ extended: false }), loginLimiter, asy
   if (user && !user.passwordHash) {
     return res.redirect("/login.html?error=pending");
   }
-  const valid = password ? verifyPassword(password, user ? user.passwordHash : dummyHash, user ? user.passwordSalt : dummySalt) : false;
+  const valid = password ? await verifyPassword(password, user ? user.passwordHash : dummyHash, user ? user.passwordSalt : dummySalt) : false;
   if (!user || !valid) {
     return res.redirect("/login.html?error=1");
   }
@@ -329,7 +337,7 @@ router.post("/reset-password", express.urlencoded({ extended: false }), resetPas
     return res.redirect("/reset-password.html?error=code");
   }
 
-  const { hash, salt } = hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   await db.updateUser(pendingUserId, { passwordHash: hash, passwordSalt: salt });
   req.session.pendingPasswordResetUserId = undefined;
   res.redirect("/login.html?reset=1");
@@ -441,7 +449,7 @@ router.post("/signup", express.urlencoded({ extended: false }), signupLimiter, a
   }
 
   const pendingId = randomUUID();
-  const { hash, salt } = hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   await db.createPendingSignup({
     id: pendingId,
     firstName,
@@ -625,7 +633,7 @@ router.post("/set-password", express.urlencoded({ extended: false }), setPasswor
     return res.redirect(`/set-password.html?token=${encodeURIComponent(token)}&error=tooshort`);
   }
 
-  const { hash, salt } = hashPassword(password);
+  const { hash, salt } = await hashPassword(password);
   const ok = await db.redeemInviteToken(createHash("sha256").update(token).digest("hex"), hash, salt);
   if (!ok) {
     return res.redirect("/set-password.html?error=invalid");
@@ -656,11 +664,11 @@ router.post("/change-password", express.urlencoded({ extended: false }), async (
   }
 
   const user = await db.getUserByUsername(req.session.user.username);
-  if (!user || !verifyPassword(currentPassword, user.passwordHash, user.passwordSalt)) {
+  if (!user || !(await verifyPassword(currentPassword, user.passwordHash, user.passwordSalt))) {
     return res.redirect("/account.html?error=wrongcurrent");
   }
 
-  const { hash, salt } = hashPassword(newPassword);
+  const { hash, salt } = await hashPassword(newPassword);
   await db.updateUser(user.id, { passwordHash: hash, passwordSalt: salt });
   res.redirect("/account.html?success=1");
 });

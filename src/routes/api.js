@@ -177,7 +177,7 @@ router.post("/account/mfa/confirm", requireCsrf, async (req, res) => {
 router.post("/account/mfa/disable", requireCsrf, async (req, res) => {
   const user = await db.getUserByUsername(req.session.user.username);
   const password = (req.body || {}).password;
-  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+  if (!password || !(await verifyPassword(password, user.passwordHash, user.passwordSalt))) {
     return res.status(400).json({ error: "incorrect password" });
   }
   await db.disableUserTotp(user.id);
@@ -187,7 +187,7 @@ router.post("/account/mfa/disable", requireCsrf, async (req, res) => {
 router.post("/account/mfa/recovery-codes/regenerate", requireCsrf, async (req, res) => {
   const user = await db.getUserByUsername(req.session.user.username);
   const password = (req.body || {}).password;
-  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+  if (!password || !(await verifyPassword(password, user.passwordHash, user.passwordSalt))) {
     return res.status(400).json({ error: "incorrect password" });
   }
   if (!user.totpEnabled) return res.status(400).json({ error: "MFA is not enabled" });
@@ -280,7 +280,7 @@ router.post("/account/email/confirm", requireCsrf, async (req, res) => {
 router.post("/account/email/disable", requireCsrf, async (req, res) => {
   const user = await db.getUserByUsername(req.session.user.username);
   const password = (req.body || {}).password;
-  if (!password || !verifyPassword(password, user.passwordHash, user.passwordSalt)) {
+  if (!password || !(await verifyPassword(password, user.passwordHash, user.passwordSalt))) {
     return res.status(400).json({ error: "incorrect password" });
   }
   await db.disableUserEmailOtp(user.id);

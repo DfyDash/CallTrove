@@ -1,5 +1,8 @@
 const crypto = require("crypto");
+const { promisify } = require("util");
 const db = require("./db");
+
+const scrypt = promisify(crypto.scrypt);
 
 const SCRYPT_KEYLEN = 64;
 
@@ -18,14 +21,19 @@ const LIVE_SUBSCRIPTION = ["active", "trialing", "past_due"];
 
 const REACHABLE_WHILE_CANCELED = ["/api/me", "/api/tenant/status", "/api/admin/tenant/restore"];
 
-function hashPassword(password) {
+// Async (crypto.scrypt, not crypto.scryptSync) so this deliberately slow,
+// CPU-heavy computation doesn't block Node's single event loop -- this
+// process also runs src/routes/ghlWebhooks.js's webhook receiver, which
+// needs to stay responsive to an incoming GHL call regardless of how many
+// logins/signups are happening at the same moment.
+async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, SCRYPT_KEYLEN).toString("hex");
+  const hash = (await scrypt(password, salt, SCRYPT_KEYLEN)).toString("hex");
   return { hash, salt };
 }
 
-function verifyPassword(password, hash, salt) {
-  const candidate = crypto.scryptSync(password, salt, SCRYPT_KEYLEN);
+async function verifyPassword(password, hash, salt) {
+  const candidate = await scrypt(password, salt, SCRYPT_KEYLEN);
   const stored = Buffer.from(hash, "hex");
   return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
 }
@@ -190,4 +198,4 @@ function requireCsrf(req, res, next) {
   next();
 }
 
-module.exports = { hashPassword, verifyPassword, sessionUser, displayName, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf, getAccessibleAccountIds };
+module.exports = { hashPassword, verifyPassword, sessionUser, displayName, requireAuth, requireAdmin, requireAccount, requireOperator, requireCsrf, getAccessibleAccountIds, SCRYPT_KEYLEN };
