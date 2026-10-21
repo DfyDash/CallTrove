@@ -1729,6 +1729,14 @@ async function getGhlAccountByLocationId(ghlLocationId) {
 // looked up by GHL's own location ID rather than our row id -- for
 // src/webhookIngest.js, which only ever has the locationId a GHL webhook
 // payload carries, not our internal ghl_accounts.id.
+//
+// t.status = 'active' matters as much as ga.uninstalled_at here -- without
+// it, a canceled tenant's webhook deliveries kept being captured, stored,
+// and (if transcription/AI summary were on) billed the whole 7-day grace
+// period and beyond, even though every login was already locked out and
+// nobody could see any of it land. GHL's own connection stays installed
+// through a CallTrove cancellation (cancel never touches GHL), so
+// uninstalled_at alone never caught this.
 async function getActiveGhlAccountByLocationId(ghlLocationId) {
   const { rows } = await pool.query(
     `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
@@ -1736,7 +1744,7 @@ async function getActiveGhlAccountByLocationId(ghlLocationId) {
             t.storage_tier AS "storageTier"
      FROM ghl_accounts ga
      JOIN tenants t ON t.id = ga.tenant_id
-     WHERE ga.ghl_location_id = $1 AND ga.uninstalled_at IS NULL`,
+     WHERE ga.ghl_location_id = $1 AND ga.uninstalled_at IS NULL AND t.status = 'active'`,
     [ghlLocationId]
   );
   return rows[0] || null;
@@ -1869,6 +1877,14 @@ async function listUserAccountAccessForTenant(tenantId) {
 // storageTier here is the *tenant's* current storage tier -- joined in so
 // src/poller.js can stamp every newly-saved recording with the right
 // bucket without a separate per-account lookup each cycle.
+//
+// t.status = 'active' stops this (and everything built on it -- the live
+// poller, src/mergeWatchJob.js, an operator-triggered global backfill)
+// from touching a canceled tenant's account at all. Cancellation never
+// disconnects GHL itself, so ga.uninstalled_at alone never caught this --
+// without this, a canceled tenant kept having new calls captured, stored,
+// and billed for the whole grace period and beyond, even though every
+// login was already locked out and nobody could ever see any of it.
 async function listAllActiveGhlAccounts() {
   const { rows } = await pool.query(
     `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
@@ -1876,7 +1892,7 @@ async function listAllActiveGhlAccounts() {
             t.storage_tier AS "storageTier"
      FROM ghl_accounts ga
      JOIN tenants t ON t.id = ga.tenant_id
-     WHERE ga.uninstalled_at IS NULL`
+     WHERE ga.uninstalled_at IS NULL AND t.status = 'active'`
   );
   return rows;
 }
