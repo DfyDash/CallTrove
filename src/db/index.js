@@ -1982,6 +1982,86 @@ async function setAccountLastWebhookCallAt(ghlAccountId, date) {
   );
 }
 
+// --- AWS Transcribe custom vocabulary, per GHL sub-account -- see
+// schema.sql's comment on ghl_account_vocabulary_terms and
+// src/customVocabulary.js for why this is scoped to the sub-account
+// rather than the tenant. ---
+
+// Everything src/customVocabulary.js needs to both build the term list
+// (tenant's business name, this account's own credentials to pull its GHL
+// user list) and pick the right S3 bucket for the vocabulary file (the
+// tenant's current storage tier, same HIPAA/standard split recordings
+// already use) -- one query instead of several separate lookups.
+async function getGhlAccountForVocabulary(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            ga.vocabulary_status AS "vocabularyStatus", ga.vocabulary_synced_at AS "vocabularySyncedAt",
+            t.name AS "tenantName", t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.id = $1`,
+    [ghlAccountId]
+  );
+  return rows[0] || null;
+}
+
+// Only the vocabulary's own build state -- src/transcription.js's callers
+// check this before passing a VocabularyName, with no need for the fuller
+// row above.
+async function getVocabularyStatus(ghlAccountId) {
+  const { rows } = await pool.query(`SELECT vocabulary_status AS "status" FROM ghl_accounts WHERE id = $1`, [ghlAccountId]);
+  return rows[0] ? rows[0].status : null;
+}
+
+async function setVocabularyStatus(ghlAccountId, status) {
+  await pool.query(`UPDATE ghl_accounts SET vocabulary_status = $2, vocabulary_synced_at = now() WHERE id = $1`, [ghlAccountId, status]);
+}
+
+// Every account whose vocabulary build src/vocabularyPoller.js started but
+// hasn't confirmed finished yet -- AWS builds a vocabulary asynchronously
+// (CreateVocabulary/UpdateVocabulary both return before it's actually
+// usable), so this is what the poller re-checks each cycle.
+async function listAccountsWithPendingVocabulary() {
+  const { rows } = await pool.query(`SELECT id FROM ghl_accounts WHERE vocabulary_status = 'pending' AND uninstalled_at IS NULL`);
+  return rows.map((r) => r.id);
+}
+
+// Distinct, non-empty contact names for this account only -- never another
+// account's, even under the same tenant (see schema.sql's comment on why
+// this feature is scoped per sub-account, not per tenant).
+async function listContactNamesForAccount(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT name FROM contacts WHERE ghl_account_id = $1 AND name IS NOT NULL AND btrim(name) <> ''`,
+    [ghlAccountId]
+  );
+  return rows.map((r) => r.name);
+}
+
+async function listVocabularyTerms(ghlAccountId) {
+  const { rows } = await pool.query(
+    `SELECT id, term, sounds_like AS "soundsLike", created_at AS "createdAt"
+     FROM ghl_account_vocabulary_terms WHERE ghl_account_id = $1 ORDER BY created_at`,
+    [ghlAccountId]
+  );
+  return rows;
+}
+
+async function addVocabularyTerm(id, ghlAccountId, term, soundsLike) {
+  await pool.query(
+    `INSERT INTO ghl_account_vocabulary_terms (id, ghl_account_id, term, sounds_like) VALUES ($1, $2, $3, $4)`,
+    [id, ghlAccountId, term, soundsLike || null]
+  );
+}
+
+// Scoped to ghlAccountId as well as id, not just id -- the same boundary
+// every other per-account delete in this file enforces, so a crafted id
+// from a different account/tenant can never be removed through this call.
+async function deleteVocabularyTerm(id, ghlAccountId) {
+  const { rowCount } = await pool.query(`DELETE FROM ghl_account_vocabulary_terms WHERE id = $1 AND ghl_account_id = $2`, [id, ghlAccountId]);
+  return rowCount > 0;
+}
+
 // --- ghl_webhook_events (durable queue for src/routes/ghlWebhooks.js /
 // src/webhookEventPoller.js -- see schema.sql's comment on the table) ---
 
@@ -2788,6 +2868,14 @@ module.exports = {
   setAccountPollerBlocked,
   setAccountPollerUnblocked,
   setAccountLastWebhookCallAt,
+  getGhlAccountForVocabulary,
+  getVocabularyStatus,
+  setVocabularyStatus,
+  listAccountsWithPendingVocabulary,
+  listContactNamesForAccount,
+  listVocabularyTerms,
+  addVocabularyTerm,
+  deleteVocabularyTerm,
   getAutoTranscribeEnabled,
   setAutoTranscribeEnabled,
   getAiSummaryEnabled,

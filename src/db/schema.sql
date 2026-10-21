@@ -977,3 +977,30 @@ CREATE TABLE IF NOT EXISTS ghl_webhook_events (
   processed_at  TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS ghl_webhook_events_status_idx ON ghl_webhook_events (status, received_at);
+
+-- AWS Transcribe custom vocabulary, one per connected GHL sub-account (not
+-- per tenant) -- a tenant with multiple locations and different staff at
+-- each would otherwise risk cross-location mix-ups (two staff with
+-- similar-sounding names at different locations), the same category of
+-- mistake this feature exists to fix, just self-inflicted. Built from each
+-- account's own contacts + its own GHL user list (the same source
+-- handled_by_name already comes from) plus the tenant's business name,
+-- combined with whatever's manually added here -- see src/customVocabulary.js.
+CREATE TABLE IF NOT EXISTS ghl_account_vocabulary_terms (
+  id              UUID PRIMARY KEY,
+  ghl_account_id  UUID NOT NULL REFERENCES ghl_accounts(id) ON DELETE CASCADE,
+  term            TEXT NOT NULL,
+  sounds_like     TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ghl_account_vocabulary_terms_account_idx ON ghl_account_vocabulary_terms (ghl_account_id);
+
+-- vocabulary_status tracks AWS Transcribe's own async build state (null =
+-- never built, 'pending' = CreateVocabulary/UpdateVocabulary in flight,
+-- 'ready' = safe to pass as VocabularyName on a transcription job,
+-- 'failed' = AWS rejected it, e.g. every term got filtered out) --
+-- src/vocabularyPoller.js is what actually advances pending -> ready/failed,
+-- a transcription job never waits on AWS inline for this; see
+-- src/transcription.js's own comment on why.
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_status TEXT CHECK (vocabulary_status IN ('pending', 'ready', 'failed'));
+ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_synced_at TIMESTAMPTZ;
