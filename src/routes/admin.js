@@ -131,7 +131,34 @@ router.post("/tenant/cancel", requireCsrf, safe(async (req, res) => {
 
   const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
   await db.requestTenantCancellation(tenant.id, purgeAt);
-  await log(req, "tenant_cancellation_requested", `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}`);
+
+  // Best-effort, same posture as /tenant/upgrade-hipaa's own Paddle call:
+  // the lockout and purge timer above are the part that must not fail or
+  // wait on Paddle. A Paddle hiccup here shouldn't block the cancellation
+  // itself -- it just needs a human to go cancel the subscription by hand.
+  let paddleCanceled = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddleCanceled = await paddle.cancelSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenant-cancel] tenant ${tenant.id} canceled and locked out, but canceling the Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "tenant_cancel_billing_failed",
+          message: `"${tenant.name}" was canceled and locked out, but canceling the Paddle subscription failed: ${err.message}. Needs a manual cancellation in Paddle so they stop being charged.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(
+    req,
+    "tenant_cancellation_requested",
+    `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}${paddleCanceled ? "; Paddle subscription set to cancel at the end of the current billing period" : ""}`
+  );
   await logForOperator(req, "tenant_cancelled_self_service", `Self-service cancellation by account owner for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}`);
   res.json({ status: "cancellation_pending", purgeAt });
 }));
@@ -150,7 +177,31 @@ router.post("/tenant/restore", requireCsrf, safe(async (req, res) => {
   }
 
   await db.restoreTenant(tenant.id);
-  await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
+
+  // Best-effort, same posture as cancellation's own Paddle call -- the
+  // login unlock above is the part that must not fail. If this tenant's
+  // subscription was scheduled to cancel (see POST /tenant/cancel above),
+  // clear that now so billing just keeps going; if it fails, a human needs
+  // to go clear it by hand before the scheduled cancellation takes effect.
+  let paddleResumed = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddleResumed = await paddle.resumeSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenant-restore] tenant ${tenant.id} restored, but resuming the Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "tenant_restore_billing_failed",
+          message: `"${tenant.name}" was restored, but clearing the Paddle subscription's scheduled cancellation failed: ${err.message}. Needs a manual fix in Paddle before it cancels at period end.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"${paddleResumed ? "; Paddle subscription's scheduled cancellation cleared" : ""}`);
   await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });
 }));

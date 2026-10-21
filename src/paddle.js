@@ -163,4 +163,38 @@ async function switchSubscriptionToHipaaPrice(subscriptionId) {
   return true;
 }
 
-module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, switchSubscriptionToHipaaPrice, ENV };
+// Cancels the Paddle side of an account cancellation (see routes/admin.js's
+// POST /tenant/cancel) -- without this, a canceled CallTrove tenant (every
+// login locked out, data on a purge timer) kept being charged by Paddle
+// indefinitely, since the two systems were never actually linked on
+// cancel. effectiveFrom: "next_billing_period" -- not "immediately" --
+// deliberately: the tenant keeps whatever they already paid for rather
+// than losing it, and if the owner changes their mind and restores within
+// the 7-day grace period, Paddle just has a scheduled cancellation to
+// clear (routes/admin.js's POST /tenant/restore), not a dead subscription
+// that needs a whole new checkout to replace.
+// Same false-not-error contract as switchSubscriptionToHipaaPrice: nothing
+// to cancel (billing not configured, or this tenant never had a live
+// subscription) isn't a failure, just nothing to do.
+async function cancelSubscription(subscriptionId) {
+  const sdk = paddle();
+  if (!sdk || !subscriptionId) return false;
+  await sdk.subscriptions.cancel(subscriptionId, { effectiveFrom: "next_billing_period" });
+  return true;
+}
+
+// Reverses cancelSubscription above, for routes/admin.js's POST
+// /tenant/restore -- clears the scheduled cancellation so the
+// already-live subscription just keeps going, rather than making the
+// owner run a brand new checkout to get billing working again. Paddle
+// represents "clear the scheduled change" as updating the subscription
+// with scheduledChange set to null. Same false-not-error contract: no
+// subscription to resume isn't a failure.
+async function resumeSubscription(subscriptionId) {
+  const sdk = paddle();
+  if (!sdk || !subscriptionId) return false;
+  await sdk.subscriptions.update(subscriptionId, { scheduledChange: null });
+  return true;
+}
+
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, switchSubscriptionToHipaaPrice, cancelSubscription, resumeSubscription, ENV };
