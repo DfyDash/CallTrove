@@ -8,6 +8,7 @@ const apiRouter = require("./routes/api");
 const authRouter = require("./routes/auth");
 const adminRouter = require("./routes/admin");
 const operatorRouter = require("./routes/operator");
+const ghlWebhooksRouter = require("./routes/ghlWebhooks");
 const { requireAuth } = require("./auth");
 const poller = require("./poller");
 const transcriptionPoller = require("./transcriptionPoller");
@@ -178,6 +179,7 @@ app.get("/healthz", async (req, res) => {
 app.post("/webhooks/paddle", express.raw({ type: "application/json", limit: "1mb" }), require("./paddle").webhookHandler);
 
 app.use("/auth", authRouter);
+app.use("/webhooks", ghlWebhooksRouter);
 
 app.use(requireAuth);
 app.use(express.json());
