@@ -9,10 +9,13 @@
 // this way.
 //
 // Every conversation channel fires this webhook (SMS, email, chat, calls --
-// per GHL's own docs), and the payload doesn't carry a reliable channel
-// discriminator to filter on up front, so a message that isn't actually a
-// call is detected by downloadRecording() simply failing (expected, not
-// an error) rather than by inspecting the payload.
+// per GHL's own docs). The payload does carry messageType/messageTypeId
+// (confirmed live 2026-10-21: "CALL" / 1, matching ghlApi.js's own
+// CALL_MESSAGE_TYPE), so that's checked first as a cheap filter -- but it's
+// not trusted as the *only* signal, in case some payload variant omits it:
+// anything not positively ruled out that way still falls through to
+// downloadRecording() actually failing (expected, not an error) as the
+// fallback detection.
 //
 // This only covers calls from here forward -- it has no way to catch up on
 // anything that happened while a location was HIPAA-locked before this
@@ -48,6 +51,10 @@ async function handleEvent(payload) {
   const { messageId, conversationId, contactId, locationId } = payload;
   if (!messageId || !contactId || !locationId) {
     return { outcome: "ignored", reason: "missing required fields in payload" };
+  }
+
+  if (payload.messageType && payload.messageType !== "CALL" && payload.messageTypeId !== 1) {
+    return { outcome: "ignored", reason: `not a call message (messageType=${payload.messageType})` };
   }
 
   const account = await db.getActiveGhlAccountByLocationId(locationId);
@@ -89,7 +96,16 @@ async function handleEvent(payload) {
 
   const name = (conversationInfo && (conversationInfo.fullName || conversationInfo.contactName)) || null;
   const phone = (conversationInfo && conversationInfo.phone) || null;
-  const direction = payload.type === "InboundMessage" ? "inbound" : "outbound";
+  // direction/disposition/handledById/ghlDurationSeconds all come straight
+  // off the webhook payload itself (confirmed live 2026-10-21: it carries
+  // userId, callStatus/status, callDuration, direction -- far more than the
+  // 4 fields this was originally built against). Falls back to inferring
+  // direction from the event type only for a payload variant that omits it.
+  const direction = payload.direction || (payload.type === "InboundMessage" ? "inbound" : "outbound");
+  const disposition = payload.callStatus || payload.status || null;
+  const handledById = payload.userId || null;
+  const handledByName = handledById ? await api.getUserName(handledById).catch(() => null) : null;
+  const ghlDurationSeconds = typeof payload.callDuration === "number" ? payload.callDuration : null;
   const occurredAt = payload.dateAdded ? new Date(payload.dateAdded) : new Date();
 
   const callRowId = existing ? existing.id : randomUUID();
@@ -100,19 +116,23 @@ async function handleEvent(payload) {
       ghlCallId: messageId,
       contactId,
       direction,
-      durationSeconds: null,
+      durationSeconds: ghlDurationSeconds,
       occurredAt,
       sourceRecordingUrl: null,
       rawPayload: payload,
-      handledById: null,
-      handledByName: null,
-      disposition: null,
+      handledById,
+      handledByName,
+      disposition,
       ghlAccountId: account.id,
     });
   }
 
   const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
-  const durationSeconds = await getRealDurationSeconds(recording.buffer, recording.contentType);
+  // Measured from the actual recording bytes, same reasoning as
+  // src/poller.js's processCallMessage -- GHL's own self-reported duration
+  // isn't always settled yet, so it's only the fallback, never preferred
+  // over what the audio itself says.
+  const durationSeconds = (await getRealDurationSeconds(recording.buffer, recording.contentType)) ?? ghlDurationSeconds;
   const taggedBuffer = embedMetadata(recording.buffer, extension, {
     occurredAt,
     direction,
