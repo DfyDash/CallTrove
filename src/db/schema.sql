@@ -248,6 +248,25 @@ INSERT INTO account_sync_state (ghl_account_id, last_synced_at)
   SELECT '00000000-0000-0000-0000-000000000001', last_synced_at FROM sync_state WHERE id = 1
   ON CONFLICT (ghl_account_id) DO NOTHING;
 
+-- poller_blocked_reason: set by src/poller.js when a cycle fails with GHL's
+-- own CONVERSATIONS_HIPAA_RESTRICTED canonicalCode specifically (never a
+-- generic/transient error, which says nothing reliable about *why* a cycle
+-- failed), cleared the next time a cycle for that account succeeds. Exists
+-- because last_synced_at alone is actively misleading for such an
+-- account: it freezes the moment GHL's HIPAA mode kicks in and stays
+-- frozen forever, even once src/webhookEventPoller.js starts successfully
+-- bringing in new calls through the webhook path -- a customer reading a
+-- stale timestamp with no explanation would reasonably conclude ingestion
+-- is broken, when it's actually working through the other path. See
+-- last_webhook_call_at below for that other path's own signal.
+ALTER TABLE account_sync_state ADD COLUMN IF NOT EXISTS poller_blocked_reason TEXT;
+-- Updated by src/webhookIngest.js on every call it successfully stores --
+-- deliberately separate from last_synced_at (the poller's own resume
+-- cursor) rather than reusing it, so the webhook path can never
+-- accidentally advance where the poller itself resumes scanning from.
+-- Purely informational, read only for display.
+ALTER TABLE account_sync_state ADD COLUMN IF NOT EXISTS last_webhook_call_at TIMESTAMPTZ;
+
 -- Account cancellation: owner-triggered, grace-period-then-purge. Only a
 -- tenant's designated owner (the one "paying" -- see owner_user_id) can
 -- cancel, matching the product decision that this isn't a generic admin

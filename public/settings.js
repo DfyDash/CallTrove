@@ -702,11 +702,25 @@ function renderGhlAccountRows() {
               ? `<button type="button" class="delete-btn" data-disconnect="${escapeHtml(a.id)}">Disconnect</button>
                  <button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`
               : `<button type="button" class="ghl-reconnect-btn" data-reconnect>Reconnect</button>`;
+          // last_synced_at is the standard poller's own checkpoint -- for an
+          // account GHL's own HIPAA mode is blocking (poller_blocked_reason
+          // set), that timestamp freezes forever the moment the block
+          // kicked in, even while calls keep arriving fine through the
+          // webhook path. Showing just the frozen timestamp with no
+          // explanation would read as "ingestion is broken" when it isn't --
+          // so a blocked account gets an explicit note plus the webhook
+          // path's own, separate "last call captured" signal instead of a
+          // bare, misleading date.
+          const syncCellHtml =
+            a.pollerBlockedReason === "CONVERSATIONS_HIPAA_RESTRICTED"
+              ? `<span class="ghl-status-pending">GHL's own HIPAA mode is blocking standard sync</span>
+                 <div class="settings-note">New calls are still captured automatically. Last one: ${escapeHtml(formatLastSynced(a.lastWebhookCallAt))}.</div>`
+              : escapeHtml(formatLastSynced(a.lastSyncedAt));
           return `<tr>
             <td data-label="Location name">${escapeHtml(a.name || a.ghlLocationId)}</td>
             <td data-label="GHL location ID">${escapeHtml(a.ghlLocationId)}</td>
             <td data-label="Status">${statusHtml}</td>
-            <td data-label="Last synced">${escapeHtml(formatLastSynced(a.lastSyncedAt))}</td>
+            <td data-label="Last synced">${syncCellHtml}</td>
             <td class="ghl-account-actions">${actionHtml}</td>
           </tr>`;
         })

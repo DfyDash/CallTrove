@@ -246,8 +246,21 @@ async function pollOnce() {
       if (!account) return;
       try {
         await pollOneAccount(account);
+        // Unconditional on every success, including one that found nothing
+        // new -- a no-op for an account that was never blocked, and the
+        // only way a real recovery (GHL lifting the restriction, a
+        // reconnect) actually clears a stale flag.
+        await db.setAccountPollerUnblocked(account.id).catch(() => {});
       } catch (err) {
         console.error(`[poller] account ${account.id} (${account.ghlLocationId}) poll cycle failed:`, err);
+        if (err.canonicalCode === "CONVERSATIONS_HIPAA_RESTRICTED") {
+          // Surfaced in Settings (src/webhookIngest.js's own
+          // last_webhook_call_at shows whether calls are still getting in
+          // through the other path) rather than left as a console line
+          // nobody but us would ever see -- see schema.sql's comment on
+          // account_sync_state.poller_blocked_reason.
+          await db.setAccountPollerBlocked(account.id, err.canonicalCode).catch(() => {});
+        }
       }
     }
   }

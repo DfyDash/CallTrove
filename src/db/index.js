@@ -1765,7 +1765,8 @@ async function listGhlAccountsWithStatusForTenant(tenantId) {
   const { rows } = await pool.query(
     `SELECT g.id, g.ghl_location_id AS "ghlLocationId", g.name,
             g.installed_at AS "installedAt", g.uninstalled_at AS "uninstalledAt",
-            s.last_synced_at AS "lastSyncedAt", g.ghl_app_url AS "ghlAppUrl"
+            s.last_synced_at AS "lastSyncedAt", g.ghl_app_url AS "ghlAppUrl",
+            s.poller_blocked_reason AS "pollerBlockedReason", s.last_webhook_call_at AS "lastWebhookCallAt"
      FROM ghl_accounts g
      LEFT JOIN account_sync_state s ON s.ghl_account_id = g.id
      WHERE g.tenant_id = $1
@@ -1920,6 +1921,35 @@ async function setAccountLastSyncedAt(ghlAccountId, date) {
   await pool.query(
     `INSERT INTO account_sync_state (ghl_account_id, last_synced_at) VALUES ($1, $2)
      ON CONFLICT (ghl_account_id) DO UPDATE SET last_synced_at = EXCLUDED.last_synced_at`,
+    [ghlAccountId, date]
+  );
+}
+
+// Set when src/poller.js's own cycle fails with GHL's specific
+// CONVERSATIONS_HIPAA_RESTRICTED canonicalCode -- never for a generic
+// error, which says nothing reliable about why a cycle failed. Cleared the
+// next time a cycle for this account succeeds (setAccountPollerUnblocked),
+// called unconditionally on every successful cycle so it's a no-op for an
+// account that was never blocked.
+async function setAccountPollerBlocked(ghlAccountId, reason) {
+  await pool.query(
+    `INSERT INTO account_sync_state (ghl_account_id, poller_blocked_reason) VALUES ($1, $2)
+     ON CONFLICT (ghl_account_id) DO UPDATE SET poller_blocked_reason = EXCLUDED.poller_blocked_reason`,
+    [ghlAccountId, reason]
+  );
+}
+
+async function setAccountPollerUnblocked(ghlAccountId) {
+  await pool.query(`UPDATE account_sync_state SET poller_blocked_reason = NULL WHERE ghl_account_id = $1`, [ghlAccountId]);
+}
+
+// Informational only -- see schema.sql's comment on why this is separate
+// from last_synced_at (the poller's own resume cursor). src/webhookIngest.js
+// calls this on every call it successfully stores.
+async function setAccountLastWebhookCallAt(ghlAccountId, date) {
+  await pool.query(
+    `INSERT INTO account_sync_state (ghl_account_id, last_webhook_call_at) VALUES ($1, $2)
+     ON CONFLICT (ghl_account_id) DO UPDATE SET last_webhook_call_at = EXCLUDED.last_webhook_call_at`,
     [ghlAccountId, date]
   );
 }
@@ -2722,6 +2752,9 @@ module.exports = {
   setLastSyncedAt,
   getAccountLastSyncedAt,
   setAccountLastSyncedAt,
+  setAccountPollerBlocked,
+  setAccountPollerUnblocked,
+  setAccountLastWebhookCallAt,
   getAutoTranscribeEnabled,
   setAutoTranscribeEnabled,
   getAiSummaryEnabled,

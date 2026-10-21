@@ -144,6 +144,10 @@ async function handleEvent(payload) {
   const key = `${contactId}/${callRowId}.${extension}`;
   await saveRecording(key, taggedBuffer, account.tenantId, account.storageTier);
   await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length, account.storageTier);
+  await db.setAccountLastWebhookCallAt(account.id, new Date()).catch((err) => {
+    // Informational only -- never block storing the actual call over this.
+    console.error(`[webhookIngest] failed to record last_webhook_call_at for account ${account.id}:`, err);
+  });
   console.log(`[webhookIngest] stored recording for call ${messageId} via webhook (account ${account.id})`);
 
   if (transcription.isEnabled() && (await db.getAutoTranscribeEnabled(account.id))) {
