@@ -154,7 +154,12 @@ async function waitForActivation(statusEl) {
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 2000));
     const sub = await (await fetch("/api/admin/subscription")).json().catch(() => null);
-    if (sub && (sub.status === "active" || sub.status === "trialing")) {
+    // past_due counts as live too, same as everywhere else that reads this
+    // status (showBilling above, settings.js's loadSubscription, src/auth.js's
+    // LIVE_SUBSCRIPTION) -- a card that needs extra verification can settle
+    // into past_due rather than active/trialing, and this tenant isn't
+    // actually blocked from logging in once that happens.
+    if (sub && (sub.status === "active" || sub.status === "trialing" || sub.status === "past_due")) {
       location.href = "/";
       return;
     }

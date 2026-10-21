@@ -14,6 +14,7 @@ const { sanitizeForFilename } = require("../filenames");
 const { hashPassword, requireAdmin, requireAccount, requireCsrf, displayName } = require("../auth");
 const { loginLimiter, limiterKey } = require("./auth");
 const billingRates = require("../billingRates");
+const paddle = require("../paddle");
 const { BAA_VERSION, buildBaaText } = require("../baaText");
 
 const router = express.Router();
@@ -90,19 +91,19 @@ function logForOperator(req, action, message) {
 // carries the tenant id so the webhook can match the subscription back.
 router.get("/subscription", safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
-  const checkout = require("../paddle").checkoutConfig(!!tenant.hipaaRequested);
+  const checkout = paddle.checkoutConfig(!!tenant.hipaaRequested);
   res.json({
     status: tenant.subscriptionStatus || null,
     hipaaRequested: !!tenant.hipaaRequested,
     // What the plan includes, by the tier the customer signed up for (the
     // operator still switches the tenant's actual storage tier by hand for HIPAA).
     storage: (() => {
-      const t = require("../billingRates").storageTier(tenant.hipaaRequested ? "hipaa" : "standard");
+      const t = billingRates.storageTier(tenant.hipaaRequested ? "hipaa" : "standard");
       return { freeGB: t.freeGB, overagePerGbMonth: t.overagePerGbMonth };
     })(),
     rates: {
-      transcriptionPerMinute: require("../billingRates").CLIENT_TRANSCRIPTION_PER_MINUTE,
-      aiSummaryPerCall: require("../billingRates").CLIENT_AI_SUMMARY_PER_CALL,
+      transcriptionPerMinute: billingRates.CLIENT_TRANSCRIPTION_PER_MINUTE,
+      aiSummaryPerCall: billingRates.CLIENT_AI_SUMMARY_PER_CALL,
     },
     periodEnd: tenant.subscriptionPeriodEnd || null,
     // req.session.user has no separate .email field -- username IS the
@@ -110,7 +111,7 @@ router.get("/subscription", safe(async (req, res) => {
     // and displayName comments) -- using .email here was always undefined,
     // silently dropping customer info (not just the name) from this
     // checkout entirely.
-    checkout: checkout ? { ...checkout, tenantRef: require("../paddle").signTenantRef(tenant.id), email: req.session.user.username || null, businessName: tenant.name } : null,
+    checkout: checkout ? { ...checkout, tenantRef: paddle.signTenantRef(tenant.id), email: req.session.user.username || null, businessName: tenant.name } : null,
   });
 }));
 
@@ -281,7 +282,7 @@ router.post("/tenant/upgrade-hipaa", requireCsrf, safe(async (req, res) => {
   let billingUpdated = false;
   if (tenant.paddleSubscriptionId) {
     try {
-      billingUpdated = await require("../paddle").switchSubscriptionToHipaaPrice(tenant.paddleSubscriptionId);
+      billingUpdated = await paddle.switchSubscriptionToHipaaPrice(tenant.paddleSubscriptionId);
     } catch (err) {
       console.error(`[hipaa-upgrade] tenant ${tenant.id} signed and tier flipped, but updating the Paddle subscription price failed -- needs a manual look:`, err.message);
       await db
