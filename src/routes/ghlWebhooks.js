@@ -18,6 +18,7 @@
 // parsed by Express.
 const express = require("express");
 const crypto = require("crypto");
+const webhookIngest = require("../webhookIngest");
 
 const router = express.Router();
 
@@ -71,7 +72,14 @@ router.post("/ghl", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
     `[ghlWebhook] received type=${payload.type} messageId=${payload.messageId} conversationId=${payload.conversationId} contactId=${payload.contactId} locationId=${payload.locationId}`
   );
 
+  // Ack immediately -- GHL shouldn't be left waiting on the
+  // download/store/transcribe work (and may retry-storm if it is).
+  // Ingestion failures are logged inside handleEvent itself; nothing here
+  // can surface them back to GHL after the response is already sent.
   res.status(200).end();
+  webhookIngest.handleEvent(payload).catch((err) => {
+    console.error(`[ghlWebhook] unhandled error ingesting messageId=${payload.messageId}:`, err);
+  });
 });
 
 module.exports = router;

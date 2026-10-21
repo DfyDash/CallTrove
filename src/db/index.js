@@ -1693,6 +1693,23 @@ async function getGhlAccountByLocationId(ghlLocationId) {
   return rows[0] || null;
 }
 
+// Same credential/storageTier shape as listAllActiveGhlAccounts, but
+// looked up by GHL's own location ID rather than our row id -- for
+// src/webhookIngest.js, which only ever has the locationId a GHL webhook
+// payload carries, not our internal ghl_accounts.id.
+async function getActiveGhlAccountByLocationId(ghlLocationId) {
+  const { rows } = await pool.query(
+    `SELECT ga.id, ga.tenant_id AS "tenantId", ga.ghl_location_id AS "ghlLocationId", ga.name,
+            ga.access_token AS "accessToken", ga.refresh_token AS "refreshToken", ga.token_expires_at AS "tokenExpiresAt",
+            t.storage_tier AS "storageTier"
+     FROM ghl_accounts ga
+     JOIN tenants t ON t.id = ga.tenant_id
+     WHERE ga.ghl_location_id = $1 AND ga.uninstalled_at IS NULL`,
+    [ghlLocationId]
+  );
+  return rows[0] || null;
+}
+
 async function updateGhlAccountTokens(id, { accessToken, refreshToken, tokenExpiresAt }) {
   await pool.query(
     `UPDATE ghl_accounts SET access_token = $2, refresh_token = $3, token_expires_at = $4, uninstalled_at = NULL WHERE id = $1`,
@@ -2574,6 +2591,7 @@ module.exports = {
   listTenantsForOperator,
   createGhlAccount,
   getGhlAccountByLocationId,
+  getActiveGhlAccountByLocationId,
   updateGhlAccountTokens,
   updateGhlAccountName,
   disconnectGhlAccount,
