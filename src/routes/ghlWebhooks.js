@@ -1,24 +1,26 @@
-// Prototype receiver for GoHighLevel's app-level webhook events (e.g.
-// InboundMessage), not yet wired into ingestion. Exists to answer one
-// specific question: does GHL still deliver these push events for a
-// sub-account that has its own HIPAA mode turned on, given that
-// conversations/{id}/messages -- the REST endpoint src/poller.js uses to
-// *discover* new calls -- now returns 401 CONVERSATIONS_HIPAA_RESTRICTED
-// for such accounts (confirmed live against the DFY Troubleshoot test
-// account on 2026-10-21). Downloading a recording by messageId still
-// works even on that same locked account, so if a webhook can hand over
-// a real messageId without going through the blocked listing endpoint,
-// ingestion can route around the restriction entirely.
+// Receiver for GoHighLevel's app-level webhook events (InboundMessage/
+// OutboundMessage). This is how CallTrove discovers new calls on a
+// sub-account that has GHL's own HIPAA mode turned on, since
+// conversations/{id}/messages -- the REST endpoint src/poller.js and
+// src/backfill.js use otherwise -- returns 401
+// CONVERSATIONS_HIPAA_RESTRICTED for such accounts (confirmed live against
+// the DFY Troubleshoot test account on 2026-10-21), with no way to recover
+// a call ever missed this way.
 //
-// This only logs what arrives -- it does not write to the database or
-// download anything -- until delivery is actually confirmed to happen
-// for a HIPAA-locked account. Mounted ahead of requireAuth/express.json
-// in server.js, same as /auth, since GHL calls this unauthenticated and
-// signature verification needs the raw body bytes, not JSON already
-// parsed by Express.
+// A verified payload is written straight to the durable ghl_webhook_events
+// queue (src/db/index.js) before the 200 response is even sent -- GHL
+// doesn't retry a failed delivery (confirmed: only HTTP 429 gets retried;
+// anything else is permanently dropped on GHL's side with no notice to
+// us), so the actual download/store/transcribe work must not depend on
+// this request, or this process, surviving. src/webhookEventPoller.js does
+// that work from the queue, with its own retries.
+//
+// Mounted ahead of requireAuth/express.json in server.js, same as /auth,
+// since GHL calls this unauthenticated and signature verification needs
+// the raw body bytes, not JSON already parsed by Express.
 const express = require("express");
 const crypto = require("crypto");
-const webhookIngest = require("../webhookIngest");
+const db = require("../db");
 
 const router = express.Router();
 
@@ -48,12 +50,11 @@ function verifySignature(rawBody, signatureHeader) {
 // GHL actually sends -- signature verification needs the exact bytes as
 // sent, and a mismatch there is a likely source of false "invalid
 // signature" results while this key is still unconfirmed.
-router.post("/ghl", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
+router.post("/ghl", express.raw({ type: "*/*", limit: "2mb" }), async (req, res) => {
   const signature = req.get("X-GHL-Signature") || req.get("x-wh-signature");
   const verified = verifySignature(req.body, signature);
   if (!verified) {
-    // Still worth knowing a delivery arrived at all (that's the whole
-    // question this prototype exists to answer) without treating its
+    // Still worth knowing a delivery arrived at all without treating its
     // contents as trusted -- log only size/presence, not the parsed
     // payload, and reject rather than process it.
     console.warn(`[ghlWebhook] rejected: signature did not verify (${req.body.length} bytes, signature present=${Boolean(signature)})`);
@@ -72,14 +73,20 @@ router.post("/ghl", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
     `[ghlWebhook] received type=${payload.type} messageId=${payload.messageId} conversationId=${payload.conversationId} contactId=${payload.contactId} locationId=${payload.locationId}`
   );
 
-  // Ack immediately -- GHL shouldn't be left waiting on the
-  // download/store/transcribe work (and may retry-storm if it is).
-  // Ingestion failures are logged inside handleEvent itself; nothing here
-  // can surface them back to GHL after the response is already sent.
+  // Persist before acking, not after -- GHL won't redeliver a failed
+  // request, so the one thing that must never happen is telling GHL "got
+  // it" (200) and then losing the payload to a crash or a slow downstream
+  // step before it's actually durable. If this INSERT itself fails, GHL
+  // gets a 500 and (per their docs) just drops it -- the one failure mode
+  // this can't close, since there's nowhere left to write it to.
+  try {
+    await db.insertWebhookEvent(crypto.randomUUID(), payload);
+  } catch (err) {
+    console.error(`[ghlWebhook] failed to persist event (messageId=${payload.messageId}), GHL will not retry this:`, err);
+    return res.status(500).end();
+  }
+
   res.status(200).end();
-  webhookIngest.handleEvent(payload).catch((err) => {
-    console.error(`[ghlWebhook] unhandled error ingesting messageId=${payload.messageId}:`, err);
-  });
 });
 
 module.exports = router;

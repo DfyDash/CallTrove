@@ -18,6 +18,19 @@
 // anything that happened while a location was HIPAA-locked before this
 // existed, or while this webhook wasn't yet registered. That's still a real
 // gap; this just stops it from growing for new calls on such accounts.
+//
+// Called from src/webhookEventPoller.js, never directly from the route --
+// GHL doesn't retry a failed webhook delivery (confirmed: only HTTP 429
+// gets retried; anything else is permanently dropped on GHL's side with no
+// notice to us), and there's no backfill to fall back on for this account,
+// so a transient failure here (network blip, a DB hiccup, a mid-request
+// restart) must be retryable from a durable record, not just logged and
+// dropped. That's why this throws on anything retryable instead of
+// swallowing it -- the poller decides how many times to try again and
+// when to give up, this function just does one attempt and reports how it
+// went. It's written so a retry picks up exactly where the last attempt
+// left off: a call row already existing but not yet 'stored' means "redo
+// the download/store step," not "already handled, skip."
 const { randomUUID } = require("crypto");
 const db = require("./db");
 const accountCredentials = require("./accountCredentials");
@@ -26,31 +39,44 @@ const { embedMetadata } = require("./audioMetadata");
 const { getRealDurationSeconds } = require("./audioDuration");
 const transcription = require("./transcription");
 
+// Outcomes: "stored" (a call was saved, or already had been), "ignored"
+// (not a call-relevant event, or a channel/account issue that retrying
+// won't fix). Anything else is a thrown error, meaning "worth retrying."
 async function handleEvent(payload) {
-  if (payload.type !== "InboundMessage" && payload.type !== "OutboundMessage") return;
+  if (payload.type !== "InboundMessage" && payload.type !== "OutboundMessage") return { outcome: "ignored", reason: "not a call-relevant event type" };
 
   const { messageId, conversationId, contactId, locationId } = payload;
   if (!messageId || !contactId || !locationId) {
-    console.warn(`[webhookIngest] missing required fields in payload (type=${payload.type}), skipping`);
-    return;
+    return { outcome: "ignored", reason: "missing required fields in payload" };
   }
 
   const account = await db.getActiveGhlAccountByLocationId(locationId);
   if (!account) {
-    console.warn(`[webhookIngest] no active account for location ${locationId}, ignoring`);
-    return;
+    return { outcome: "ignored", reason: `no active account for location ${locationId}` };
   }
 
   const api = await accountCredentials.clientForAccount(account);
-  if (!api.isConfigured()) return;
+  if (!api.isConfigured()) return { outcome: "ignored", reason: "account not configured" };
+
+  const existing = await db.getCallByGhlId(messageId);
+  if (existing && existing.recordingStatus === "stored") {
+    return { outcome: "stored", reason: "already stored from a prior attempt" };
+  }
 
   let recording;
   try {
     recording = await api.downloadRecording(messageId);
   } catch (err) {
-    // The expected outcome for every non-call message this webhook also
-    // fires for (SMS, email, chat) -- not logged as an error.
-    return;
+    if (!existing) {
+      // First time seeing this messageId, and it has no recording -- the
+      // expected outcome for every non-call message this webhook also
+      // fires for (SMS, email, chat), not an error. If a call row already
+      // exists for it, though, we know it's a real call that previously
+      // downloaded fine (that's how the row got created) -- treat this as
+      // retryable, since the recording presumably isn't gone for good.
+      return { outcome: "ignored", reason: "no recording (likely a non-call message)" };
+    }
+    throw err;
   }
 
   let conversationInfo = null;
@@ -66,53 +92,55 @@ async function handleEvent(payload) {
   const direction = payload.type === "InboundMessage" ? "inbound" : "outbound";
   const occurredAt = payload.dateAdded ? new Date(payload.dateAdded) : new Date();
 
-  await db.upsertContact({ contactId, name, phone, ghlAccountId: account.id });
-
-  const callRowId = randomUUID();
-  const inserted = await db.insertCall({
-    id: callRowId,
-    ghlCallId: messageId,
-    contactId,
-    direction,
-    durationSeconds: null,
-    occurredAt,
-    sourceRecordingUrl: null,
-    rawPayload: payload,
-    handledById: null,
-    handledByName: null,
-    disposition: null,
-    ghlAccountId: account.id,
-  });
-  if (!inserted) return; // already ingested (duplicate webhook delivery, or the poller got there first)
-
-  try {
-    const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
-    const durationSeconds = await getRealDurationSeconds(recording.buffer, recording.contentType);
-    const taggedBuffer = embedMetadata(recording.buffer, extension, {
-      occurredAt,
+  const callRowId = existing ? existing.id : randomUUID();
+  if (!existing) {
+    await db.upsertContact({ contactId, name, phone, ghlAccountId: account.id });
+    await db.insertCall({
+      id: callRowId,
+      ghlCallId: messageId,
+      contactId,
       direction,
-      durationSeconds,
-      contactName: name,
-      phone,
-      timezone: await api.getAccountTimezone(),
+      durationSeconds: null,
+      occurredAt,
+      sourceRecordingUrl: null,
+      rawPayload: payload,
+      handledById: null,
+      handledByName: null,
+      disposition: null,
+      ghlAccountId: account.id,
     });
-    const key = `${contactId}/${callRowId}.${extension}`;
-    await saveRecording(key, taggedBuffer, account.tenantId, account.storageTier);
-    await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length, account.storageTier);
-    console.log(`[webhookIngest] stored recording for call ${messageId} via webhook (account ${account.id})`);
-
-    if (transcription.isEnabled() && (await db.getAutoTranscribeEnabled(account.id))) {
-      try {
-        await transcription.startJob(callRowId, taggedBuffer, extension, account.storageTier);
-        await db.markTranscriptionPending(callRowId);
-      } catch (err) {
-        console.error(`[webhookIngest] failed to start auto-transcription for call ${messageId}:`, err);
-      }
-    }
-  } catch (err) {
-    console.error(`[webhookIngest] failed to store recording for call ${messageId}:`, err);
-    await db.markCallFailed(callRowId);
   }
+
+  const extension = recording.contentType.includes("wav") ? "wav" : "mp3";
+  const durationSeconds = await getRealDurationSeconds(recording.buffer, recording.contentType);
+  const taggedBuffer = embedMetadata(recording.buffer, extension, {
+    occurredAt,
+    direction,
+    durationSeconds,
+    contactName: name,
+    phone,
+    timezone: await api.getAccountTimezone(),
+  });
+  const key = `${contactId}/${callRowId}.${extension}`;
+  await saveRecording(key, taggedBuffer, account.tenantId, account.storageTier);
+  await db.markCallStored(callRowId, key, durationSeconds, taggedBuffer.length, account.storageTier);
+  console.log(`[webhookIngest] stored recording for call ${messageId} via webhook (account ${account.id})`);
+
+  if (transcription.isEnabled() && (await db.getAutoTranscribeEnabled(account.id))) {
+    try {
+      await transcription.startJob(callRowId, taggedBuffer, extension, account.storageTier);
+      await db.markTranscriptionPending(callRowId);
+    } catch (err) {
+      // Not retried at this level -- the call itself is safely stored
+      // either way, and src/transcriptionPoller.js's own retry/alerting
+      // covers transcription specifically. Failing the whole webhook event
+      // over a transcription-kickoff error would re-run the (already
+      // successful) download/store step for nothing.
+      console.error(`[webhookIngest] failed to start auto-transcription for call ${messageId}:`, err);
+    }
+  }
+
+  return { outcome: "stored" };
 }
 
 module.exports = { handleEvent };

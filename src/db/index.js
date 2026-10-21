@@ -117,8 +117,12 @@ async function listRetryableFailedCalls(maxAgeMs, ghlAccountId) {
 // Cheap existence check for src/backfill.js -- lets it skip already-captured
 // calls (from a prior run, or ones the live poller already picked up) without
 // going through insertCall's conflict-and-discard path just to find out.
+// recordingStatus is included for src/webhookIngest.js, which needs to tell
+// "already fully stored, nothing to do" apart from "row exists but a prior
+// attempt didn't finish storing it, retry that" -- backfill.js only checks
+// truthiness, so this stays a safe, additive change for it.
 async function getCallByGhlId(ghlCallId) {
-  const { rows } = await pool.query(`SELECT id FROM calls WHERE ghl_call_id = $1`, [ghlCallId]);
+  const { rows } = await pool.query(`SELECT id, recording_status AS "recordingStatus" FROM calls WHERE ghl_call_id = $1`, [ghlCallId]);
   return rows[0] || null;
 }
 
@@ -1920,6 +1924,41 @@ async function setAccountLastSyncedAt(ghlAccountId, date) {
   );
 }
 
+// --- ghl_webhook_events (durable queue for src/routes/ghlWebhooks.js /
+// src/webhookEventPoller.js -- see schema.sql's comment on the table) ---
+
+async function insertWebhookEvent(id, payload) {
+  await pool.query(`INSERT INTO ghl_webhook_events (id, payload) VALUES ($1, $2)`, [id, payload]);
+}
+
+// attempts < MAX_ATTEMPTS is left to the caller (webhookEventPoller.js) to
+// check before retrying a 'failed' row, rather than filtered in SQL here --
+// the max attempt count is that module's own retry policy, not a DB concern.
+async function listRetryableWebhookEvents(limit = 20) {
+  const { rows } = await pool.query(
+    `SELECT id, payload, attempts FROM ghl_webhook_events
+     WHERE status IN ('pending', 'failed')
+     ORDER BY received_at ASC
+     LIMIT $1`,
+    [limit]
+  );
+  return rows;
+}
+
+async function markWebhookEventCompleted(id) {
+  await pool.query(
+    `UPDATE ghl_webhook_events SET status = 'completed', attempts = attempts + 1, processed_at = now(), last_error = NULL WHERE id = $1`,
+    [id]
+  );
+}
+
+async function markWebhookEventFailed(id, errorMessage) {
+  await pool.query(
+    `UPDATE ghl_webhook_events SET status = 'failed', attempts = attempts + 1, last_error = $2 WHERE id = $1`,
+    [id, errorMessage || null]
+  );
+}
+
 // --- app_settings (live, admin-toggleable -- see src/poller.js) ---
 
 // Per-account, not global (see schema.sql's migration comment for why this
@@ -2592,6 +2631,10 @@ module.exports = {
   createGhlAccount,
   getGhlAccountByLocationId,
   getActiveGhlAccountByLocationId,
+  insertWebhookEvent,
+  listRetryableWebhookEvents,
+  markWebhookEventCompleted,
+  markWebhookEventFailed,
   updateGhlAccountTokens,
   updateGhlAccountName,
   disconnectGhlAccount,

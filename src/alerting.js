@@ -62,6 +62,8 @@ const IMPACT_BY_SUBSYSTEM = {
     "An unexpected error occurred somewhere in the app outside the normal background jobs -- the specific impact depends on what triggered it. Worth logging into the app directly to confirm nothing else looks broken.",
   "storage cost ledger":
     "This month's storage cost isn't being recorded for the Operator Analytics tab. Nothing client-facing is affected -- recordings, transcripts, and summaries are all unaffected -- this only delays how soon storage cost shows up in your own cost tracking. It will catch up automatically once this recovers.",
+  "GHL webhook ingestion":
+    "This is the whole poll cycle failing repeatedly (e.g. the database being unreachable), not one call -- a single call that's genuinely been lost gets its own immediate alert separately (see webhookEventPoller.js), not this one. This subsystem is the only way new calls get discovered on a GHL-HIPAA-locked sub-account, which has no backfill to recover a missed call afterward -- worth checking on urgently, not just whenever convenient.",
 };
 const DEFAULT_IMPACT = "No specific impact note has been written for this subsystem yet -- worth checking the app directly to see what's actually affected.";
 

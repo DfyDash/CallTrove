@@ -931,3 +931,30 @@ CREATE TABLE IF NOT EXISTS paddle_events (
   event_type   TEXT NOT NULL,
   received_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Durable queue for GHL's InboundMessage/OutboundMessage webhook
+-- (src/routes/ghlWebhooks.js, src/webhookIngest.js, src/webhookEventPoller.js) --
+-- the only way to discover a new call on a GHL-HIPAA-locked account, since
+-- conversations/{id}/messages (what the live poller and backfill.js use
+-- otherwise) is blocked outright there, and there's no way to recover a
+-- call ever missed this way. GHL itself doesn't retry a failed delivery
+-- (confirmed: only HTTP 429 gets retried; anything else is permanently
+-- dropped on GHL's side with no notice to us) -- so the verified payload
+-- is written here the instant it arrives, before the 200 response is even
+-- sent, and a separate poller does the actual download/store/transcribe
+-- work from this durable row with its own retries. That way a transient
+-- failure, a mid-request restart, or a process crash during processing
+-- costs a delay, not the call -- the one thing that can still lose a call
+-- is GHL's own HTTP request to us failing outright (refused connection,
+-- timeout) before it's ever written here at all, which is irreducible
+-- from our side.
+CREATE TABLE IF NOT EXISTS ghl_webhook_events (
+  id            UUID PRIMARY KEY,
+  received_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  payload       JSONB NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
+  attempts      INT NOT NULL DEFAULT 0,
+  last_error    TEXT,
+  processed_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS ghl_webhook_events_status_idx ON ghl_webhook_events (status, received_at);
