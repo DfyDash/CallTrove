@@ -74,6 +74,24 @@ function rateLimited(account) {
   console.warn(`[mergeWatch] GHL rate-limited account ${account.id}; pausing its merge checks for ${RATE_LIMIT_BACKOFF_MS / 60000}min so call ingestion keeps the allowance`);
 }
 
+// None of these three maps ever had anything removing old entries -- a
+// contact that resolved itself, an account whose backoff expired, or an
+// account that got disconnected all left their entry sitting in memory
+// forever. Run once per cycle (not per account) so it stays O(map size),
+// not O(map size * accounts).
+function pruneStaleState(activeAccountIds) {
+  const now = Date.now();
+  for (const [contactId, until] of unresolvedUntil) {
+    if (until <= now) unresolvedUntil.delete(contactId);
+  }
+  for (const [accountId, until] of backoffUntil) {
+    if (until <= now) backoffUntil.delete(accountId);
+  }
+  for (const accountId of nextGroupIndex.keys()) {
+    if (!activeAccountIds.has(accountId)) nextGroupIndex.delete(accountId);
+  }
+}
+
 async function checkAccount(account, maxGroups) {
   const totals = { groupsChecked: 0, contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, errors: 0 };
   if ((backoffUntil.get(account.id) || 0) > Date.now()) return totals;
@@ -98,14 +116,20 @@ async function checkAccount(account, maxGroups) {
       if (contactIds.some((id) => (unresolvedUntil.get(id) || 0) > Date.now())) continue;
       totals.groupsChecked++;
 
-      // The cheap check: has any member disappeared from GHL?
+      // The cheap check: has any member disappeared from GHL? Kept, not
+      // discarded, once fetched -- reconcileContacts below needs the exact
+      // same per-contact conversation list to do its own work, and asking
+      // GHL for it twice in a row for the same contacts would just be
+      // wasted API allowance.
       let anyGone = false;
       let brokeForRateLimit = false;
+      const foundByContactId = new Map();
       for (const contactId of contactIds) {
         totals.contactsChecked++;
         try {
-          const { contactGone } = await api.searchConversationsForContact(contactId);
-          if (contactGone) anyGone = true;
+          const found = await api.searchConversationsForContact(contactId);
+          foundByContactId.set(contactId, found);
+          if (found.contactGone) anyGone = true;
         } catch (err) {
           console.warn(`[mergeWatch] could not check contact ${contactId}:`, err.message);
           totals.errors++;
@@ -122,7 +146,7 @@ async function checkAccount(account, maxGroups) {
       }
       if (!anyGone) continue;
 
-      const result = await reconcileContacts({ api, ghlAccountId: account.id, contactIds });
+      const result = await reconcileContacts({ api, ghlAccountId: account.id, contactIds, prefetched: foundByContactId });
       totals.callsMoved += result.callsMoved;
       totals.contactsRemoved += result.contactsRemoved;
       totals.errors += result.errors;
@@ -149,6 +173,7 @@ async function checkAccount(account, maxGroups) {
 
 async function runOnce({ maxGroups = MAX_GROUPS_PER_ACCOUNT } = {}) {
   const accounts = await db.listAllActiveGhlAccounts();
+  pruneStaleState(new Set(accounts.map((a) => a.id)));
   let contactsChecked = 0;
   let errors = 0;
   for (const account of accounts) {

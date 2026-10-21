@@ -58,6 +58,13 @@ async function runOnce(now = new Date(), client = paddleModule.paddle()) {
   ];
   for (const pass of passes) {
     for (const t of await db.listTenantsWithUnbilledUsage(pass.cutoff)) {
+      // listTenantsWithUnbilledUsage already computed this tenant's total --
+      // skip starting claimUsageForInvoice's BEGIN/UPDATE/ROLLBACK transaction
+      // at all for one that plainly can't clear this pass's minimum yet
+      // (every tenant with ANY unbilled usage was opening and immediately
+      // rolling back that transaction, every single hour, until their usage
+      // actually reached the threshold).
+      if (Math.round(t.total * 100) < pass.minCents) continue;
       const charged = await chargeTenant(client, t, pass);
       if (charged) results.push(charged);
     }

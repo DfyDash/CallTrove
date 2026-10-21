@@ -40,20 +40,31 @@ function withTimeout(promise, ms, what) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs = LIST_TIMEOUT_MS, spacingMs = CALL_SPACING_MS }) {
+// prefetched: an optional contactId -> searchConversationsForContact() result
+// Map for a caller (src/mergeWatchJob.js) that already made this exact call
+// for these exact contacts moments earlier, during its own cheap
+// does-it-still-exist check -- skips the redundant second round-trip to GHL
+// for any contact covered by it, falling back to a live call for the rest.
+async function reconcileContacts({ api, ghlAccountId, contactIds, listTimeoutMs = LIST_TIMEOUT_MS, spacingMs = CALL_SPACING_MS, prefetched }) {
   const result = { contactsChecked: 0, callsMoved: 0, contactsRemoved: 0, contactsGone: 0, errors: 0, rateLimited: false };
   for (const contactId of new Set(contactIds)) {
     result.contactsChecked++;
     let conversations;
-    try {
-      const found = await api.searchConversationsForContact(contactId);
+    if (prefetched && prefetched.has(contactId)) {
+      const found = prefetched.get(contactId);
       conversations = found.conversations;
       if (found.contactGone) result.contactsGone++;
-    } catch (err) {
-      console.warn(`[reconcile] could not list conversations for contact ${contactId}:`, err.message);
-      result.errors++;
-      if (statusOf(err) === 429) { result.rateLimited = true; return result; } // GHL says slow down -- stop, don't keep asking
-      continue;
+    } else {
+      try {
+        const found = await api.searchConversationsForContact(contactId);
+        conversations = found.conversations;
+        if (found.contactGone) result.contactsGone++;
+      } catch (err) {
+        console.warn(`[reconcile] could not list conversations for contact ${contactId}:`, err.message);
+        result.errors++;
+        if (statusOf(err) === 429) { result.rateLimited = true; return result; } // GHL says slow down -- stop, don't keep asking
+        continue;
+      }
     }
     for (const conversation of conversations) {
       // GHL's answer, not the one we searched by: it's the contact that

@@ -88,7 +88,7 @@ function logForOperator(req, action, message) {
 // Subscription state (written only by Paddle's signed webhooks) plus the
 // public values the browser needs to open Paddle's checkout. customData
 // carries the tenant id so the webhook can match the subscription back.
-router.get("/subscription", async (req, res) => {
+router.get("/subscription", safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   const checkout = require("../paddle").checkoutConfig(!!tenant.hipaaRequested);
   res.json({
@@ -112,9 +112,9 @@ router.get("/subscription", async (req, res) => {
     // checkout entirely.
     checkout: checkout ? { ...checkout, tenantRef: require("../paddle").signTenantRef(tenant.id), email: req.session.user.username || null, businessName: tenant.name } : null,
   });
-});
+}));
 
-router.post("/tenant/cancel", requireCsrf, async (req, res) => {
+router.post("/tenant/cancel", requireCsrf, safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
   if (tenant.ownerUserId !== req.session.user.id) {
@@ -132,12 +132,12 @@ router.post("/tenant/cancel", requireCsrf, async (req, res) => {
   await log(req, "tenant_cancellation_requested", `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}`);
   await logForOperator(req, "tenant_cancelled_self_service", `Self-service cancellation by account owner for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}`);
   res.json({ status: "cancellation_pending", purgeAt });
-});
+}));
 
 // Reachable even while cancellation_pending (see REACHABLE_WHILE_CANCELED
 // in src/auth.js) -- this is the one action a locked-out owner still
 // needs to be able to take.
-router.post("/tenant/restore", requireCsrf, async (req, res) => {
+router.post("/tenant/restore", requireCsrf, safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
   if (tenant.ownerUserId !== req.session.user.id) {
@@ -151,7 +151,7 @@ router.post("/tenant/restore", requireCsrf, async (req, res) => {
   await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
   await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });
-});
+}));
 
 // --- BAA acceptance (self-serve, owner-only -- see schema.sql's comment
 // on baa_acceptances for why this is gated to the owner, same bar as
@@ -163,7 +163,7 @@ router.post("/tenant/restore", requireCsrf, async (req, res) => {
 // is returned alongside the text so the client echoes it back unmodified
 // on accept, letting the server confirm the text that was actually shown
 // is the exact text being agreed to (see POST /baa/accept).
-router.get("/baa", async (req, res) => {
+router.get("/baa", safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
 
@@ -178,9 +178,9 @@ router.get("/baa", async (req, res) => {
     canAccept: tenant.ownerUserId === req.session.user.id,
     acceptance,
   });
-});
+}));
 
-router.post("/baa/accept", requireCsrf, async (req, res) => {
+router.post("/baa/accept", requireCsrf, safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
   if (tenant.ownerUserId !== req.session.user.id) {
@@ -219,7 +219,7 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
   });
   await log(req, "baa_accepted", `BAA accepted for "${tenant.name}" by ${fullName}${title ? ` (${title})` : ""}`);
   res.json({ status: "accepted", acceptance });
-});
+}));
 
 // Self-serve upgrade from standard to the HIPAA tier (public/settings.js's
 // "My account" toggle) -- the only place hipaa_requested can flip to true
@@ -229,7 +229,7 @@ router.post("/baa/accept", requireCsrf, async (req, res) => {
 // deliberate, manual action, not a self-serve toggle. Owner-gated for the
 // same reason /baa/accept above is: this is a company-binding legal
 // acceptance, and here it also commits the account to the HIPAA price.
-router.post("/tenant/upgrade-hipaa", requireCsrf, async (req, res) => {
+router.post("/tenant/upgrade-hipaa", requireCsrf, safe(async (req, res) => {
   const tenant = await db.getTenantById(req.session.user.tenantId);
   if (!tenant) return res.status(404).json({ error: "tenant not found" });
   if (tenant.ownerUserId !== req.session.user.id) {
@@ -302,7 +302,7 @@ router.post("/tenant/upgrade-hipaa", requireCsrf, async (req, res) => {
     `"${tenant.name}" upgraded to the HIPAA tier (BAA signed by ${fullName}${title ? ` (${title})` : ""})${billingUpdated ? "; Paddle subscription price updated" : ""}`
   );
   res.json({ status: "upgraded", acceptance, hipaaRequested: true, storageTier: "hipaa", billingUpdated });
-});
+}));
 
 // Auto-links any user whose login username matches a GHL user's email
 // (case-insensitively), so the common case -- login username is the
@@ -332,7 +332,7 @@ async function autoLinkGhlUsers(users, api) {
   return users;
 }
 
-router.get("/users", async (req, res) => {
+router.get("/users", safe(async (req, res) => {
   const api = await ghlApiForTenant(req.session.user.tenantId);
   const users = await autoLinkGhlUsers(await db.listUsers(req.session.user.tenantId), api);
 
@@ -351,14 +351,14 @@ router.get("/users", async (req, res) => {
     accountIds: u.role === "admin" ? null : accountIdsByUser[u.id] || [],
   }));
   res.json(usersWithAccess);
-});
+}));
 
 // Reconciles one user's connected-account grants to exactly the given
 // list (rather than one grant/revoke call per checkbox) -- simpler for
 // the UI, which just posts whatever's checked. allowedIds filters out
 // anything not actually owned by the admin's own tenant, so this can
 // never be used to grant access into a different tenant's account.
-router.put("/users/:id/account-access", requireCsrf, async (req, res) => {
+router.put("/users/:id/account-access", requireCsrf, safe(async (req, res) => {
   const { accountIds } = req.body || {};
   if (!Array.isArray(accountIds)) {
     return res.status(400).json({ error: "accountIds must be an array" });
@@ -383,11 +383,11 @@ router.put("/users/:id/account-access", requireCsrf, async (req, res) => {
 
   await log(req, "user_account_access_updated", `Updated connected-account access for "${target.username}"`);
   res.json({ status: "updated" });
-});
+}));
 
 // The real GHL user list, for populating a picker in the admin UI instead
 // of requiring someone to hand-type a phoneCall.user.id value.
-router.get("/ghl-users", async (req, res) => {
+router.get("/ghl-users", safe(async (req, res) => {
   const api = await ghlApiForTenant(req.session.user.tenantId);
   if (!api.isConfigured()) return res.json([]);
   try {
@@ -397,7 +397,7 @@ router.get("/ghl-users", async (req, res) => {
     console.error("[admin] failed to fetch GHL users:", err);
     res.status(502).json({ error: "could not fetch GHL user list" });
   }
-});
+}));
 
 // 7 days -- long enough that someone invited on a Friday isn't locked out
 // by Monday, short enough that a stale, unclicked invite link doesn't sit
@@ -410,7 +410,7 @@ const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // below never grants it without an admin confirming per person first --
 // being a GHL admin is a different judgment call than "should see every
 // recording in this account."
-router.get("/ghl-users/invitable", async (req, res) => {
+router.get("/ghl-users/invitable", safe(async (req, res) => {
   const api = await ghlApiForTenant(req.session.user.tenantId);
   if (!api.isConfigured()) return res.json([]);
   let ghlUsers;
@@ -431,7 +431,7 @@ router.get("/ghl-users/invitable", async (req, res) => {
       suggestedRole: u.role === "admin" ? "admin" : "user",
     }));
   res.json(invitable);
-});
+}));
 
 // Creates the login immediately (so the ghlUserId link and account-access
 // grant exist right away) but with no usable password -- an emailed,
@@ -442,7 +442,7 @@ router.get("/ghl-users/invitable", async (req, res) => {
 // GHL email rather than left editable, matching the existing auto-link
 // convention (routes/admin.js's autoLinkGhlUsers) that a login's username
 // being the same address as their GHL account is how the two get matched.
-router.post("/users/invite", requireCsrf, async (req, res) => {
+router.post("/users/invite", requireCsrf, safe(async (req, res) => {
   const { ghlUserId, ghlUserName, email: inviteEmail, role } = req.body || {};
   if (!ghlUserId || !inviteEmail || !["admin", "user"].includes(role)) {
     return res.status(400).json({ error: "ghlUserId, email, and a valid role are required" });
@@ -494,9 +494,9 @@ router.post("/users/invite", requireCsrf, async (req, res) => {
     console.error("[admin] failed to send invite email:", err);
   }
   res.status(201).json({ status: "invited", emailSent, inviteUrl });
-});
+}));
 
-router.post("/users", requireCsrf, async (req, res) => {
+router.post("/users", requireCsrf, safe(async (req, res) => {
   const { username, password, role, ghlUserId, ghlUserName } = req.body || {};
   if (!username || !password || !["admin", "user"].includes(role)) {
     return res.status(400).json({ error: "username, password, and a valid role are required" });
@@ -517,9 +517,9 @@ router.post("/users", requireCsrf, async (req, res) => {
   });
   await log(req, "user_created", `Created user "${username}" (role: ${role})`);
   res.status(201).json({ status: "created" });
-});
+}));
 
-router.put("/users/:id", requireCsrf, async (req, res) => {
+router.put("/users/:id", requireCsrf, safe(async (req, res) => {
   const { role, ghlUserId, ghlUserName, password } = req.body || {};
   if (role !== undefined && !["admin", "user"].includes(role)) {
     return res.status(400).json({ error: "invalid role" });
@@ -550,9 +550,9 @@ router.put("/users/:id", requireCsrf, async (req, res) => {
   if (changes.length) await log(req, "user_updated", `Updated user "${who}": ${changes.join(", ")}`);
 
   res.json({ status: "updated" });
-});
+}));
 
-router.delete("/users/:id", requireCsrf, async (req, res) => {
+router.delete("/users/:id", requireCsrf, safe(async (req, res) => {
   if (req.params.id === req.session.user.id) {
     return res.status(400).json({ error: "cannot delete your own account while logged in as it" });
   }
@@ -563,7 +563,7 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
   await db.deleteUser(req.params.id);
   await log(req, "user_deleted", `Deleted user "${target ? target.username : req.params.id}"`);
   res.json({ status: "deleted" });
-});
+}));
 
 // The escape hatch for a lost authenticator device with no recovery codes
 // saved -- there's no self-service email-based recovery yet (see README's
@@ -572,7 +572,7 @@ router.delete("/users/:id", requireCsrf, async (req, res) => {
 // self-service" shape as the password reset above; unlike a password
 // reset, this doesn't touch the person's password at all, only their MFA
 // enrollment.
-router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
+router.post("/users/:id/disable-mfa", requireCsrf, safe(async (req, res) => {
   const target = await db.getUserById(req.params.id);
   if (!target || target.tenantId !== req.session.user.tenantId) {
     return res.status(404).json({ error: "user not found" });
@@ -580,7 +580,7 @@ router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
   await db.disableUserTotp(target.id);
   await log(req, "user_mfa_disabled", `Disabled two-factor authentication for user "${target.username}" (admin override)`);
   res.json({ status: "disabled" });
-});
+}));
 
 // Live, admin-toggleable, no redeploy needed. Only affects calls the live
 // poller picks up after this is read (see poller.js) -- never retroactive.
@@ -589,7 +589,7 @@ router.post("/users/:id/disable-mfa", requireCsrf, async (req, res) => {
 // access to -- the same boundary every other account-scoped route uses, so
 // an admin on one tenant can never read or flip this for an account that
 // isn't theirs.
-router.get("/settings", requireAccount, async (req, res) => {
+router.get("/settings", requireAccount, safe(async (req, res) => {
   const schedule = await db.getDigestSchedule(req.ghlAccountId);
   res.json({
     autoTranscribeEnabled: await db.getAutoTranscribeEnabled(req.ghlAccountId),
@@ -597,7 +597,7 @@ router.get("/settings", requireAccount, async (req, res) => {
     transcriptCleanupEnabled: await db.getTranscriptCleanupEnabled(req.ghlAccountId),
     ...schedule,
   });
-});
+}));
 
 // Client-facing billing -- what this tenant is actually being charged,
 // read from the same cost_ledger receipts the operator's own Cost &
@@ -611,7 +611,7 @@ router.get("/settings", requireAccount, async (req, res) => {
 // mechanism in this codebase yet (no Paddle integration, no 'base'
 // cost_ledger category) -- this shows only what's real today:
 // transcription, AI summaries, transcript cleanup, and storage.
-router.get("/billing", async (req, res) => {
+router.get("/billing", safe(async (req, res) => {
   const tenantId = req.session.user.tenantId;
   const tenant = await db.getTenantById(tenantId);
 
@@ -674,7 +674,7 @@ router.get("/billing", async (req, res) => {
     },
     pastMonths,
   });
-});
+}));
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -691,7 +691,7 @@ function isValidTimezone(tz) {
   }
 }
 
-router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
+router.put("/settings", requireAccount, requireCsrf, safe(async (req, res) => {
   const body = req.body || {};
   const result = {};
   if ("autoTranscribeEnabled" in body) {
@@ -730,7 +730,7 @@ router.put("/settings", requireAccount, requireCsrf, async (req, res) => {
     result.digestTimezone = digestTimezone;
   }
   res.json(result);
-});
+}));
 
 // Express 4 doesn't catch a rejected async handler: the request would just
 // hang and the error surface as an unhandled rejection. The routes below make
@@ -809,10 +809,10 @@ router.post("/duplicates/reconcile", requireAccount, requireCsrf, safe(async (re
 
 // --- Connected GHL accounts (multi-tenant: one tenant, many locations) ---
 
-router.get("/ghl-accounts", async (req, res) => {
+router.get("/ghl-accounts", safe(async (req, res) => {
   const accounts = await db.listGhlAccountsForTenant(req.session.user.tenantId);
   res.json({ accounts, oauthConfigured: ghlOAuth.isConfigured() });
-});
+}));
 
 // Fuller status view for the Settings > GHL accounts management table
 // (connect/disconnect/reconnect) -- deliberately a separate endpoint from
@@ -865,7 +865,7 @@ router.put("/ghl-accounts/:id/app-url", requireCsrf, safe(async (req, res) => {
 // own location ID rather than this row's id, so it cleanly re-attaches to
 // the same history instead of orphaning it the way the tenant-ownership
 // bug this followed did.
-router.post("/ghl-accounts/:id/disconnect", requireCsrf, async (req, res) => {
+router.post("/ghl-accounts/:id/disconnect", requireCsrf, safe(async (req, res) => {
   const account = await db.getGhlAccountById(req.params.id);
   if (!account || account.tenantId !== req.session.user.tenantId) {
     return res.status(404).json({ error: "account not found" });
@@ -876,7 +876,7 @@ router.post("/ghl-accounts/:id/disconnect", requireCsrf, async (req, res) => {
   }
   await log(req, "ghl_account_disconnected", `Disconnected GHL location "${account.ghlLocationId}"`);
   res.json({ status: "disconnected" });
-});
+}));
 
 // Redirects into GHL's own "choose a location, then authorize" screen.
 // The random state is stashed on the session and checked back on the
@@ -897,7 +897,7 @@ router.get("/oauth/connect", (req, res) => {
 // account belongs to, not anything GHL itself reports (see the design
 // discussion this followed: GHL's own login/account structure is
 // irrelevant here, only the CallTrove session that started the flow).
-router.get("/oauth/callback", async (req, res) => {
+router.get("/oauth/callback", safe(async (req, res) => {
   const { code, state } = req.query;
   if (!state || state !== req.session.ghlOAuthState) {
     return res.status(400).send("This connection request has expired or is invalid. Please try connecting again from Settings.");
@@ -965,7 +965,7 @@ router.get("/oauth/callback", async (req, res) => {
   }
 
   res.redirect("/settings.html?tab=team&connected=1");
-});
+}));
 
 // Historical backfill, on demand from the admin UI instead of someone
 // having to SSH/SSM in and run `node src/backfill.js` by hand. Runs in the
@@ -985,11 +985,11 @@ function getBackfillState(tenantId) {
   return backfillStateByTenant.get(tenantId) || { running: false, lastResult: null, lastError: null, startedAt: null, finishedAt: null };
 }
 
-router.get("/backfill", async (req, res) => {
+router.get("/backfill", safe(async (req, res) => {
   res.json(getBackfillState(req.session.user.tenantId));
-});
+}));
 
-router.post("/backfill", requireCsrf, async (req, res) => {
+router.post("/backfill", requireCsrf, safe(async (req, res) => {
   const tenantId = req.session.user.tenantId;
   if (getBackfillState(tenantId).running) {
     return res.status(409).json({ error: "a backfill is already running" });
@@ -1021,20 +1021,20 @@ router.post("/backfill", requireCsrf, async (req, res) => {
     });
 
   res.status(202).json(getBackfillState(tenantId));
-});
+}));
 
 // "Call Recording Coverage" -- storage health at a glance: how many calls
 // have a recording captured vs. not, broken down by GHL's own disposition,
 // plus the list of genuine gaps (completed calls with no recording -- as
 // opposed to no-answer/busy/voicemail, which were never going to have one).
-router.get("/coverage", async (req, res) => {
+router.get("/coverage", safe(async (req, res) => {
   const [summary, byDisposition, byMonth] = await Promise.all([
     db.getCoverageSummary(req.session.user.tenantId),
     db.getCoverageByDisposition(req.session.user.tenantId),
     db.getCoverageByMonth(req.session.user.tenantId),
   ]);
   res.json({ summary, byDisposition, byMonth });
-});
+}));
 
 // A bounded range (today/week/month presets, or any explicit custom range
 // under a month) gets daily bars -- fine-grained enough to be useful, few
@@ -1052,7 +1052,7 @@ function trendGranularityFor(dateFrom, dateTo) {
 // the totals to the tab's selected preset; the trend now follows that same
 // range (see trendGranularityFor above) instead of always being a fixed
 // trailing-7-day window regardless of what's selected elsewhere on the tab.
-router.get("/call-report", async (req, res) => {
+router.get("/call-report", safe(async (req, res) => {
   const { dateFrom, dateTo } = req.query;
   const granularity = trendGranularityFor(dateFrom, dateTo);
   const [reps, trendRows, dispositionRows] = await Promise.all([
@@ -1096,35 +1096,35 @@ router.get("/call-report", async (req, res) => {
   }
 
   res.json({ reps, trend, trendGranularity: granularity, dispositionsByRep });
-});
+}));
 
 // Latest twice-daily digest snapshot for the selected account -- see
 // src/callDigestJob.js. null when the job hasn't run for this account yet
 // (just connected, or it has transcription on and was never eligible),
 // not an error -- the client renders an empty state either way.
-router.get("/call-digest", requireAccount, async (req, res) => {
+router.get("/call-digest", requireAccount, safe(async (req, res) => {
   const digest = await db.getLatestCallDigest(req.ghlAccountId);
   res.json({ digest });
-});
+}));
 
-router.get("/coverage/gaps", async (req, res) => {
+router.get("/coverage/gaps", safe(async (req, res) => {
   const result = await db.listCoverageGaps(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
-});
+}));
 
-router.get("/audit-log", async (req, res) => {
+router.get("/audit-log", safe(async (req, res) => {
   const result = await db.listAuditLog(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
-});
+}));
 
 // PHI-access log (who accessed which call's recording/transcript, when,
 // success or denied) -- see routes/api.js. HIPAA's audit-controls rule
 // expects this reviewed regularly, not just recorded, hence a real view
 // rather than just rows sitting in the database.
-router.get("/phi-access-log", async (req, res) => {
+router.get("/phi-access-log", safe(async (req, res) => {
   const result = await db.listPhiAccessLog(req.session.user.tenantId, { page: req.query.page, pageSize: req.query.pageSize });
   res.json(result);
-});
+}));
 
 // Bulk export -- everyone's recordings (optionally date- or contact-
 // filtered) as one streamed ZIP, not one-by-one. Two use cases share this
@@ -1136,7 +1136,7 @@ router.get("/phi-access-log", async (req, res) => {
 // left to assemble by hand. Streams straight to the response as each file
 // is read (archiver + one getBuffer() at a time) rather than buffering
 // the whole export in memory or on disk first.
-router.get("/download-all", async (req, res) => {
+router.get("/download-all", safe(async (req, res) => {
   const { dateFrom, dateTo, contactId } = req.query;
   const calls = await db.listAllCallsWithRecordings(req.session.user.tenantId, { dateFrom, dateTo, contactId });
 
@@ -1239,6 +1239,6 @@ router.get("/download-all", async (req, res) => {
   }
 
   await archive.finalize();
-});
+}));
 
 module.exports = router;
