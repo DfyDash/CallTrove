@@ -112,7 +112,7 @@ async function handleEvent(payload) {
   const callRowId = existing ? existing.id : randomUUID();
   if (!existing) {
     await db.upsertContact({ contactId, name, phone, ghlAccountId: account.id });
-    await db.insertCall({
+    const inserted = await db.insertCall({
       id: callRowId,
       ghlCallId: messageId,
       contactId,
@@ -126,6 +126,14 @@ async function handleEvent(payload) {
       disposition,
       ghlAccountId: account.id,
     });
+    // Lost the ON CONFLICT (ghl_call_id) race to some other insert of the
+    // same messageId between the existing-row check above and this write --
+    // callRowId was never actually written, so proceeding would upload a
+    // recording nothing in the calls table ever references, and
+    // markCallStored below would silently match zero rows. Same situation
+    // src/poller.js's processCallMessage already guards against; this just
+    // needed the same check.
+    if (!inserted) return { outcome: "stored", reason: "lost insert race for this messageId" };
   }
 
   const extension = recording.contentType.includes("wav") ? "wav" : "mp3";

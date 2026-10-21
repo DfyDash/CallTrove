@@ -32,6 +32,14 @@ COOLDOWN_SECONDS=3600
 if [ -f /opt/app/.env ]; then
   for var in RESEND_API_KEY ALERT_EMAIL_TO EMAIL_FROM_ADDRESS; do
     value=$(grep -m1 "^${var}=" /opt/app/.env | cut -d= -f2-) || true
+    # Strip one matching layer of surrounding quotes, the way `source`
+    # would -- `cut` has no idea .env values can be quoted, so
+    # EMAIL_FROM_ADDRESS="foo@bar.com" was being exported as the literal
+    # 9-character string `"foo@bar.com"`, quotes included, which Resend's
+    # API then rejected as an invalid sender address on every single
+    # alert (confirmed: production's own .env actually quotes this one).
+    value="${value%\"}"; value="${value#\"}"
+    value="${value%\'}"; value="${value#\'}"
     [ -n "$value" ] && export "$var=$value"
   done
 fi
