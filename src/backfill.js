@@ -70,6 +70,18 @@ async function runForAccount(account, api, totals, { dryRun = false } = {}) {
       try {
         messages = await api.listCallMessages(conversation.id);
       } catch (err) {
+        if (err.canonicalCode === "CONVERSATIONS_HIPAA_RESTRICTED") {
+          // GHL's own HIPAA mode on this sub-account blocks this endpoint
+          // for every conversation, not just this one -- confirmed live
+          // 2026-10-21 -- so retrying it conversation-by-conversation would
+          // just fail identically N more times and silently report "0
+          // calls found" at the end, which reads as "there's no history"
+          // rather than "we were blocked from checking." Stop this
+          // account's walk now and say so plainly instead.
+          console.error(`[backfill] account ${account.id}: blocked by GHL's HIPAA mode (CONVERSATIONS_HIPAA_RESTRICTED) -- stopping this account's walk`);
+          totals.hipaaRestrictedAccounts.push(account.name || account.ghlLocationId);
+          return;
+        }
         console.error(`[backfill] account ${account.id}: failed to list messages for conversation ${conversation.id}:`, err);
         continue;
       }
@@ -130,6 +142,7 @@ async function run({ tenantId, dryRun = false } = {}) {
     callsSkipped: 0,
     callsFailed: 0,
     totalDurationSeconds: 0,
+    hipaaRestrictedAccounts: [], // account names/location IDs GHL's own HIPAA mode blocked this run from walking at all
   };
 
   let ranAny = false;

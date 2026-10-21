@@ -1928,9 +1928,15 @@ function renderBackfillStatus(state) {
     backfillStatus.textContent = `Last run failed: ${state.lastError}`;
   } else if (state.lastResult) {
     const r = state.lastResult;
-    backfillStatus.textContent =
+    let text =
       `Last run: ${r.callsSaved} call${r.callsSaved === 1 ? "" : "s"} saved, ${r.callsSkipped} already had, ` +
       `${r.callsFailed} failed to process (${r.conversationsSeen} conversations scanned).`;
+    if (r.hipaaRestrictedAccounts && r.hipaaRestrictedAccounts.length) {
+      text +=
+        ` GoHighLevel's own HIPAA mode on ${r.hipaaRestrictedAccounts.join(", ")} blocked this from checking its call history at all -- ` +
+        `this isn't "no history found," it's "GHL wouldn't let us look." New calls going forward are still captured automatically.`;
+    }
+    backfillStatus.textContent = text;
   } else {
     backfillStatus.textContent = "";
   }

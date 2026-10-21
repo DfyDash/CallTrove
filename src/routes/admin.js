@@ -1002,12 +1002,16 @@ router.post("/backfill", requireCsrf, async (req, res) => {
     .run({ tenantId })
     .then(async (summary) => {
       backfillStateByTenant.set(tenantId, { ...state, running: false, lastResult: summary, finishedAt: new Date() });
+      const hipaaNote =
+        summary.hipaaRestrictedAccounts && summary.hipaaRestrictedAccounts.length
+          ? ` Blocked by GHL's own HIPAA mode on: ${summary.hipaaRestrictedAccounts.join(", ")}.`
+          : "";
       await log(
         req,
         "backfill_completed",
         `Backfill finished: ${summary.callsSaved} call${summary.callsSaved === 1 ? "" : "s"} saved, ` +
           `${summary.callsSkipped} already had, ${summary.callsFailed} failed to process ` +
-          `(${summary.conversationsSeen} conversations scanned)`
+          `(${summary.conversationsSeen} conversations scanned).${hipaaNote}`
       );
     })
     .catch(async (err) => {

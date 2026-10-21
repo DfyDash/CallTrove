@@ -90,6 +90,12 @@
             <p id="hipaa-not-owner-note" class="settings-note" hidden>
               Only your account's owner can enable HIPAA compliance.
             </p>
+            <p class="settings-note">
+              This is separate from GoHighLevel's own HIPAA mode on a sub-account.
+              If that's also turned on, GHL blocks us from reading call history
+              entirely -- new calls are still captured, but past history can't be
+              recovered once it's on.
+            </p>
 
             <div id="hipaa-enabled-banner" class="baa-accepted-banner" hidden>
               <strong>Enabled.</strong> <span id="hipaa-enabled-summary"></span>
@@ -607,6 +613,12 @@
               lost. Can take anywhere from under a minute to over an hour
               depending on call volume; runs in the background, so it's safe to
               navigate away.
+            </p>
+            <p class="settings-note">
+              Doesn't work if this GHL account has GoHighLevel's own HIPAA mode
+              turned on -- that blocks us from reading call history entirely, not
+              just here. New calls are still captured automatically going forward;
+              it's only past history that can't be recovered once that's on.
             </p>
             <button type="button" id="run-backfill-btn" class="button-link">Import past calls</button>
             <p class="settings-note" id="backfill-status"></p>

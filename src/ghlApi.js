@@ -121,7 +121,19 @@ function forAccount({ apiToken, locationId } = {}) {
       const url = new URL(`${GHL_API_BASE}/conversations/${conversationId}/messages`);
       if (lastMessageId) url.searchParams.set("lastMessageId", lastMessageId);
       const res = await fetch(url, signal ? { headers: headers(), signal } : { headers: headers() });
-      if (!res.ok) throw new Error(`conversations/messages failed with status ${res.status}`);
+      if (!res.ok) {
+        // canonicalCode surfaces specific, actionable failures (notably
+        // CONVERSATIONS_HIPAA_RESTRICTED -- GHL's own HIPAA mode on a
+        // sub-account blocks this exact endpoint entirely, confirmed
+        // 2026-10-21) to callers like src/backfill.js, which needs to tell
+        // that apart from a generic/transient failure rather than silently
+        // reporting zero calls found either way.
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(`conversations/messages failed with status ${res.status}${body.message ? `: ${body.message}` : ""}`);
+        err.status = res.status;
+        err.canonicalCode = body.canonicalCode || null;
+        throw err;
+      }
       const data = await res.json();
       const page = (data.messages && data.messages.messages) || [];
       if (page.length === 0) break;
