@@ -1,9 +1,37 @@
 const { Pool } = require("pg");
 const { randomUUID } = require("crypto");
 
+// max: 20, not pg's default of 10 -- that default was comfortable back
+// when src/poller.js's own ACCOUNT_CONCURRENCY=8 was the only real
+// concurrent DB user (see that constant's own comment), but every
+// background job added since (transcriptionPoller, callSummaryPoller,
+// transcriptCleanupPoller, callDigestJob, storageCostJob, mergeWatchJob,
+// usageBillingJob, webhookEventPoller) shares this same pool too, and 8
+// alone already left only 2 spare. The RDS instance itself allows 81
+// connections (confirmed via SHOW max_connections), so this has real
+// headroom, not just a guess.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined,
+  max: 20,
+});
+
+// A separate, small, dedicated pool for exactly one write:
+// insertWebhookEvent, the durable-queue INSERT src/routes/ghlWebhooks.js
+// does before acking a GHL webhook. That's the one query on this whole
+// path where a delay isn't just "a bit slower" -- GHL doesn't retry a
+// failed delivery, so if this specific write ever had to queue behind
+// poller.js's heavy REST polling for every *other* (non-HIPAA) account,
+// a call could be lost waiting on a free connection from the shared pool,
+// not for any reason related to this call itself. A separate pg.Pool is a
+// genuinely separate set of connections -- one pool being fully busy
+// never blocks the other from opening its own, so this write is
+// structurally isolated from everything else's load, not just usually
+// fine because the shared pool happens to have room today.
+const webhookInsertPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.PGSSLMODE === "require" ? { rejectUnauthorized: false } : undefined,
+  max: 3,
 });
 
 // Well-known IDs backfilled by schema.sql's multi-tenant migration --
@@ -1958,7 +1986,7 @@ async function setAccountLastWebhookCallAt(ghlAccountId, date) {
 // src/webhookEventPoller.js -- see schema.sql's comment on the table) ---
 
 async function insertWebhookEvent(id, payload) {
-  await pool.query(`INSERT INTO ghl_webhook_events (id, payload) VALUES ($1, $2)`, [id, payload]);
+  await webhookInsertPool.query(`INSERT INTO ghl_webhook_events (id, payload) VALUES ($1, $2)`, [id, payload]);
 }
 
 // attempts < MAX_ATTEMPTS is left to the caller (webhookEventPoller.js) to
