@@ -1738,7 +1738,7 @@ const VOCABULARY_STATUS_LABELS = {
 
 function renderVocabularyStatus(status, syncedAt) {
   if (!status) {
-    vocabularyStatusEl.textContent = "Not built yet -- add anything extra below, then click \"Rebuild vocabulary now\".";
+    vocabularyStatusEl.textContent = "Not built yet.";
     return;
   }
   const label = VOCABULARY_STATUS_LABELS[status] || status;
