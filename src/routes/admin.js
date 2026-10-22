@@ -199,6 +199,13 @@ router.post("/tenant/restore", requireCsrf, safe(async (req, res) => {
     }
   }
 
+  // Only starts requireAuth's grace window (src/db/index.js's
+  // confirmTenantRestoreBilling) once Paddle actually confirmed the
+  // resume -- never unconditionally, or an owner could script
+  // cancel/restore forever and stay "subscribed" with no live Paddle
+  // subscription at all.
+  if (paddleResumed) await db.confirmTenantRestoreBilling(tenant.id);
+
   await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"${paddleResumed ? "; Paddle billing resumed" : ""}`);
   await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });

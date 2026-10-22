@@ -103,6 +103,11 @@ async function restoreTenant(tenantId) {
     }
   }
 
+  // Only starts requireAuth's grace window once Paddle actually confirmed
+  // the resume -- see db.confirmTenantRestoreBilling's own comment for why
+  // this can never be unconditional.
+  if (paddleResumed) await db.confirmTenantRestoreBilling(tenantId);
+
   return { tenant, alreadyActive: false, paddleResumed };
 }
 

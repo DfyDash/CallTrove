@@ -1588,14 +1588,28 @@ async function requestTenantCancellation(tenantId, purgeAt) {
 // Only works before purge_at actually arrives -- once src/tenantPurge.js
 // has run, the tenant is 'canceled' and its data is gone, so there's
 // nothing left to restore to.
-// restored_at starts src/auth.js's requireAuth subscription-check grace
-// window -- see schema.sql's comment on the column for why.
+//
+// Deliberately does NOT touch restored_at here -- see
+// confirmTenantRestoreBilling below for why that's a separate call the
+// caller only makes once Paddle's resume has actually succeeded.
 async function restoreTenant(tenantId) {
   await pool.query(
-    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL, restored_at = now()
+    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL
      WHERE id = $1 AND status = 'cancellation_pending'`,
     [tenantId]
   );
+}
+
+// Starts src/auth.js's requireAuth subscription-check grace window (see
+// schema.sql's comment on tenants.restored_at) -- called only once Paddle's
+// resume has actually succeeded, never unconditionally alongside
+// restoreTenant above. Unconditional was a real bypass: an owner could
+// script cancel -> restore every couple minutes and stay permanently
+// "subscribed" to requireAuth with no live Paddle subscription at all,
+// since restoreTenant always ran regardless of whether a resume was even
+// attempted (no paddleSubscriptionId) or whether it succeeded.
+async function confirmTenantRestoreBilling(tenantId) {
+  await pool.query(`UPDATE tenants SET restored_at = now() WHERE id = $1`, [tenantId]);
 }
 
 // What src/tenantPurge.js loops over each cycle.
@@ -2786,6 +2800,7 @@ module.exports = {
   getTotalStoredBytesForTenant,
   requestTenantCancellation,
   restoreTenant,
+  confirmTenantRestoreBilling,
   listTenantsReadyForPurge,
   purgeTenantData,
   listStorageKeysForTenant,
