@@ -100,4 +100,4 @@ function start() {
   cycle();
 }
 
-module.exports = { start, pollOnce };
+module.exports = { start, pollOnce, buildEmail, SUPPORT_EMAIL };
