@@ -10,6 +10,7 @@ const tenantPurge = require("../tenantPurge");
 const billingRates = require("../billingRates");
 const storage = require("../storage");
 const awsCostExplorer = require("../awsCostExplorer");
+const paddle = require("../paddle");
 const { requireOperator, requireCsrf } = require("../auth");
 
 const router = express.Router();
@@ -144,14 +145,45 @@ router.post("/tenants/:id/cancel", requireCsrf, async (req, res) => {
 
   const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
   await db.requestTenantCancellation(tenant.id, purgeAt);
-  await log(req, "tenant_cancelled_by_operator", `Cancellation triggered by operator for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}`);
+
+  // Same best-effort Paddle pause as the self-service cancel route
+  // (routes/admin.js) -- an operator-triggered cancellation must pause
+  // billing too, not just the self-service path, or a customer cancelled
+  // this way keeps being charged with nothing to catch it.
+  let paddlePaused = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddlePaused = await paddle.pauseSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[operator] tenant ${tenant.id} canceled by operator, but pausing the Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "tenant_cancel_billing_failed",
+          message: `"${tenant.name}" was canceled by an operator, but pausing the Paddle subscription failed: ${err.message}. Needs a manual pause/cancel in Paddle so they stop being charged.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(
+    req,
+    "tenant_cancelled_by_operator",
+    `Cancellation triggered by operator for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}${paddlePaused ? "; Paddle billing paused" : ""}`
+  );
   res.json({ status: "cancellation_pending", purgeAt });
 });
 
 router.post("/tenants/:id/restore", requireCsrf, async (req, res) => {
   try {
     const result = await tenantPurge.restoreTenant(req.params.id);
-    await log(req, "tenant_restored_by_operator", `Restore triggered by operator for "${result.tenant.name}" (${req.params.id})`);
+    await log(
+      req,
+      "tenant_restored_by_operator",
+      `Restore triggered by operator for "${result.tenant.name}" (${req.params.id})${result.paddleResumed ? "; Paddle billing resumed" : ""}`
+    );
     res.json({ status: "active", alreadyActive: result.alreadyActive });
   } catch (err) {
     res.status(409).json({ error: err.message });

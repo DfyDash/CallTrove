@@ -29,6 +29,7 @@
 require("dotenv").config();
 const db = require("./db");
 const { permanentlyDeleteRecording } = require("./storage");
+const paddle = require("./paddle");
 
 async function listReady() {
   const tenants = await db.listTenantsReadyForPurge();
@@ -77,7 +78,32 @@ async function restoreTenant(tenantId) {
     );
   }
   await db.restoreTenant(tenantId);
-  return { tenant, alreadyActive: false };
+
+  // Same best-effort Paddle resume as the self-service restore route
+  // (routes/admin.js) -- this function is the one both the CLI and
+  // src/routes/operator.js's restore route actually call, so without this
+  // here too, a tenant restored through either of those stayed fully
+  // active and usable with its Paddle subscription paused forever, giving
+  // free, unbilled service until a human happened to notice in Paddle.
+  let paddleResumed = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddleResumed = await paddle.resumeSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenantPurge] tenant ${tenantId} restored, but resuming its Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: null,
+          actorUsername: "system",
+          action: "tenant_restore_billing_failed",
+          message: `"${tenant.name}" was restored, but resuming its paused Paddle subscription failed: ${err.message}. Needs a manual resume in Paddle so billing actually restarts.`,
+          tenantId,
+        })
+        .catch(() => {});
+    }
+  }
+
+  return { tenant, alreadyActive: false, paddleResumed };
 }
 
 async function purgeTenant(tenantId) {
@@ -127,7 +153,7 @@ async function purgeTenant(tenantId) {
   // right split.
   if (tenant.paddleSubscriptionId) {
     try {
-      await require("./paddle").cancelSubscription(tenant.paddleSubscriptionId);
+      await paddle.cancelSubscription(tenant.paddleSubscriptionId);
     } catch (err) {
       console.error(`[tenantPurge] purging tenant ${tenantId}, but canceling its Paddle subscription failed -- needs a manual look:`, err.message);
       await db
