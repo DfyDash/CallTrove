@@ -1004,3 +1004,15 @@ CREATE INDEX IF NOT EXISTS ghl_account_vocabulary_terms_account_idx ON ghl_accou
 -- src/transcription.js's own comment on why.
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_status TEXT CHECK (vocabulary_status IN ('pending', 'ready', 'failed'));
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_synced_at TIMESTAMPTZ;
+
+-- Set by db.restoreTenant() the moment POST /tenant/restore flips status
+-- back to 'active'. src/auth.js's requireAuth gives a short grace window
+-- after this timestamp before it starts enforcing the billing-required
+-- subscription check again -- restoring resumes Paddle billing, but
+-- Paddle's own subscription.resumed webhook (the only place
+-- subscription_status actually gets updated, src/paddle.js's
+-- applyPaddleSubscriptionEvent) can take a few seconds to arrive. Without
+-- this, an owner could land on a "please subscribe" screen seconds after
+-- successfully restoring their own account, purely from that race, not any
+-- real billing problem.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ;

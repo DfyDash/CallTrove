@@ -1510,7 +1510,8 @@ async function getTenantById(id) {
             paddle_customer_id AS "paddleCustomerId",
             paddle_subscription_id AS "paddleSubscriptionId",
             subscription_status AS "subscriptionStatus",
-            subscription_period_end AS "subscriptionPeriodEnd"
+            subscription_period_end AS "subscriptionPeriodEnd",
+            restored_at AS "restoredAt"
      FROM tenants WHERE id = $1`,
     [id]
   );
@@ -1587,9 +1588,11 @@ async function requestTenantCancellation(tenantId, purgeAt) {
 // Only works before purge_at actually arrives -- once src/tenantPurge.js
 // has run, the tenant is 'canceled' and its data is gone, so there's
 // nothing left to restore to.
+// restored_at starts src/auth.js's requireAuth subscription-check grace
+// window -- see schema.sql's comment on the column for why.
 async function restoreTenant(tenantId) {
   await pool.query(
-    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL
+    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL, restored_at = now()
      WHERE id = $1 AND status = 'cancellation_pending'`,
     [tenantId]
   );

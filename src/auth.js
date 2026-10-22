@@ -21,6 +21,14 @@ const LIVE_SUBSCRIPTION = ["active", "trialing", "past_due"];
 
 const REACHABLE_WHILE_CANCELED = ["/api/me", "/api/tenant/status", "/api/admin/tenant/restore"];
 
+// How long after a restore to trust that billing is back on without
+// waiting for Paddle's subscription.resumed webhook to actually confirm
+// it (see the subscribed check below) -- generous on purpose: webhooks
+// normally land in well under this, and the cost of guessing wrong here is
+// just a few more seconds of access, not a security problem. Real,
+// persistent billing failures still surface normally once this elapses.
+const RESTORE_GRACE_MS = 2 * 60 * 1000;
+
 // Async (crypto.scrypt, not crypto.scryptSync) so this deliberately slow,
 // CPU-heavy computation doesn't block Node's single event loop -- this
 // process also runs src/routes/ghlWebhooks.js's webhook receiver, which
@@ -109,7 +117,13 @@ async function requireAuth(req, res, next) {
   }
 
   if (tenant && tenant.billingRequired && !lockedOut && !req.session.user.isOperator && require("./paddle").billingEnabled()) {
-    const subscribed = LIVE_SUBSCRIPTION.includes(tenant.subscriptionStatus);
+    // Paddle confirms a resume asynchronously (its own webhook, handled in
+    // src/paddle.js), which can take a few seconds -- without this, an
+    // owner could land on "please subscribe" moments after successfully
+    // restoring their own account, purely from that race, not a real
+    // billing problem. See schema.sql's comment on tenants.restored_at.
+    const justRestored = tenant.restoredAt && Date.now() - new Date(tenant.restoredAt).getTime() < RESTORE_GRACE_MS;
+    const subscribed = justRestored || LIVE_SUBSCRIPTION.includes(tenant.subscriptionStatus);
     const needsBaa = tenant.hipaaRequested && !(await db.getLatestBaaAcceptance(tenant.id));
     if (!subscribed || needsBaa) {
       if (req.path.startsWith("/api/")) {
