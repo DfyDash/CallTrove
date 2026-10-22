@@ -81,16 +81,14 @@ async function getAccessibleAccountIds(user) {
 }
 
 // Checks the tenant's status fresh from the DB on every request (not
-// cached in the session at login). The grace period itself is full,
-// completely unrestricted access -- the whole point of having one is to
-// give everyone on the account time to export their data and otherwise
-// keep working normally (including an admin freely granting/managing
-// access), not a countdown spent already locked out. Lockout is purely
-// a time comparison against purgeAt, so it kicks in the moment the grace
-// period actually elapses, with nothing for a bug to accidentally
-// trigger early -- and it's trivially reversible (flip status back to
-// 'active'), unlike the real data deletion in src/tenantPurge.js, which
-// stays a deliberate, separate, manually-run step even after this point.
+// cached in the session at login). Lockout is immediate the moment status
+// leaves 'active' -- cancellation_pending included, not just the fully
+// 'canceled' state once purgeAt passes. The 7-day grace period that
+// follows is purely a window to reconsider (POST /tenant/restore, the one
+// thing REACHABLE_WHILE_CANCELED still allows) before src/tenantPurge.js's
+// deliberate, separate, manually-run deletion step -- not a window to keep
+// using the app. Anyone who wants a copy of their data needs to export it
+// before clicking Cancel, same as the Cancel button's own copy already says.
 async function requireAuth(req, res, next) {
   if (!req.session || !req.session.user) {
     if (req.path.startsWith("/api/")) return res.status(401).json({ error: "not logged in" });
@@ -98,10 +96,7 @@ async function requireAuth(req, res, next) {
   }
 
   const tenant = await db.getTenantById(req.session.user.tenantId);
-  const lockedOut =
-    tenant &&
-    (tenant.status === "canceled" ||
-      (tenant.status === "cancellation_pending" && tenant.purgeAt && new Date(tenant.purgeAt) <= new Date()));
+  const lockedOut = tenant && tenant.status !== "active";
 
   if (lockedOut) {
     if (req.path.startsWith("/api/")) {

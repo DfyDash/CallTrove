@@ -116,6 +116,32 @@ async function purgeTenant(tenantId) {
     );
   }
 
+  // Best-effort, same posture as every other Paddle call in this app
+  // (routes/admin.js's HIPAA upgrade and cancel/restore routes): the data
+  // deletion below is the part that must not fail or wait on Paddle,
+  // since a human already confirmed this specific, irreversible purge.
+  // This is deliberately the only place that ever truly cancels (not
+  // pauses) the subscription -- see paddle.js's own comment on
+  // cancelSubscription for why pausing at cancel-request time and only
+  // canceling here, once there's really no more account left, is the
+  // right split.
+  if (tenant.paddleSubscriptionId) {
+    try {
+      await require("./paddle").cancelSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenantPurge] purging tenant ${tenantId}, but canceling its Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: null,
+          actorUsername: "system",
+          action: "tenant_purge_billing_failed",
+          message: `"${tenant.name}" was purged, but canceling its Paddle subscription failed: ${err.message}. Needs a manual cancellation in Paddle.`,
+          tenantId,
+        })
+        .catch(() => {});
+    }
+  }
+
   await db.purgeTenantData(tenantId);
   return { tenant, recordingsDeleted: recordings.length };
 }

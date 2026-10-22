@@ -132,17 +132,34 @@ router.post("/tenant/cancel", requireCsrf, safe(async (req, res) => {
   const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
   await db.requestTenantCancellation(tenant.id, purgeAt);
 
-  // Deliberately does NOT touch Paddle here -- see tenantPurge.js's own
-  // comment on why that's done at actual purge time instead. Canceling (or
-  // even just scheduling a cancellation for) the Paddle subscription this
-  // early would flip tenant.subscriptionStatus to something outside
-  // LIVE_SUBSCRIPTION, which src/auth.js's requireAuth would read as
-  // "needs to subscribe" and block the owner down to the bare onboarding
-  // routes -- not the export/download routes the 7-day grace period
-  // actually exists for them to use. Billing simply continues unaffected
-  // through the grace period, same as the app itself staying fully usable
-  // for everyone on the tenant until purge_at actually passes.
-  await log(req, "tenant_cancellation_requested", `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}`);
+  // Best-effort, same posture as /tenant/upgrade-hipaa's own Paddle call:
+  // the lockout and purge timer above are the part that must not fail or
+  // wait on Paddle. Pausing (not canceling outright) keeps this reversible
+  // if the owner restores within the grace period -- see paddle.js's own
+  // comment on pauseSubscription for why that split matters.
+  let paddlePaused = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddlePaused = await paddle.pauseSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenant-cancel] tenant ${tenant.id} canceled and locked out, but pausing the Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "tenant_cancel_billing_failed",
+          message: `"${tenant.name}" was canceled and locked out, but pausing the Paddle subscription failed: ${err.message}. Needs a manual pause/cancel in Paddle so they stop being charged.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(
+    req,
+    "tenant_cancellation_requested",
+    `Cancellation requested for "${tenant.name}", data purge scheduled for ${purgeAt.toISOString()}${paddlePaused ? "; Paddle billing paused" : ""}`
+  );
   await logForOperator(req, "tenant_cancelled_self_service", `Self-service cancellation by account owner for "${tenant.name}" (${tenant.id}), data purge scheduled for ${purgeAt.toISOString()}`);
   res.json({ status: "cancellation_pending", purgeAt });
 }));
@@ -160,10 +177,29 @@ router.post("/tenant/restore", requireCsrf, safe(async (req, res) => {
     return res.status(409).json({ error: `account is not pending cancellation (status: ${tenant.status})` });
   }
 
-  // No Paddle call needed either -- cancellation above never touched it,
-  // so there's nothing to undo; billing was never interrupted.
   await db.restoreTenant(tenant.id);
-  await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"`);
+
+  // Best-effort, same posture as cancellation's own Paddle call -- the
+  // login unlock above is the part that must not fail.
+  let paddleResumed = false;
+  if (tenant.paddleSubscriptionId) {
+    try {
+      paddleResumed = await paddle.resumeSubscription(tenant.paddleSubscriptionId);
+    } catch (err) {
+      console.error(`[tenant-restore] tenant ${tenant.id} restored, but resuming the Paddle subscription failed -- needs a manual look:`, err.message);
+      await db
+        .logAudit({
+          actorId: req.session.user.id,
+          actorUsername: req.session.user.username,
+          action: "tenant_restore_billing_failed",
+          message: `"${tenant.name}" was restored, but resuming the paused Paddle subscription failed: ${err.message}. Needs a manual resume in Paddle so billing actually restarts.`,
+          tenantId: tenant.id,
+        })
+        .catch(() => {});
+    }
+  }
+
+  await log(req, "tenant_cancellation_restored", `Cancellation reversed for "${tenant.name}"${paddleResumed ? "; Paddle billing resumed" : ""}`);
   await logForOperator(req, "tenant_restored_self_service", `Self-service restore by account owner for "${tenant.name}" (${tenant.id})`);
   res.json({ status: "active" });
 }));
