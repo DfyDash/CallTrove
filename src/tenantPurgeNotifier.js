@@ -28,7 +28,7 @@ function formatBytes(bytes) {
 }
 
 function formatWhen(date) {
-  return date ? new Date(date).toISOString() : "unknown";
+  return date ? new Date(date).toUTCString() : "unknown";
 }
 
 // Every field here exists for one reason: letting whoever reads this email
@@ -36,24 +36,26 @@ function formatWhen(date) {
 // the right account. The tenant id is what actually gets typed/passed to
 // the purge action -- everything else (name, owner, connected GHL
 // locations, how much is being deleted) is a cross-check against it.
+// Wording is deliberately plain, everyday language and short factual
+// lines -- this lands in a support inbox, not a developer's terminal.
 function buildEmail(tenant) {
-  const subject = `CallTrove: "${tenant.name}" is ready for permanent deletion`;
-  const text = `"${tenant.name}" is now eligible for permanent deletion -- its cancellation grace period has passed with no restore.
+  const subject = `CallTrove: "${tenant.name}" can now be deleted`;
+  const text = `"${tenant.name}" can now be deleted. The waiting period since it was cancelled has ended, and nobody undid the cancellation.
 
-Tenant ID: ${tenant.id}
-Owner login email: ${tenant.ownerUsername || "(none on file)"}
-Connected GHL location(s): ${tenant.ghlLocationIds && tenant.ghlLocationIds.length ? tenant.ghlLocationIds.join(", ") : "(none)"}
-Storage tier: ${tenant.storageTier || "standard"}
+Account ID: ${tenant.id}
+Owner's email: ${tenant.ownerUsername || "(none on file)"}
+Connected GoHighLevel account(s): ${tenant.ghlLocationIds && tenant.ghlLocationIds.length ? tenant.ghlLocationIds.join(", ") : "(none)"}
+Storage type: ${tenant.storageTier || "standard"}
 
-Cancellation requested: ${formatWhen(tenant.cancellationRequestedAt)}
-Eligible for deletion since: ${formatWhen(tenant.purgeAt)}
+Cancelled on: ${formatWhen(tenant.cancellationRequestedAt)}
+Could be deleted since: ${formatWhen(tenant.purgeAt)}
 
-What would be deleted: ${tenant.callCount} call recording(s), approximately ${formatBytes(tenant.totalBytes)}.
+What would be deleted: ${tenant.callCount} call recording(s), about ${formatBytes(tenant.totalBytes)} of data.
 
-To delete it, use the Delete button for this tenant in the operator panel, or run on the server:
+To delete it: use the Delete button for this account in the operator panel, or run this on the server:
   node src/tenantPurge.js --purge ${tenant.id}
 
-Double-check the Tenant ID above matches before deleting -- this is permanent and cannot be undone. You can also run \`node src/tenantPurge.js --status ${tenant.id}\` first to review it.`;
+Make sure the Account ID above matches before you delete it -- this cannot be undone.`;
   return { subject, text };
 }
 
