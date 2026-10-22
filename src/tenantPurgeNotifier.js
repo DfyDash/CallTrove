@@ -8,7 +8,12 @@
 //
 // Fires once per cancellation, not once per poll cycle -- see
 // db.listTenantsReadyForPurgeUnnotified/markTenantPurgeNotified and
-// schema.sql's comment on tenants.purge_notified_at.
+// schema.sql's comment on tenants.purge_notified_at. Not an absolute
+// guarantee: if markTenantPurgeNotified's write fails right after a
+// successful send (a DB blip), the next cycle has no way to know the email
+// already went out and sends it again -- an occasional duplicate is the
+// tradeoff for never silently going quiet about a tenant that's actually
+// ready for deletion, which is the failure mode that would actually matter.
 const db = require("./db");
 const email = require("./email");
 const alerting = require("./alerting");
@@ -57,16 +62,21 @@ async function pollOnce() {
 
   const tenants = await db.listTenantsReadyForPurgeUnnotified();
   for (const tenant of tenants) {
+    let sent = false;
     try {
       const { subject, text } = buildEmail(tenant);
       await email.sendEmail({ to: SUPPORT_EMAIL, subject, text });
+      sent = true;
       await db.markTenantPurgeNotified(tenant.id);
       console.log(`[tenantPurgeNotifier] notified ${SUPPORT_EMAIL} that tenant ${tenant.id} (${tenant.name}) is ready for purge`);
     } catch (err) {
       // Not marked notified on failure -- the next cycle retries it rather
       // than silently going quiet about a tenant that's sitting ready for
-      // deletion.
-      console.error(`[tenantPurgeNotifier] failed to notify about tenant ${tenant.id}:`, err);
+      // deletion. sent distinguishes the two failure points in the log: if
+      // the send itself failed, the next cycle's retry is a first attempt;
+      // if only marking it failed after a successful send, the next
+      // cycle's retry is a (rare, harmless) duplicate email, not a missed one.
+      console.error(`[tenantPurgeNotifier] failed to ${sent ? "mark as notified after sending" : "send"} for tenant ${tenant.id}:`, err);
     }
   }
 }

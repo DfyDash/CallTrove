@@ -1636,10 +1636,18 @@ async function listTenantsReadyForPurgeUnnotified() {
             u.username AS "ownerUsername",
             (SELECT coalesce(array_agg(ga.ghl_location_id ORDER BY ga.ghl_location_id), '{}')
                FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlLocationIds",
-            (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id WHERE ga.tenant_id = t.id) AS "callCount",
-            (SELECT coalesce(sum(c.size_bytes), 0)::bigint FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id WHERE ga.tenant_id = t.id) AS "totalBytes"
+            call_stats."callCount", call_stats."totalBytes"
      FROM tenants t
      LEFT JOIN users u ON u.id = t.owner_user_id
+     -- callCount and totalBytes share one LATERAL subquery (not two
+     -- separate correlated scalar subqueries) -- both need the same
+     -- calls-JOIN-ghl_accounts scan for this tenant, so computing them
+     -- together halves that scan's cost per row instead of running it twice.
+     LEFT JOIN LATERAL (
+       SELECT count(*)::int AS "callCount", coalesce(sum(c.size_bytes), 0)::bigint AS "totalBytes"
+       FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id
+       WHERE ga.tenant_id = t.id
+     ) call_stats ON true
      WHERE t.status = 'cancellation_pending' AND t.purge_at <= now() AND t.purge_notified_at IS NULL`
   );
   return rows.map((r) => ({ ...r, totalBytes: Number(r.totalBytes) }));
