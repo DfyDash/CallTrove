@@ -1005,8 +1005,11 @@ CREATE INDEX IF NOT EXISTS ghl_account_vocabulary_terms_account_idx ON ghl_accou
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_status TEXT CHECK (vocabulary_status IN ('pending', 'ready', 'failed'));
 ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_synced_at TIMESTAMPTZ;
 
--- Set by db.restoreTenant() the moment POST /tenant/restore flips status
--- back to 'active'. src/auth.js's requireAuth gives a short grace window
+-- Set by db.confirmTenantRestoreBilling() -- NOT unconditionally by
+-- db.restoreTenant() itself, deliberately: it's only called once
+-- paddle.resumeSubscription() actually returns success (see that
+-- function's own comment for why an unconditional write here was a real
+-- billing bypass). src/auth.js's requireAuth gives a short grace window
 -- after this timestamp before it starts enforcing the billing-required
 -- subscription check again -- restoring resumes Paddle billing, but
 -- Paddle's own subscription.resumed webhook (the only place
@@ -1014,5 +1017,6 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_synced_at TIMESTAMP
 -- applyPaddleSubscriptionEvent) can take a few seconds to arrive. Without
 -- this, an owner could land on a "please subscribe" screen seconds after
 -- successfully restoring their own account, purely from that race, not any
--- real billing problem.
+-- real billing problem. If restored_at is null after a restore, the
+-- Paddle resume itself failed or never ran -- look there, not here.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ;
