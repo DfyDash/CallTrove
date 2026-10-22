@@ -163,38 +163,30 @@ async function switchSubscriptionToHipaaPrice(subscriptionId) {
   return true;
 }
 
-// Cancels the Paddle side of an account cancellation (see routes/admin.js's
-// POST /tenant/cancel) -- without this, a canceled CallTrove tenant (every
-// login locked out, data on a purge timer) kept being charged by Paddle
-// indefinitely, since the two systems were never actually linked on
-// cancel. effectiveFrom: "next_billing_period" -- not "immediately" --
-// deliberately: the tenant keeps whatever they already paid for rather
-// than losing it, and if the owner changes their mind and restores within
-// the 7-day grace period, Paddle just has a scheduled cancellation to
-// clear (routes/admin.js's POST /tenant/restore), not a dead subscription
-// that needs a whole new checkout to replace.
+// Cancels the Paddle side of a tenant's final deletion -- called from
+// src/tenantPurge.js's purgeTenant(), at actual purge time, NOT when
+// cancellation is first requested (see routes/admin.js's POST
+// /tenant/cancel for why: canceling Paddle that early flips
+// subscriptionStatus away from LIVE_SUBSCRIPTION, which would get the
+// owner blocked down to the onboarding routes by requireAuth during the
+// very grace period meant for them to export their data).
+//
+// effectiveFrom: "immediately" is correct here specifically because
+// purgeTenant only ever runs once the grace period has actually fully
+// elapsed -- there's no "still paid for" time being cut short, and the
+// tenant's data is being permanently deleted in the same operation, so a
+// subscription that outlives it makes no sense either way. Paddle's own
+// rule (confirmed against its docs) is that a canceled subscription can
+// never be reinstated -- fine here, since purge is the actual point of no
+// return regardless of what Paddle does.
 // Same false-not-error contract as switchSubscriptionToHipaaPrice: nothing
 // to cancel (billing not configured, or this tenant never had a live
 // subscription) isn't a failure, just nothing to do.
 async function cancelSubscription(subscriptionId) {
   const sdk = paddle();
   if (!sdk || !subscriptionId) return false;
-  await sdk.subscriptions.cancel(subscriptionId, { effectiveFrom: "next_billing_period" });
+  await sdk.subscriptions.cancel(subscriptionId, { effectiveFrom: "immediately" });
   return true;
 }
 
-// Reverses cancelSubscription above, for routes/admin.js's POST
-// /tenant/restore -- clears the scheduled cancellation so the
-// already-live subscription just keeps going, rather than making the
-// owner run a brand new checkout to get billing working again. Paddle
-// represents "clear the scheduled change" as updating the subscription
-// with scheduledChange set to null. Same false-not-error contract: no
-// subscription to resume isn't a failure.
-async function resumeSubscription(subscriptionId) {
-  const sdk = paddle();
-  if (!sdk || !subscriptionId) return false;
-  await sdk.subscriptions.update(subscriptionId, { scheduledChange: null });
-  return true;
-}
-
-module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, switchSubscriptionToHipaaPrice, cancelSubscription, resumeSubscription, ENV };
+module.exports = { webhookHandler, checkoutConfig, billingEnabled, paddle, signTenantRef, switchSubscriptionToHipaaPrice, cancelSubscription, ENV };
