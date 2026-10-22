@@ -522,7 +522,7 @@ operatorRows.addEventListener("click", async (e) => {
   const purgeBtn = e.target.closest(".purge-tenant-btn");
 
   if (cancelBtn) {
-    if (!confirm("Cancel this account? Every login is locked out immediately, with a grace period before it becomes eligible for deletion.")) return;
+    if (!confirm("Cancel this account? Every login is locked out immediately. It becomes eligible for deletion in 24 hours -- use Restore before then to undo it.")) return;
     const res = await fetch(`/api/operator/tenants/${cancelBtn.dataset.id}/cancel`, {
       method: "POST",
       headers: { "X-CSRF-Token": csrfToken },

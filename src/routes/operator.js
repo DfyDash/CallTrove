@@ -16,10 +16,16 @@ const { requireOperator, requireCsrf } = require("../auth");
 const router = express.Router();
 router.use(requireOperator);
 
-// Same source of truth (and same default) as routes/admin.js's self-service
-// cancellation -- an operator-triggered cancellation goes through the exact
-// same grace period a client cancelling themselves would get.
-const CANCELLATION_GRACE_PERIOD_DAYS = Number(process.env.CANCELLATION_GRACE_PERIOD_DAYS || 7);
+// Deliberately shorter than routes/admin.js's self-service cancellation
+// (CANCELLATION_GRACE_PERIOD_DAYS, 7 days) -- an operator triggering this
+// is already a deliberate, informed action on your side, not a customer
+// who needs a week to notice and react, so there's no reason to hold the
+// data that long before you're able to finish the deletion. Purging itself
+// stays exactly as manual as before (src/tenantPurge.js's own comment on
+// why that's never automatic) -- this only shortens how soon the Delete
+// button in the operator panel becomes clickable, same restore option
+// available the whole time either way.
+const OPERATOR_CANCELLATION_GRACE_HOURS = Number(process.env.OPERATOR_CANCELLATION_GRACE_HOURS || 24);
 
 function log(req, action, message) {
   return db.logAudit({ actorId: req.session.user.id, actorUsername: req.session.user.username, action, message });
@@ -143,7 +149,7 @@ router.post("/tenants/:id/cancel", requireCsrf, async (req, res) => {
     return res.status(409).json({ error: `account is already ${tenant.status}` });
   }
 
-  const purgeAt = new Date(Date.now() + CANCELLATION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000);
+  const purgeAt = new Date(Date.now() + OPERATOR_CANCELLATION_GRACE_HOURS * 60 * 60 * 1000);
   await db.requestTenantCancellation(tenant.id, purgeAt);
 
   // Same best-effort Paddle pause as the self-service cancel route
