@@ -1594,7 +1594,7 @@ async function requestTenantCancellation(tenantId, purgeAt) {
 // caller only makes once Paddle's resume has actually succeeded.
 async function restoreTenant(tenantId) {
   await pool.query(
-    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL
+    `UPDATE tenants SET status = 'active', cancellation_requested_at = NULL, purge_at = NULL, purge_notified_at = NULL
      WHERE id = $1 AND status = 'cancellation_pending'`,
     [tenantId]
   );
@@ -1618,6 +1618,35 @@ async function listTenantsReadyForPurge() {
     `SELECT id, name FROM tenants WHERE status = 'cancellation_pending' AND purge_at <= now()`
   );
   return rows;
+}
+
+// Same eligibility as listTenantsReadyForPurge above, but only tenants
+// src/tenantPurgeNotifier.js hasn't already emailed support@calltrove.com
+// about (purge_notified_at IS NULL) -- otherwise every 15-minute cycle
+// while a tenant sits waiting for an operator to actually purge it would
+// send another email. Everything selected here is specifically what an
+// operator needs to confirm they're about to delete the right account,
+// not a general tenant listing -- see tenantPurgeNotifier.js's own
+// comment on why each field is included.
+async function listTenantsReadyForPurgeUnnotified() {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.name, t.storage_tier AS "storageTier",
+            t.cancellation_requested_at AS "cancellationRequestedAt",
+            t.purge_at AS "purgeAt",
+            u.username AS "ownerUsername",
+            (SELECT coalesce(array_agg(ga.ghl_location_id ORDER BY ga.ghl_location_id), '{}')
+               FROM ghl_accounts ga WHERE ga.tenant_id = t.id) AS "ghlLocationIds",
+            (SELECT count(*)::int FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id WHERE ga.tenant_id = t.id) AS "callCount",
+            (SELECT coalesce(sum(c.size_bytes), 0)::bigint FROM calls c JOIN ghl_accounts ga ON ga.id = c.ghl_account_id WHERE ga.tenant_id = t.id) AS "totalBytes"
+     FROM tenants t
+     LEFT JOIN users u ON u.id = t.owner_user_id
+     WHERE t.status = 'cancellation_pending' AND t.purge_at <= now() AND t.purge_notified_at IS NULL`
+  );
+  return rows.map((r) => ({ ...r, totalBytes: Number(r.totalBytes) }));
+}
+
+async function markTenantPurgeNotified(tenantId) {
+  await pool.query(`UPDATE tenants SET purge_notified_at = now() WHERE id = $1`, [tenantId]);
 }
 
 // The actual deletion, run once per tenant by src/tenantPurge.js after
@@ -2801,6 +2830,8 @@ module.exports = {
   requestTenantCancellation,
   restoreTenant,
   confirmTenantRestoreBilling,
+  listTenantsReadyForPurgeUnnotified,
+  markTenantPurgeNotified,
   listTenantsReadyForPurge,
   purgeTenantData,
   listStorageKeysForTenant,

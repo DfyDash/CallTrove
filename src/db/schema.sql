@@ -1020,3 +1020,12 @@ ALTER TABLE ghl_accounts ADD COLUMN IF NOT EXISTS vocabulary_synced_at TIMESTAMP
 -- real billing problem. If restored_at is null after a restore, the
 -- Paddle resume itself failed or never ran -- look there, not here.
 ALTER TABLE tenants ADD COLUMN IF NOT EXISTS restored_at TIMESTAMPTZ;
+
+-- Set by src/tenantPurgeNotifier.js the moment it emails support@calltrove.com
+-- that this tenant is eligible for permanent deletion (purge_at has
+-- passed) -- so that poller sends the notice exactly once per
+-- cancellation, not again on every cycle while it sits waiting for an
+-- operator to actually run the purge. db.restoreTenant() nulls this out
+-- alongside purge_at, so a tenant cancelled again later gets a fresh
+-- notice.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS purge_notified_at TIMESTAMPTZ;

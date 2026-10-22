@@ -66,6 +66,8 @@ const IMPACT_BY_SUBSYSTEM = {
     "This is the whole poll cycle failing repeatedly (e.g. the database being unreachable), not one call -- a single call that's genuinely been lost gets its own immediate alert separately (see webhookEventPoller.js), not this one. This subsystem is the only way new calls get discovered on a GHL-HIPAA-locked sub-account, which has no backfill to recover a missed call afterward -- worth checking on urgently, not just whenever convenient.",
   "custom vocabulary build":
     "AWS Transcribe custom vocabularies (Settings > the words-we-keep-getting-wrong list) aren't being built or refreshed. Transcription itself is completely unaffected -- calls keep transcribing normally, just without the accuracy boost a vocabulary gives for names/business terms it knows about. Not urgent; resumes automatically once this recovers.",
+  "tenant purge notifier":
+    "support@calltrove.com isn't being emailed when a cancelled tenant's grace period elapses and it's actually ready for permanent deletion. Nothing is lost or broken for any customer -- this only delays when a human finds out an account is ready to be purged. Check the operator panel's overdue list directly until this recovers.",
 };
 const DEFAULT_IMPACT = "No specific impact note has been written for this subsystem yet -- worth checking the app directly to see what's actually affected.";
 

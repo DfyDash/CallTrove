@@ -20,6 +20,7 @@ const mergeWatchJob = require("./mergeWatchJob");
 const usageBillingJob = require("./usageBillingJob");
 const webhookEventPoller = require("./webhookEventPoller");
 const vocabularyPoller = require("./vocabularyPoller");
+const tenantPurgeNotifier = require("./tenantPurgeNotifier");
 const alerting = require("./alerting");
 const billingRates = require("./billingRates");
 const db = require("./db");
@@ -229,6 +230,7 @@ mergeWatchJob.start();
 usageBillingJob.start();
 webhookEventPoller.start();
 vocabularyPoller.start();
+tenantPurgeNotifier.start();
 // Account purge is deliberately NOT run automatically here -- see
 // src/tenantPurge.js. It's a manual operator command
 // (`node src/tenantPurge.js --list` / `--purge <tenantId>`) run by hand
